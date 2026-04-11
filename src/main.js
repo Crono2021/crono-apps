@@ -550,8 +550,9 @@ async function openSeason(button, series) {
             return;
         }
 
-        videos.sort((a, b) => a.fileName.localeCompare(b.fileName, undefined, { numeric: true }));
-
+        // Don't sort alphabetically. The bot provides them in reverse chronological order
+        // (newest message first). Reverse it to show oldest (Episode 1) first.
+        videos.reverse();
         // Fetch TMDB episode details if we have a series ID
         const seasonNum = extractSeasonNumber(button.text);
         let tmdbEpisodes = [];
@@ -568,14 +569,15 @@ async function openSeason(button, series) {
                 : `${(video.fileSize / (1024 * 1024)).toFixed(0)} MB`;
             const durStr = formatDuration(video.duration);
 
-            // Match TMDB episode by filename
-            const parsed = parseEpisodeFile(video.fileName);
+            // Match TMDB episode preferring the Telegram caption to the raw filename
+            const parseSource = video.caption || video.fileName;
+            const parsed = parseEpisodeFile(parseSource);
             const tmdbEp = parsed
                 ? tmdbEpisodes.find(e => e.number === parsed.episode)
                 : null;
 
             const still = tmdbEp?.stillPath ? stillUrl(tmdbEp.stillPath) : null;
-            const epTitle = tmdbEp?.name || video.fileName.replace(/\.[^.]+$/, '');
+            const epTitle = tmdbEp?.name || parseSource.replace(/\.[^.]+$/, '');
             const overview = tmdbEp?.overview || '';
 
             card.innerHTML = `
