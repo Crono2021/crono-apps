@@ -296,6 +296,11 @@ export async function initServiceWorker() {
  * The browser handles buffering, seeking and moov atom detection automatically.
  */
 export async function streamVideo(media, videoElement, onProgress) {
+    // Always re-init SW port before playing — the browser can restart the SW
+    // after idle periods, resetting its in-memory state (port = null).
+    // Re-initializing takes < 50ms when the SW is already active.
+    await initServiceWorker();
+
     const c = await getClient();
     const doc = media.document;
     const fileSize = Number(doc.size);
@@ -316,7 +321,7 @@ export async function streamVideo(media, videoElement, onProgress) {
         });
 
         // Give the SW a tick to register
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise(r => setTimeout(r, 100));
 
         videoElement.src = `/tg-stream/${streamId}`;
 
