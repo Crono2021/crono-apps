@@ -197,15 +197,36 @@ export function extractSeasonNumber(label) {
 }
 
 /**
- * Extract season/episode numbers from a filename like "1x03 Title.mp4", "S01E03_Title.mkv"
+ * Extract season/episode numbers from a filename or Telegram caption.
+ * Handles multiple formats used by the bot:
+ *   - 1x03, 01x03 (latin x)
+ *   - S01E03, s01e03
+ *   - 4×05  (Unicode × multiply sign)
+ *   - "The Boys temporada 4 episodio 1" (Spanish caption)
+ *   - Cap.403  (first digit = season, last 2 = episode)
  */
 export function parseEpisodeFile(filename) {
-    // Format: 1x03, S01E03, 01x03
-    const m1 = filename.match(/(\d{1,2})[xX](\d{2})/);
+    if (!filename) return null;
+
+    // Format: S01E03, s01e03
+    const m1 = filename.match(/[sS](\d{1,2})[eE](\d{2})/);
     if (m1) return { season: parseInt(m1[1]), episode: parseInt(m1[2]) };
 
-    const m2 = filename.match(/[sS](\d{1,2})[eE](\d{2})/);
+    // Format: 1x03, 01x03 (latin x)
+    const m2 = filename.match(/(\d{1,2})[xX](\d{2})/);
     if (m2) return { season: parseInt(m2[1]), episode: parseInt(m2[2]) };
+
+    // Format: 4×05 (Unicode × U+00D7 as used in bot captions)
+    const m3 = filename.match(/(\d{1,2})[×✕✗](\d{1,2})/);
+    if (m3) return { season: parseInt(m3[1]), episode: parseInt(m3[2]) };
+
+    // Format: "temporada 4 episodio 1" or "temporada 4 capitulo 1" (Spanish)
+    const m4 = filename.match(/temporada\s+(\d+)\s+(?:episodio|cap[íi]tulo|cap\.?)\s+(\d+)/i);
+    if (m4) return { season: parseInt(m4[1]), episode: parseInt(m4[2]) };
+
+    // Format: Cap.403 → season=4, episode=03
+    const m5 = filename.match(/[Cc]ap\.?(\d)(\d{2})/);
+    if (m5) return { season: parseInt(m5[1]), episode: parseInt(m5[2]) };
 
     return null;
 }
