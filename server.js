@@ -100,7 +100,10 @@ app.get('/api/catalog/all', requireAuth, async (req, res) => {
 
 // POST /api/admin/login
 app.post('/api/admin/login', (req, res) => {
-    if (req.body.password !== ADMIN_PASSWORD)
+    const received = (req.body.password || '').trim();
+    const expected = (ADMIN_PASSWORD || '').trim();
+    console.log(`[Auth] Login attempt — expected length: ${expected.length}, received length: ${received.length}`);
+    if (received !== expected)
         return res.status(401).json({ error: 'Contraseña incorrecta' });
     const token = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '12h' });
     res.json({ token });
