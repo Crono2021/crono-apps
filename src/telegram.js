@@ -146,9 +146,60 @@ export async function clickInlineButton(msgId, data) {
                 await new Promise(r => setTimeout(r, 2000 * attempt));
             } else {
                 throw err;
-            }
+        }
         }
     }
+}
+
+/**
+ * Search for a movie in the bot.
+ * Flow: /start → find "pelis" button → click → send title → collect video files.
+ */
+export async function searchMovieFiles(searchTitle) {
+    const c = await getClient();
+    const bot = await c.getEntity(BOT_USERNAME);
+
+    // Step 1: Send /start and find the main menu message with the películas button
+    await c.sendMessage(bot, { message: '/start' });
+    await new Promise(r => setTimeout(r, 2500));
+    const recent = await c.getMessages(bot, { limit: 5 });
+
+    let menuMsgId = null;
+    for (const msg of recent) {
+        if (!msg.replyMarkup?.rows) continue;
+        for (const row of msg.replyMarkup.rows) {
+            for (const btn of row.buttons) {
+                const data = btn.data ? new TextDecoder().decode(btn.data) : '';
+                if (data === 'pelis') { menuMsgId = msg.id; break; }
+            }
+            if (menuMsgId) break;
+        }
+        if (menuMsgId) break;
+    }
+    if (!menuMsgId) throw new Error('No se encontró el menú de películas en el bot');
+
+    // Step 2: Click "🍿 Películas" button — retry on timeout
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            await c.invoke(new Api.messages.GetBotCallbackAnswer({
+                peer: bot, msgId: menuMsgId,
+                data: Buffer.from('pelis', 'utf8'),
+            }));
+            break;
+        } catch (err) {
+            if (err?.message?.includes('BOT_RESPONSE_TIMEOUT') && attempt < 3) {
+                await new Promise(r => setTimeout(r, 2000 * attempt));
+            } else throw err;
+        }
+    }
+    await new Promise(r => setTimeout(r, 1500));
+
+    // Step 3: Send the movie title; use sent message ID as anchor
+    const sentMsg = await c.sendMessage(bot, { message: searchTitle });
+    await new Promise(r => setTimeout(r, 4000));
+
+    // Step 4: Collect video files received AFTER our title message
+    return await getVideoMessages(30, sentMsg.id);
 }
 
 export async function getVideoMessages(limit = 50, minId = 0) {

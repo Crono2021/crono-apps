@@ -106,6 +106,43 @@ export async function searchSeries(title, year) {
 }
 
 /**
+ * Search TMDB for a movie by title and optional year.
+ */
+export async function searchMovie(title, year) {
+    const cleanTitle = title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
+    const key = `movie_${cleanTitle}_${year || ''}`.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    const cached = cacheGet(key);
+    if (cached !== null) return cached;
+
+    try {
+        const params = new URLSearchParams({
+            api_key: TMDB_KEY, query: cleanTitle, language: 'es-ES', include_adult: false,
+        });
+        if (year) params.set('primary_release_year', year);
+        const res = await throttledFetch(`${TMDB_BASE}/search/movie?${params}`);
+        const json = await res.json();
+        let r = json.results?.[0];
+        if (!r && year) {
+            const p2 = new URLSearchParams({ api_key: TMDB_KEY, query: cleanTitle, language: 'es-ES', include_adult: false });
+            const r2 = await throttledFetch(`${TMDB_BASE}/search/movie?${p2}`);
+            r = (await r2.json()).results?.[0];
+        }
+        if (!r) { cacheSet(key, null); return null; }
+        const info = {
+            id: r.id, name: r.title, overview: r.overview,
+            posterPath: r.poster_path, backdropPath: r.backdrop_path,
+            year: r.release_date?.slice(0, 4),
+            rating: Math.round(r.vote_average * 10) / 10,
+        };
+        cacheSet(key, info);
+        return info;
+    } catch (err) {
+        console.warn('[TMDB] Movie search failed for', title, err.message);
+        return null;
+    }
+}
+
+/**
  * Get episodes for a specific season from TMDB.
  * Returns array of { number, name, overview, stillPath, runtime }.
  */

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cine en Castellano HD</title>
-    <meta name="description" content="Streaming de series desde Telegram. Tu videoclub personal.">
+    <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/src/styles.css">
@@ -54,7 +54,7 @@
             </div>
         </div>
 
-        <!-- CATALOG -->
+        <!-- CATALOG (SERIES) -->
         <div id="view-catalog" class="view">
             <header class="topbar">
                 <h1 class="topbar-title">Cine en Castellano HD</h1>
@@ -63,6 +63,12 @@
                 </div>
                 <button id="btn-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
             </header>
+
+            <!-- Main nav tabs: Series / Movies -->
+            <nav class="main-nav">
+                <button id="nav-series" class="main-nav-btn active">📺 Series</button>
+                <button id="nav-movies" class="main-nav-btn">🎬 Películas</button>
+            </nav>
 
             <!-- Genre tabs — always visible -->
             <div id="genre-tabs" class="genre-tabs"></div>
@@ -98,6 +104,53 @@
             </div>
         </div>
 
+        <!-- MOVIES VIEW -->
+        <div id="view-movies" class="view">
+            <header class="topbar">
+                <h1 class="topbar-title">🎬 Películas</h1>
+                <div class="topbar-search">
+                    <input type="text" id="movies-search-input" placeholder="🔍 Buscar películas...">
+                </div>
+                <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
+            </header>
+
+            <!-- Main nav tabs -->
+            <nav class="main-nav">
+                <button id="nav-series-from-movies" class="main-nav-btn">📺 Series</button>
+                <button id="nav-movies-active" class="main-nav-btn active">🎬 Películas</button>
+            </nav>
+
+            <div id="movies-loading" class="center-message hidden">
+                <div class="spinner"></div>
+                <p>Cargando catálogo de películas...</p>
+            </div>
+
+            <div id="movies-search-info" class="search-header" style="display:none">
+                <span id="movies-count" class="search-count"></span>
+            </div>
+
+            <div id="movies-grid" class="catalog-grid movies-grid"></div>
+        </div>
+
+        <!-- MOVIE FILES MODAL (overlay shown when bot searches) -->
+        <div id="movie-files-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <div class="modal-header-info">
+                        <h2 id="modal-movie-title" class="modal-title"></h2>
+                        <p id="modal-movie-year" class="modal-year"></p>
+                    </div>
+                    <button id="modal-close" class="btn-icon modal-close-btn">✕</button>
+                </div>
+                <div id="modal-tmdb-info" class="modal-tmdb-info"></div>
+                <div id="modal-loading" class="center-message">
+                    <div class="spinner"></div>
+                    <p>Buscando en el bot…</p>
+                </div>
+                <div id="modal-files-list" class="modal-files-list hidden"></div>
+                <div id="modal-error" class="modal-error hidden"></div>
+            </div>
+        </div>
 
         <!-- SERIES DETAIL (seasons from bot) -->
         <div id="view-series" class="view">

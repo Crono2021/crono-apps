@@ -22,10 +22,10 @@ async function loadCatalog() {
 import {
     isLoggedIn, sendCode, verifyCode, verify2FA, logout,
     sendBotCommand, clickInlineButton, getVideoMessages,
-    streamVideo, initServiceWorker,
+    streamVideo, initServiceWorker, searchMovieFiles,
 } from './telegram.js';
 import {
-    searchSeries, getSeasonEpisodes, extractSeasonNumber,
+    searchSeries, searchMovie, getSeasonEpisodes, extractSeasonNumber,
     parseEpisodeFile, posterUrl, stillUrl,
     getTrending, normTitle,
 } from './tmdb.js';
@@ -43,6 +43,11 @@ let heroShows = [];
 let heroIndex = 0;
 let heroTimer = null;
 let genreLoading = false;
+
+// ===== MOVIES STATE =====
+let moviesCatalog = [];
+let moviesReady = false;
+let movieTmdbCache = new Map();
 let catalogReady = false;
 
 const GENRE_ROWS = [
@@ -510,6 +515,193 @@ async function openSeries(series) {
 }
 
 $('btn-back-catalog').addEventListener('click', () => showCatalog());
+
+// ===== NAV TABS =====
+$('nav-series').addEventListener('click', () => showCatalog());
+$('nav-movies').addEventListener('click', () => showMovies());
+$('nav-series-from-movies').addEventListener('click', () => showCatalog());
+$('nav-movies-active').addEventListener('click', () => {}); // already here
+$('btn-movies-logout').addEventListener('click', async () => {
+    if (confirm('¿Cerrar sesión?')) { await logout(); location.reload(); }
+});
+$('modal-close').addEventListener('click', closeMovieModal);
+$('movie-files-modal').addEventListener('click', e => {
+    if (e.target === $('movie-files-modal')) closeMovieModal();
+});
+
+// ===== MOVIES CATALOG =====
+async function loadMovies() {
+    if (moviesCatalog.length > 0) return;
+    try {
+        const res = await fetch('/api/movies');
+        if (res.ok) moviesCatalog = await res.json();
+    } catch { moviesCatalog = []; }
+}
+
+async function showMovies() {
+    showView('view-movies');
+    $('movies-search-input').value = '';
+    $('movies-search-info').style.display = 'none';
+    if (moviesReady) { renderMovieGrid(moviesCatalog); return; }
+
+    $('movies-loading').classList.remove('hidden');
+    await loadMovies();
+    $('movies-loading').classList.add('hidden');
+    moviesReady = true;
+
+    renderMovieGrid(moviesCatalog);
+
+    // Load TMDB posters in background
+    loadMoviePosters();
+
+    $('movies-search-input').oninput = () => {
+        const q = $('movies-search-input').value.toLowerCase().trim();
+        if (!q) {
+            $('movies-search-info').style.display = 'none';
+            renderMovieGrid(moviesCatalog);
+            return;
+        }
+        const filtered = moviesCatalog.filter(m => m.title.toLowerCase().includes(q));
+        $('movies-search-info').style.display = 'block';
+        $('movies-count').textContent = `${filtered.length} resultado${filtered.length !== 1 ? 's' : ''}`;
+        renderMovieGrid(filtered);
+    };
+}
+
+function renderMovieGrid(movies) {
+    const grid = $('movies-grid');
+    grid.innerHTML = '';
+    movies.forEach(m => grid.appendChild(createMovieCard(m)));
+}
+
+function createMovieCard(movie) {
+    const card = document.createElement('div');
+    card.className = 'series-card movie-card';
+    const displayTitle = movie.title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
+    card.innerHTML = `
+        <div class="series-card-poster">
+            <div class="series-card-poster-placeholder">
+                <span>${escapeHtml(displayTitle.charAt(0).toUpperCase())}</span>
+            </div>
+        </div>
+        <div class="series-card-meta">
+            <div class="series-card-title">${escapeHtml(displayTitle)}</div>
+            ${movie.year ? `<div class="series-card-year">${movie.year}</div>` : ''}
+        </div>`;
+    card.addEventListener('click', () => openMovie(movie));
+    loadMovieCardPoster(card, movie);
+    return card;
+}
+
+async function loadMovieCardPoster(card, movie) {
+    const tmdb = await searchMovie(movie.search_title || movie.title, movie.year);
+    if (tmdb) movieTmdbCache.set(movie.id, tmdb);
+    if (!tmdb?.posterPath) return;
+    const url = posterUrl(tmdb.posterPath);
+    const placeholder = card.querySelector('.series-card-poster-placeholder');
+    const img = new Image();
+    img.onload = () => {
+        placeholder.style.backgroundImage = `url('${url}')`;
+        placeholder.style.backgroundSize = 'cover';
+        placeholder.style.backgroundPosition = 'center';
+        placeholder.querySelector('span').style.display = 'none';
+    };
+    img.src = url;
+}
+
+function loadMoviePosters() {
+    // Lazy-load posters for visible cards only
+    const cards = $('movies-grid').querySelectorAll('.movie-card');
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const idx = entry.target.dataset.movieIdx;
+                if (idx !== undefined) {
+                    const movie = moviesCatalog[parseInt(idx)];
+                    if (movie) loadMovieCardPoster(entry.target, movie);
+                    observer.unobserve(entry.target);
+                }
+            }
+        });
+    }, { rootMargin: '200px' });
+    cards.forEach((card, i) => { card.dataset.movieIdx = i; observer.observe(card); });
+}
+
+// ===== OPEN MOVIE (bot search + file selector) =====
+async function openMovie(movie) {
+    const modal = $('movie-files-modal');
+    const displayTitle = movie.title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
+
+    $('modal-movie-title').textContent = displayTitle;
+    $('modal-movie-year').textContent = movie.year ? `${movie.year}` : '';
+    $('modal-loading').classList.remove('hidden');
+    $('modal-files-list').classList.add('hidden');
+    $('modal-error').classList.add('hidden');
+    $('modal-tmdb-info').innerHTML = '';
+    modal.classList.remove('hidden');
+
+    // Load TMDB info in background
+    const cachedTmdb = movieTmdbCache.get(movie.id);
+    const tmdbPromise = cachedTmdb
+        ? Promise.resolve(cachedTmdb)
+        : searchMovie(movie.search_title || movie.title, movie.year);
+
+    tmdbPromise.then(tmdb => {
+        if (!tmdb) return;
+        movieTmdbCache.set(movie.id, tmdb);
+        const stars = tmdb.rating ? `★ ${tmdb.rating}` : '';
+        $('modal-tmdb-info').innerHTML = `
+            ${tmdb.overview ? `<p class="modal-overview">${escapeHtml(tmdb.overview)}</p>` : ''}
+            ${stars ? `<span class="modal-rating">${stars}</span>` : ''}
+        `;
+    });
+
+    try {
+        const searchTitle = movie.search_title || movie.title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
+        const videos = await searchMovieFiles(searchTitle);
+        $('modal-loading').classList.add('hidden');
+
+        if (videos.length === 0) {
+            $('modal-error').textContent = 'El bot no ha devuelto ningún archivo para esta película.';
+            $('modal-error').classList.remove('hidden');
+            return;
+        }
+
+        const list = $('modal-files-list');
+        list.innerHTML = '';
+        videos.forEach(video => {
+            const sizeStr = video.fileSize > 1073741824
+                ? `${(video.fileSize / 1073741824).toFixed(1)} GB`
+                : `${(video.fileSize / (1024 * 1024)).toFixed(0)} MB`;
+            const durStr = formatDuration(video.duration);
+            const label = video.caption || video.fileName.replace(/\.[^.]+$/, '');
+
+            const item = document.createElement('div');
+            item.className = 'movie-file-item';
+            item.innerHTML = `
+                <div class="movie-file-icon">▶</div>
+                <div class="movie-file-info">
+                    <div class="movie-file-name">${escapeHtml(label)}</div>
+                    <div class="movie-file-meta">${sizeStr}${durStr ? ' · ' + durStr : ''}</div>
+                </div>
+            `;
+            item.addEventListener('click', () => {
+                closeMovieModal();
+                playVideo(video, displayTitle);
+            });
+            list.appendChild(item);
+        });
+        list.classList.remove('hidden');
+    } catch (err) {
+        $('modal-loading').classList.add('hidden');
+        $('modal-error').textContent = `Error: ${escapeHtml(err.message)}`;
+        $('modal-error').classList.remove('hidden');
+    }
+}
+
+function closeMovieModal() {
+    $('movie-files-modal').classList.add('hidden');
+}
 
 
 // ===== EPISODES =====
