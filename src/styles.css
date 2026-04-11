@@ -485,6 +485,18 @@ body {
     text-overflow: ellipsis;
 }
 .movie-file-meta { font-size: 0.78rem; color: rgba(255,255,255,0.4); margin-top: 2px; }
+.movie-file-arrow {
+    color: rgba(255,255,255,0.3);
+    font-size: 1.3rem;
+    flex-shrink: 0;
+    transition: color 0.2s;
+}
+.movie-file-item.active {
+    background: rgba(124,106,247,0.15);
+    pointer-events: none;
+}
+.movie-file-item.active .movie-file-arrow { color: #7c6af7; }
+.movie-file-item.active .movie-file-meta { color: #7c6af7; }
 .modal-error {
     padding: 20px;
     color: rgba(255,80,80,0.9);

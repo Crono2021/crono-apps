@@ -22,7 +22,7 @@ async function loadCatalog() {
 import {
     isLoggedIn, sendCode, verifyCode, verify2FA, logout,
     sendBotCommand, clickInlineButton, getVideoMessages,
-    streamVideo, initServiceWorker, searchMovieFiles,
+    streamVideo, initServiceWorker, searchMovieOptions, getMovieVideoFile,
 } from './telegram.js';
 import {
     searchSeries, searchMovie, getSeasonEpisodes, extractSeasonNumber,
@@ -627,7 +627,7 @@ function loadMoviePosters() {
     cards.forEach((card, i) => { card.dataset.movieIdx = i; observer.observe(card); });
 }
 
-// ===== OPEN MOVIE (bot search + file selector) =====
+// ===== OPEN MOVIE (bot search + inline button selector) =====
 async function openMovie(movie) {
     const modal = $('movie-files-modal');
     const displayTitle = movie.title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
@@ -658,39 +658,50 @@ async function openMovie(movie) {
 
     try {
         const searchTitle = movie.search_title || movie.title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
-        const videos = await searchMovieFiles(searchTitle);
+        const { msgId, buttons } = await searchMovieOptions(searchTitle);
         $('modal-loading').classList.add('hidden');
 
-        if (videos.length === 0) {
-            $('modal-error').textContent = 'El bot no ha devuelto ningún archivo para esta película.';
+        if (buttons.length === 0) {
+            $('modal-error').textContent = 'El bot no encontró ningún resultado para esta película.';
             $('modal-error').classList.remove('hidden');
             return;
         }
 
         const list = $('modal-files-list');
         list.innerHTML = '';
-        videos.forEach(video => {
-            const sizeStr = video.fileSize > 1073741824
-                ? `${(video.fileSize / 1073741824).toFixed(1)} GB`
-                : `${(video.fileSize / (1024 * 1024)).toFixed(0)} MB`;
-            const durStr = formatDuration(video.duration);
-            const label = video.caption || video.fileName.replace(/\.[^.]+$/, '');
 
+        buttons.forEach(btn => {
             const item = document.createElement('div');
             item.className = 'movie-file-item';
             item.innerHTML = `
                 <div class="movie-file-icon">▶</div>
                 <div class="movie-file-info">
-                    <div class="movie-file-name">${escapeHtml(label)}</div>
-                    <div class="movie-file-meta">${sizeStr}${durStr ? ' · ' + durStr : ''}</div>
+                    <div class="movie-file-name">${escapeHtml(btn.text)}</div>
+                    <div class="movie-file-meta">Toca para cargar</div>
                 </div>
+                <div class="movie-file-arrow">›</div>
             `;
-            item.addEventListener('click', () => {
-                closeMovieModal();
-                playVideo(video, displayTitle);
+            item.addEventListener('click', async () => {
+                // Show loading state in modal
+                list.querySelectorAll('.movie-file-item').forEach(el => el.classList.remove('active'));
+                item.classList.add('active');
+                item.querySelector('.movie-file-meta').textContent = 'Obteniendo archivo...';
+                item.querySelector('.movie-file-arrow').textContent = '⟳';
+
+                try {
+                    const video = await getMovieVideoFile(msgId, btn.data);
+                    if (!video) throw new Error('El bot no envió ningún archivo');
+                    closeMovieModal();
+                    playVideo(video, displayTitle);
+                } catch (err) {
+                    item.querySelector('.movie-file-meta').textContent = `Error: ${err.message}`;
+                    item.querySelector('.movie-file-arrow').textContent = '!';
+                    item.classList.remove('active');
+                }
             });
             list.appendChild(item);
         });
+
         list.classList.remove('hidden');
     } catch (err) {
         $('modal-loading').classList.add('hidden');
