@@ -27,6 +27,7 @@ export default defineConfig({
         port: 3001,
     },
     preview: {
-        allowedHosts: 'all',
+        host: '0.0.0.0',
+        allowedHosts: ['cineflix-production-19e3.up.railway.app', '.railway.app'],
     },
 });
