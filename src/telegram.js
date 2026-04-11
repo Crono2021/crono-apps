@@ -128,13 +128,27 @@ export async function sendBotCommand(payload) {
 export async function clickInlineButton(msgId, data) {
     const c = await getClient();
     const bot = await c.getEntity(BOT_USERNAME);
-    await c.invoke(new Api.messages.GetBotCallbackAnswer({
-        peer: bot,
-        msgId,
-        data: Buffer.from(data, 'utf8'),
-    }));
-    await new Promise(r => setTimeout(r, 3000));
-    return true;
+
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            await c.invoke(new Api.messages.GetBotCallbackAnswer({
+                peer: bot,
+                msgId,
+                data: Buffer.from(data, 'utf8'),
+            }));
+            await new Promise(r => setTimeout(r, 3000));
+            return true;
+        } catch (err) {
+            const isBotTimeout = err?.message?.includes('BOT_RESPONSE_TIMEOUT');
+            if (isBotTimeout && attempt < MAX_RETRIES) {
+                console.warn(`[Bot] BOT_RESPONSE_TIMEOUT (attempt ${attempt}/${MAX_RETRIES}), retrying...`);
+                await new Promise(r => setTimeout(r, 2000 * attempt));
+            } else {
+                throw err;
+            }
+        }
+    }
 }
 
 export async function getVideoMessages(limit = 50, minId = 0) {
