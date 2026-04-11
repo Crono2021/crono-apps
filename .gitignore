@@ -1,0 +1,6 @@
+node_modules/
+dist/
+tvgram-extracted/
+*.apk
+.env
+.env.local
