@@ -4,7 +4,21 @@ import { Buffer as _Buf } from 'buffer';
 window.Buffer = _Buf;
 globalThis.Buffer = _Buf;
 
-import catalog from './catalog.json';
+let catalog = [];
+
+async function loadCatalog() {
+    try {
+        const res = await fetch('/api/catalog');
+        if (res.ok) catalog = await res.json();
+        else throw new Error('API error');
+    } catch {
+        // Fallback: embedded catalog (only if API fails)
+        try {
+            const mod = await import('./catalog.json', { assert: { type: 'json' } });
+            catalog = mod.default;
+        } catch { catalog = []; }
+    }
+}
 import {
     isLoggedIn, sendCode, verifyCode, verify2FA, logout,
     sendBotCommand, clickInlineButton, getVideoMessages,
@@ -158,6 +172,9 @@ async function showCatalog() {
         return;
     }
     catalogReady = true;
+
+    // Load catalog from API (or fallback)
+    await loadCatalog();
 
     // Genre tabs
     initGenreTabs();
