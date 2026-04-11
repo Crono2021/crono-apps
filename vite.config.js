@@ -12,6 +12,25 @@ export default defineConfig({
             },
             protocolImports: true,
         }),
+        // Fix GramJS serializeBytes: in production builds class names are minified
+        // so `instanceof Buffer` fails for Uint8Array returned by Web Crypto API.
+        // We patch the check to use ArrayBuffer.isView() which works for both.
+        {
+            name: 'fix-gramjs-buffer-instanceof',
+            transform(code, id) {
+                if (id.includes('generationHelpers')) {
+                    return code
+                        .replace(
+                            '!(data instanceof Buffer)',
+                            '!ArrayBuffer.isView(data) && !Buffer.isBuffer(data)'
+                        )
+                        .replace(
+                            'throw Error(`Bytes or str expected, not ${data.constructor.name}`)',
+                            'data = Buffer.from(data instanceof ArrayBuffer ? data : data.buffer || data); /* gramjs-patch */'
+                        );
+                }
+            },
+        },
     ],
     resolve: {
         alias: {
