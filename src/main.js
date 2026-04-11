@@ -504,7 +504,24 @@ async function openSeason(button, series) {
 
     try {
         if (button.data && currentBotMsgId) {
-            await clickInlineButton(currentBotMsgId, button.data);
+            try {
+                await clickInlineButton(currentBotMsgId, button.data);
+            } catch (btnErr) {
+                // MESSAGE_ID_INVALID → bot invalidated the old message.
+                // Re-send the series command to get a fresh inline keyboard.
+                if (btnErr.message?.includes('MESSAGE_ID_INVALID') && currentSeries) {
+                    console.warn('MESSAGE_ID_INVALID — refreshing bot message...');
+                    const fresh = await sendBotCommand(currentSeries.payload);
+                    currentBotMsgId = fresh.messageId;
+                    // Find the matching season button in the fresh response
+                    const freshBtn = fresh.buttons.find(b => b.text === button.text);
+                    if (freshBtn?.data) {
+                        await clickInlineButton(currentBotMsgId, freshBtn.data);
+                    }
+                } else {
+                    throw btnErr;
+                }
+            }
         }
 
         const videos = await getVideoMessages(100, currentBotMsgId || 0);
