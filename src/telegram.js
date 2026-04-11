@@ -148,18 +148,31 @@ export async function getVideoMessages(limit = 50, minId = 0) {
     for (const msg of messages) {
         if (!msg.media?.document) continue;
         const doc = msg.media.document;
-        let isVideo = false, fileName = 'video.mp4', width = 0, height = 0, duration = 0;
+        let isVideo = false, fileName = '', width = 0, height = 0, duration = 0;
 
         for (const attr of doc.attributes || []) {
-            if (attr.className === 'DocumentAttributeVideo') {
+            const cn = (attr.className || '').toLowerCase();
+            // Detect video attribute — check className OR presence of duration/w/h fields
+            if (cn === 'documentattributevideo' || (attr.duration !== undefined && attr.w !== undefined)) {
                 isVideo = true;
-                width = attr.w; height = attr.h;
+                width = attr.w || 0;
+                height = attr.h || 0;
                 duration = Math.round(attr.duration || 0);
-            } else if (attr.className === 'DocumentAttributeFilename') {
-                fileName = attr.fileName;
+            }
+            // Detect filename attribute — check className OR presence of fileName field
+            if (cn === 'documentattributefilename' || (attr.fileName && !attr.duration)) {
+                if (attr.fileName) fileName = attr.fileName;
             }
         }
         if (!isVideo) continue;
+
+        // Fallback: use caption, then generic name with msgId
+        if (!fileName) {
+            const cap = (msg.message || '').trim();
+            fileName = cap || `video_${msg.id}.mp4`;
+        }
+        // Ensure it has an extension
+        if (!fileName.includes('.')) fileName += '.mp4';
 
         videos.push({
             msgId: msg.id, fileName,
