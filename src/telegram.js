@@ -86,7 +86,9 @@ export async function verifyCode(phone, code) {
 
 export async function verify2FA(password) {
     const pwdInfo = await client.invoke(new Api.account.GetPassword());
-    const inputCheck = await computeCheck(pwdInfo, password);
+    // In the browser production bundle, computeCheck needs an explicit Buffer
+    const pwdBuffer = Buffer.from(password, 'utf-8');
+    const inputCheck = await computeCheck(pwdInfo, pwdBuffer);
     await client.invoke(new Api.auth.CheckPassword({ password: inputCheck }));
     saveSession();
     return { success: true };
