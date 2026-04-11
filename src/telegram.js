@@ -152,101 +152,20 @@ export async function clickInlineButton(msgId, data) {
 }
 
 /**
- * Search for a movie in the bot and return the inline keyboard buttons.
- * Flow: /start → click 'pelis' → send title → read bot's inline keyboard response.
- * @returns {{ msgId: number, buttons: Array<{text, data, msgId}> }}
+ * Search for a movie using the /peli command.
+ * The bot sends all matching video files directly (no buttons needed).
+ * @param {string} searchTitle  - title to search (sent as "/peli [title]")
+ * @returns {Array}             - video objects (same shape as getVideoMessages)
  */
-export async function searchMovieOptions(searchTitle) {
+export async function searchMovieByPayload(searchTitle) {
     const c = await getClient();
     const bot = await c.getEntity(BOT_USERNAME);
 
-    // Step 1: Send /start and find the main menu message with the 'pelis' button
-    await c.sendMessage(bot, { message: '/start' });
-    await new Promise(r => setTimeout(r, 2500));
-    const recent = await c.getMessages(bot, { limit: 5 });
+    const sentMsg = await c.sendMessage(bot, { message: `/peli ${searchTitle}` });
+    await new Promise(r => setTimeout(r, 4000)); // wait for bot to send all files
 
-    let menuMsgId = null;
-    for (const msg of recent) {
-        if (!msg.replyMarkup?.rows) continue;
-        for (const row of msg.replyMarkup.rows) {
-            for (const btn of row.buttons) {
-                const data = btn.data ? new TextDecoder().decode(btn.data) : '';
-                if (data === 'pelis') { menuMsgId = msg.id; break; }
-            }
-            if (menuMsgId) break;
-        }
-        if (menuMsgId) break;
-    }
-    if (!menuMsgId) throw new Error('No se encontró el menú de películas en el bot');
-
-    // Step 2: Click "🍿 Películas" button — retry on timeout
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-            await c.invoke(new Api.messages.GetBotCallbackAnswer({
-                peer: bot, msgId: menuMsgId,
-                data: Buffer.from('pelis', 'utf8'),
-            }));
-            break;
-        } catch (err) {
-            if (err?.message?.includes('BOT_RESPONSE_TIMEOUT') && attempt < 3) {
-                await new Promise(r => setTimeout(r, 2000 * attempt));
-            } else throw err;
-        }
-    }
-    await new Promise(r => setTimeout(r, 1500));
-
-    // Step 3: Send the movie search title and wait for bot's reply
-    const sentMsg = await c.sendMessage(bot, { message: searchTitle });
-    await new Promise(r => setTimeout(r, 3500));
-
-    // Step 4: Find the bot's response message with inline keyboard buttons (one per file/version)
-    const afterMsgs = await c.getMessages(bot, { limit: 8, minId: sentMsg.id });
-    for (const msg of afterMsgs) {
-        if (!msg.replyMarkup?.rows) continue;
-        const buttons = [];
-        for (const row of msg.replyMarkup.rows) {
-            for (const btn of row.buttons) {
-                const data = btn.data ? new TextDecoder().decode(btn.data) : '';
-                // Skip "Volver/Back" buttons
-                if (!data) continue;
-                const textLower = btn.text.toLowerCase();
-                if (textLower.includes('volver') || textLower.includes('back') || data === 'pelis_back') continue;
-                buttons.push({ text: btn.text, data, msgId: msg.id });
-            }
-        }
-        if (buttons.length > 0) return { msgId: msg.id, buttons };
-    }
-
-    return { msgId: null, buttons: [] };
-}
-
-/**
- * Click an inline button from the movie results keyboard,
- * then collect the video file the bot sends in response.
- * @returns {Object|null}  — video object or null if none received
- */
-export async function getMovieVideoFile(msgId, buttonData) {
-    const c = await getClient();
-    const bot = await c.getEntity(BOT_USERNAME);
-
-    // Retry on BOT_RESPONSE_TIMEOUT
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-            await c.invoke(new Api.messages.GetBotCallbackAnswer({
-                peer: bot, msgId,
-                data: Buffer.from(buttonData, 'utf8'),
-            }));
-            break;
-        } catch (err) {
-            if (err?.message?.includes('BOT_RESPONSE_TIMEOUT') && attempt < 3) {
-                await new Promise(r => setTimeout(r, 2000 * attempt));
-            } else throw err;
-        }
-    }
-    await new Promise(r => setTimeout(r, 4000)); // give bot time to send the file
-
-    const videos = await getVideoMessages(5, msgId);
-    return videos.length > 0 ? videos[0] : null;
+    // Collect up to 30 video files sent after our command
+    return await getVideoMessages(30, sentMsg.id);
 }
 
 export async function getVideoMessages(limit = 50, minId = 0) {
