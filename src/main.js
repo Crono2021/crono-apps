@@ -553,9 +553,13 @@ async function openSeason(button, series) {
         // Don't sort alphabetically. The bot provides them in reverse chronological order
         // (newest message first). Reverse it to show oldest (Episode 1) first.
         videos.reverse();
-        // Fetch TMDB episode details if we have a series ID
+        // Fetch TMDB episode details — ensure TMDB search has completed
         const seasonNum = extractSeasonNumber(button.text);
         let tmdbEpisodes = [];
+        // If TMDB search is still in progress (race condition), wait for it now
+        if (!currentTmdb && currentSeries) {
+            currentTmdb = await searchSeries(currentSeries.title, currentSeries.year);
+        }
         if (currentTmdb?.id) {
             tmdbEpisodes = await getSeasonEpisodes(currentTmdb.id, seasonNum);
         }
