@@ -1382,6 +1382,17 @@ $('btn-back-series').addEventListener('click', () => showView('view-series'));
 
 // ===== PLAYER =====
 async function playVideo(video, seriesTitle) {
+    // ── Native Android: use ExoPlayer via Capacitor plugin ──────────────────
+    if (isNativeApp()) {
+        try {
+            await streamVideoNative(video.media);
+        } catch (err) {
+            console.error('[Native Player] Error:', err.message);
+            alert(`Error al reproducir nativamente: ${err.message}`);
+        }
+        return;
+    }
+
     const videoEl = $('video-player');
 
     $('player-title').textContent = video.fileName;
