@@ -68,7 +68,7 @@ import {
     isLoggedIn, sendCode, verifyCode, verify2FA, logout,
     sendBotCommand, clickInlineButton, getVideoMessages,
     streamVideo, initServiceWorker, searchMovieByPayload,
-    playInMpv, isNativeApp, streamVideoNative,
+    playInMpv, isNativeApp, streamVideoNative, restoreNativeSession,
 } from './telegram.js';
 import {
     searchSeries, searchMovie, getSeasonEpisodes, extractSeasonNumber,
@@ -134,6 +134,10 @@ function showStep(stepId) {
 async function init() {
     showView('view-login');
     showStep('login-loading');
+
+    // On Android: restore session from native SharedPreferences BEFORE checking login.
+    // localStorage can be wiped by the OS; SharedPreferences is always persistent.
+    await restoreNativeSession();
 
     // Init Service Worker (blocking — must be ready before streaming)
     await initServiceWorker();

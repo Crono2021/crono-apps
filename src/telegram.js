@@ -20,7 +20,35 @@ function getSavedSession() {
 }
 
 function saveSession() {
-    if (client) localStorage.setItem(SESSION_KEY, client.session.save());
+    if (!client) return;
+    const sessionStr = client.session.save();
+    // 1. Always save to localStorage (fast, synchronous)
+    localStorage.setItem(SESSION_KEY, sessionStr);
+    // 2. On Android: also persist to native SharedPreferences (survives memory cleanup)
+    if (window.Capacitor?.isNativePlatform?.()) {
+        const prefs = window.Capacitor?.Plugins?.Preferences;
+        if (prefs) prefs.set({ key: SESSION_KEY, value: sessionStr }).catch(() => {});
+    }
+}
+
+/**
+ * On Android, localStorage can be wiped by the OS under memory pressure.
+ * This function restores the session from native SharedPreferences to localStorage
+ * BEFORE init() checks isLoggedIn(). Must be awaited at app startup.
+ */
+export async function restoreNativeSession() {
+    if (!window.Capacitor?.isNativePlatform?.()) return; // web: nothing to do
+    try {
+        const prefs = window.Capacitor?.Plugins?.Preferences;
+        if (!prefs) return;
+        const { value } = await prefs.get({ key: SESSION_KEY });
+        if (value && !localStorage.getItem(SESSION_KEY)) {
+            localStorage.setItem(SESSION_KEY, value);
+            console.log('[Session] Restored from native storage ✓');
+        }
+    } catch (e) {
+        console.warn('[Session] Could not restore from native storage:', e.message);
+    }
 }
 
 // ===== CLIENT =====
@@ -97,8 +125,14 @@ export async function verify2FA(password) {
 export async function logout() {
     try { await client.invoke(new Api.auth.LogOut()); } catch { }
     localStorage.removeItem(SESSION_KEY);
+    // Also clear from native persistent storage
+    if (window.Capacitor?.isNativePlatform?.()) {
+        const prefs = window.Capacitor?.Plugins?.Preferences;
+        if (prefs) prefs.remove({ key: SESSION_KEY }).catch(() => {});
+    }
     client = null;
 }
+
 
 // ===== BOT INTERACTION =====
 
