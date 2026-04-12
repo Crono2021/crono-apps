@@ -120,15 +120,99 @@ const GENRE_ROWS = [
 const $ = id => document.getElementById(id);
 
 // ===== VIEW MANAGEMENT =====
+
+// Stack to track navigation history so back button works correctly on Android
+const viewHistory = [];
+
 function showView(viewId) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     $(viewId).classList.add('active');
+    // Track history (avoid duplicates at top)
+    if (viewHistory[viewHistory.length - 1] !== viewId) {
+        viewHistory.push(viewId);
+    }
 }
 
 function showStep(stepId) {
     document.querySelectorAll('.login-step').forEach(s => s.classList.remove('active'));
     $(stepId).classList.add('active');
 }
+
+// ===== ANDROID BACK BUTTON =====
+// Called by MainActivity.java via evaluateJavascript when back is pressed.
+// Returns true if we handled navigation, false to let Android minimize.
+window.__cineflixBack = function () {
+    // Close movie modal if open
+    const modal = $('movie-modal');
+    if (modal && !modal.classList.contains('hidden')) {
+        modal.classList.add('hidden');
+        return true;
+    }
+
+    const activeView = document.querySelector('.view.active')?.id;
+
+    switch (activeView) {
+        case 'view-player':
+            // Stop video and go back
+            const vp = $('video-player');
+            if (vp) { vp.pause(); vp.src = ''; }
+            if (playerOrigin === 'movie') {
+                viewHistory.pop();
+                showView('view-movies');
+            } else {
+                viewHistory.pop();
+                showView('view-episodes');
+            }
+            return true;
+
+        case 'view-episodes':
+            viewHistory.pop();
+            showView('view-series');
+            return true;
+
+        case 'view-series':
+            viewHistory.pop();
+            showView('view-movies');
+            return true;
+
+        case 'view-movies':
+            return false; // At home → let Android minimize
+
+        default:
+            return false; // Unknown state → let Android handle
+    }
+};
+
+// ===== LAZY POSTER LOADING (IntersectionObserver) =====
+// Fires only when a card enters the viewport → eliminates mass-loading flicker.
+const _posterObserver = new IntersectionObserver(
+    (entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                _posterObserver.unobserve(entry.target);
+                const fn = entry.target.__loadPoster;
+                if (fn) { fn(); entry.target.__loadPoster = null; }
+            }
+        });
+    },
+    { rootMargin: '200px 0px', threshold: 0.01 }
+);
+
+function schedulePosterLoad(card, loadFn) {
+    card.__loadPoster = loadFn;
+    _posterObserver.observe(card);
+}
+
+function applyPosterImage(placeholder, url) {
+    if (!placeholder) return;
+    const img = document.createElement('img');
+    img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.25s;border-radius:inherit;pointer-events:none;';
+    img.onload = () => { img.style.opacity = '1'; const sp = placeholder.querySelector('span'); if (sp) sp.style.display = 'none'; };
+    img.src = url;
+    placeholder.style.position = 'relative';
+    placeholder.appendChild(img);
+}
+
 
 // ===== INIT =====
 async function init() {
@@ -466,25 +550,16 @@ function createCard(series) {
             ${series.year ? `<div class="series-card-year">${series.year}</div>` : ''}
         </div>`;
     card.addEventListener('click', () => openSeries(series));
-    loadCardPoster(card, series);
+    // Schedule poster load only when card enters viewport
+    schedulePosterLoad(card, () => loadCardPoster(card, series));
     return card;
 }
 
 async function loadCardPoster(card, series) {
     const tmdb = await searchSeries(series.title, series.year);
     if (tmdb) catalogTmdbCache.set(series.title, tmdb);
-    if (!tmdb?.posterPath) return;
-    const url = posterUrl(tmdb.posterPath);
-    const placeholder = card.querySelector('.series-card-poster-placeholder');
-    if (!placeholder || !card.isConnected) return;
-    // Use a single <img> with CSS fade — avoids double DOM mutation that causes
-    // layout thrashing / flickering on Android WebView
-    const img = document.createElement('img');
-    img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s;border-radius:inherit;';
-    img.onload = () => { img.style.opacity = '1'; placeholder.querySelector('span').style.display = 'none'; };
-    img.src = url;
-    placeholder.style.position = 'relative';
-    placeholder.appendChild(img);
+    if (!tmdb?.posterPath || !card.isConnected) return;
+    applyPosterImage(card.querySelector('.series-card-poster-placeholder'), posterUrl(tmdb.posterPath));
 }
 
 // ===== BACKGROUND GENRE LOADER =====
@@ -1063,7 +1138,8 @@ function createMovieCard(movie) {
             ${movie.year ? `<div class="series-card-year">${movie.year}</div>` : ''}
         </div>`;
     card.addEventListener('click', () => openMovie(movie));
-    loadMovieCardPoster(card, movie);
+    // Defer poster load until card is near the viewport
+    schedulePosterLoad(card, () => loadMovieCardPoster(card, movie));
     return card;
 }
 
@@ -1086,18 +1162,10 @@ async function loadMovieCardPoster(card, movie) {
         const yearEl = card.querySelector('.series-card-year');
         if (yearEl && tmdb.year) yearEl.textContent = tmdb.year;
     }
-    if (!tmdb?.posterPath) return;
-    const url = posterUrl(tmdb.posterPath);
-    const placeholder = card.querySelector('.series-card-poster-placeholder');
-    if (!placeholder || !card.isConnected) return;
-    // Single <img> with CSS fade — no backgroundImage mutation, no reflow flicker
-    const img = document.createElement('img');
-    img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s;border-radius:inherit;';
-    img.onload = () => { img.style.opacity = '1'; placeholder.querySelector('span').style.display = 'none'; };
-    img.src = url;
-    placeholder.style.position = 'relative';
-    placeholder.appendChild(img);
+    if (!tmdb?.posterPath || !card.isConnected) return;
+    applyPosterImage(card.querySelector('.series-card-poster-placeholder'), posterUrl(tmdb.posterPath));
 }
+
 
 // ===== OPEN MOVIE (bot /peli command → direct video files) =====
 async function openMovie(movie) {
