@@ -6,17 +6,62 @@ globalThis.Buffer = _Buf;
 
 let catalog = [];
 
+// ── Remote catalog URLs (GitHub raw) ─────────────────────────────────────────
+const CATALOG_REMOTE_URL = 'https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/catalog.json';
+const CATALOG_CACHE_KEY  = 'cineflix_catalog_cache';
+const CATALOG_CACHE_TS   = 'cineflix_catalog_ts';
+const CATALOG_TTL_MS     = 1000 * 60 * 60 * 6; // Refresh every 6 hours max
+
+const MOVIES_REMOTE_URL  = 'https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/movies.json';
+const MOVIES_CACHE_KEY   = 'cineflix_movies_cache';
+const MOVIES_CACHE_TS    = 'cineflix_movies_ts';
+const MOVIES_TTL_MS      = 1000 * 60 * 60 * 6; // Refresh every 6 hours max
+
 async function loadCatalog() {
+    // 1️⃣ Show cached version INSTANTLY (zero wait for the user)
     try {
-        const res = await fetch('/api/catalog');
-        if (res.ok) catalog = await res.json();
-        else throw new Error('API error');
-    } catch {
-        // Fallback: embedded catalog (only if API fails)
-        try {
-            const mod = await import('./catalog.json', { assert: { type: 'json' } });
-            catalog = mod.default;
-        } catch { catalog = []; }
+        const cached = localStorage.getItem(CATALOG_CACHE_KEY);
+        if (cached) {
+            catalog = JSON.parse(cached);
+            console.log(`[Catalog] Loaded ${catalog.length} items from cache`);
+        }
+    } catch { /* ignore */ }
+
+    // 2️⃣ If cache is empty or older than TTL, fetch from remote synchronously
+    const lastFetch = parseInt(localStorage.getItem(CATALOG_CACHE_TS) || '0', 10);
+    const needsSync = !catalog.length || (Date.now() - lastFetch > CATALOG_TTL_MS);
+
+    if (needsSync) {
+        await fetchRemoteCatalog();
+    } else {
+        // 3️⃣ Otherwise refresh silently in background (non-blocking)
+        fetchRemoteCatalog().catch(() => {});
+    }
+}
+
+async function fetchRemoteCatalog() {
+    try {
+        const res = await fetch(CATALOG_REMOTE_URL + '?v=' + Date.now());
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const remote = await res.json();
+        if (Array.isArray(remote) && remote.length > 0) {
+            catalog = remote;
+            localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(remote));
+            localStorage.setItem(CATALOG_CACHE_TS, Date.now().toString());
+            console.log(`[Catalog] ✅ Updated from remote: ${remote.length} items`);
+        }
+    } catch (err) {
+        console.warn('[Catalog] Remote fetch failed, using cache/Railway fallback:', err.message);
+        if (!catalog.length) {
+            try {
+                const res = await fetch('/api/catalog');
+                if (res.ok) {
+                    catalog = await res.json();
+                    localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(catalog));
+                    localStorage.setItem(CATALOG_CACHE_TS, Date.now().toString());
+                }
+            } catch { /* ignore */ }
+        }
     }
 }
 import {
@@ -555,36 +600,83 @@ $('btn-back-player').addEventListener('click', () => {
 // ===== MOVIES CATALOG =====
 async function loadMovies() {
     if (moviesCatalog.length > 0) return;
-    try {
-        const res = await fetch('/api/movies');
-        if (res.ok) {
-            const all = await res.json();
-            // Filter out raw file entries that got imported into the DB as movie titles
-            // e.g. "La Jungla de Cristal III [ES] 1080p.mp4", filenames with quality tags
-            // Filter raw filenames and deduplicate titles so we don't have multiple cards for the same movie
-            const valid = all.filter(m => {
-                const t = m.title || '';
-                if (/\.(mp4|mkv|avi|mov|ts|m2ts|webm)\s*$/i.test(t)) return false;
-                if (/\[(?:ES|ES5|CAST|LAT)[^\]]*\]\s*\d{3,4}p/i.test(t)) return false;
-                if (/\b(?:720p|1080p|4K|2160p)\b/i.test(t)) return false;
-                return true;
-            });
 
-            const seen = new Set();
-            moviesCatalog = valid.filter(m => {
-                // Normalize title tightly to dedup duplicates like "Dora (2025)" and "Dora"
-                const norm = (m.search_title || m.title).toLowerCase()
-                    .replace(/\s*\(\s*(Castellano|Cast\.|Latino|Audio|Español|V\.O\.|VOSE?|Doblado|Subtitulado)[^)]*\)/gi, '')
-                    .replace(/\s*\(\d{4}\)\s*$/, '')
-                    .replace(/\s+\b(19|20)\d{2}\b\s*$/, '')
-                    .replace(/[^a-z0-9]/g, '');
-                if (norm.length > 2 && seen.has(norm)) return false;
-                seen.add(norm);
-                return true;
-            });
+    // 1️⃣ Show cached version INSTANTLY
+    try {
+        const cached = localStorage.getItem(MOVIES_CACHE_KEY);
+        if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                moviesCatalog = processMoviesList(parsed);
+                console.log(`[Movies] Loaded ${moviesCatalog.length} distinct items from cache`);
+            }
         }
-    } catch { moviesCatalog = []; }
+    } catch { /* ignore */ }
+
+    // 2️⃣ Fetch from GitHub (primary source)
+    const lastFetch = parseInt(localStorage.getItem(MOVIES_CACHE_TS) || '0', 10);
+    const isExpired = (Date.now() - lastFetch) > MOVIES_TTL_MS;
+
+    async function fetchRemote() {
+        try {
+            console.log('[Movies] Fetching updated movies catalog from GitHub...');
+            const r = await fetch(MOVIES_REMOTE_URL + '?v=' + Date.now());
+            if (!r.ok) throw new Error('GitHub fetch failed');
+            const data = await r.json();
+            processAndSave(data);
+        } catch (err) {
+            console.warn('[Movies] Failed to fetch remote catalog, falling back to Railway API:', err);
+            if (moviesCatalog.length === 0) {
+                try {
+                    const res = await fetch('/api/movies');
+                    if (res.ok) {
+                        const data = await res.json();
+                        processAndSave(data);
+                    }
+                } catch { /* ignore */ }
+            }
+        }
+
+        function processAndSave(parsed) {
+            moviesCatalog = processMoviesList(parsed);
+            localStorage.setItem(MOVIES_CACHE_KEY, JSON.stringify(moviesCatalog));
+            localStorage.setItem(MOVIES_CACHE_TS, Date.now().toString());
+            console.log(`[Movies] Updated ${moviesCatalog.length} movies via remote`);
+        }
+    }
+
+    if (!isExpired && moviesCatalog.length > 0) {
+        console.log('[Movies] Background update scheduled in 5s');
+        setTimeout(fetchRemote, 5000);
+        return;
+    }
+
+    await fetchRemote();
 }
+
+function processMoviesList(rawList) {
+    if (!Array.isArray(rawList)) return [];
+    const valid = rawList.filter(m => {
+        const t = m.title || '';
+        if (/\.(mp4|mkv|avi|mov|ts|m2ts|webm)\s*$/i.test(t)) return false;
+        if (/\[(?:ES|ES5|CAST|LAT|EN)[^\]]*\]\s*\d{3,4}p/i.test(t)) return false;
+        if (/\b(?:720p|1080p|4K|2160p)\b/i.test(t)) return false;
+        return true;
+    });
+    const seen = new Set();
+    return valid.filter(m => {
+        const norm = (m.search_title || m.title).toLowerCase()
+            .replace(/\s*\(\s*(Castellano|Cast\.|Latino|Audio|Español|V\.O\.|VOSE?|Doblado|Subtitulado)[^)]*\)/gi, '')
+            .replace(/\s*\(\d{4}\)\s*$/, '')
+            .replace(/\s+\b(19|20)\d{2}\b\s*$/, '')
+            .replace(/[^a-z0-9]/g, '');
+        if (norm.length > 2 && seen.has(norm)) return false;
+        seen.add(norm);
+        if (!m.id) m.id = 'mv_' + norm;
+        return true;
+    });
+}
+
 
 const MOVIE_GENRE_ROWS = [
     { id: 'mov_action',  title: '⚡ Acción',        ids: [28, 12, 10752] },
@@ -868,14 +960,13 @@ async function loadMoviesBackground() {
             movieTmdbCache.set(m.id, tmdb);
             onMovieTmdbLoaded(m, tmdb); // genre classification happens here
         }));
+        await new Promise(r => setTimeout(r, 2500)); // Respect TMDB 40req/10s limit
     }
 
     // Mark all genre caches as at least initialised so tabs don't wait forever
     for (const genre of MOVIE_GENRE_ROWS) {
         if (!movieGenreCache.has(genre.id)) movieGenreCache.set(genre.id, []);
     }
-
-    renderAllMoviesCatalog();
 }
 
 /**
@@ -971,8 +1062,15 @@ function createMovieCard(movie) {
 }
 
 async function loadMovieCardPoster(card, movie) {
-    const cached = movieTmdbCache.get(movie.id);
-    const tmdb = cached || await searchMovie(movie.search_title || movie.title, movie.year);
+    let tmdb = movieTmdbCache.get(movie.id);
+    if (!tmdb) {
+        // Micro-delay to avoid queueing TMDB requests for partial searches if the user is typing fast
+        // By awaiting here, we also give the DOM time to actually append the card
+        await new Promise(r => setTimeout(r, 400));
+        if (!card.isConnected) return; // card was removed (user navigated away / typed more)
+        tmdb = await searchMovie(movie.search_title || movie.title, movie.year);
+    }
+
     if (tmdb) {
         movieTmdbCache.set(movie.id, tmdb);
         onMovieTmdbLoaded(movie, tmdb); // ← classify genre with the data we already have

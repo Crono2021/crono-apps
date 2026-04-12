@@ -2,7 +2,7 @@ name: Deploy Cineflix to GitHub Pages
 
 on:
   push:
-    branches: [master]
+    branches: [cineflix]
   workflow_dispatch:
 
 # Sets permissions for GitHub Actions to deploy to Pages
@@ -38,6 +38,8 @@ jobs:
 
       - name: Build with Vite
         run: npm run build
+        env:
+          VITE_BASE: /crono-apps/
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v4
