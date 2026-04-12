@@ -427,29 +427,43 @@ export async function streamVideoNative(media) {
     const c = await getClient();
     const doc = media.document;
     const streamId = `${doc.id.toString()}-${Date.now()}`;
-    const fileSize = Number(doc.size);
+
+    // Safe fileSize: GramJS may return doc.size as BigInt or custom object
+    let fileSize;
+    try {
+        fileSize = typeof doc.size === 'bigint'
+            ? Number(doc.size)
+            : Number(String(doc.size)); // coerce GramJS custom numeric types
+    } catch { fileSize = 0; }
+
+    if (!fileSize || fileSize <= 0) {
+        console.warn('[Native] No fileSize available, cannot stream:', doc);
+        throw new Error('No se pudo obtener el tamaño del archivo');
+    }
+
     const mimeType = doc.mimeType || 'video/mp4';
 
     // 1. Register stream with native proxy server
     await ExoPlayer.registerStream({ streamId, fileSize, mimeType });
 
-    // 2. Listen for byte-range requests from the native proxy
+    // 2. Listen for byte-range requests — send bytes as Base64 (efficient over JSON bridge)
     const listener = await ExoPlayer.addListener('fetchRange', async ({ requestId, start, size }) => {
         try {
             const chunk = await fetchTelegramRange(c, doc, start, size);
-            // Deliver bytes back as a plain number array (Capacitor serialises to JSON)
-            await ExoPlayer.replyRange({ requestId, chunk: Array.from(chunk) });
+            // Base64 is ~33% larger than raw bytes but MUCH faster than Array.from()
+            // through the Capacitor JSON bridge (avoids millions of individual number elements)
+            const base64 = btoa(String.fromCharCode(...chunk));
+            await ExoPlayer.replyRange({ requestId, chunk: base64 });
         } catch (err) {
             console.error('[Native Stream] fetchRange error:', err.message);
-            await ExoPlayer.replyRange({ requestId, chunk: [] });
+            await ExoPlayer.replyRange({ requestId, chunk: '' });
         }
     });
 
     // 3. Launch ExoPlayer fullscreen
     await ExoPlayer.play({ streamId });
 
-    // Clean up listener when done (ExoPlayer closes → player activity finishes)
-    // The Kotlin side calls stopStream on back, but we also remove the JS listener.
-    setTimeout(() => listener?.remove?.(), 5 * 60 * 1000); // auto-cleanup after 5 min max
+    // Auto-cleanup listener after 2 hours max
+    setTimeout(() => listener?.remove?.(), 2 * 60 * 60 * 1000);
 }
 
