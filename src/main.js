@@ -57,6 +57,7 @@ let playerOrigin = 'episodes'; // 'episodes' | 'movie'
 let catalogScrollPage = 0;
 const CATALOG_PAGE_SIZE = 60;
 let catalogReady = false;
+let genreUpdateTimer = null; // debounce genre row updates
 
 
 const GENRE_ROWS = [
@@ -819,67 +820,77 @@ function renderMovieGrid(movies) {
 }
 
 /**
- * Classify catalog movies into genres using searchMovie().
- * TMDB search handles our messy catalog titles and returns real genreIds.
- * Updates genre rows progressively as data arrives (every 10-movie batch).
- * Results are cached in localStorage so subsequent loads are instant.
+ * Pre-loads TMDB data for catalog movies in background.
+ * Each successful result goes through onMovieTmdbLoaded() which classifies genres.
+ * Movies already loaded via poster cards are skipped (cache hit).
  */
 async function loadMoviesBackground() {
-    // Sort by year desc — recent movies are most relevant
     const sorted = [...moviesCatalog].sort((a, b) => (b.year || 0) - (a.year || 0));
-    // Only process first 400 (rest shown in "Todo el catálogo" without genres)
-    const toLoad = sorted.slice(0, 400).filter(m => !movieTmdbCache.has(m.id));
 
-    const buckets = new Map(MOVIE_GENRE_ROWS.map(r => [r.id, { meta: r, items: [] }]));
-
-    // Init buckets from already-cached TMDB data (instant on revisit)
+    // Process already-cached movies first (instant on revisit — data is in localStorage)
     for (const m of sorted.slice(0, 400)) {
         const tmdb = movieTmdbCache.get(m.id);
-        if (!tmdb?.genreIds) continue;
-        for (const [, bucket] of buckets) {
-            if (tmdb.genreIds.some(g => bucket.meta.ids.includes(g)) &&
-                !bucket.items.find(x => x.id === m.id)) {
-                bucket.items.push(m);
-            }
-        }
-    }
-    // Render existing cached rows immediately
-    for (const [, bucket] of buckets) {
-        movieGenreCache.set(bucket.meta.id, [...bucket.items]);
-        if (bucket.items.length > 0)
-            renderMovieRow(bucket.meta.id, bucket.meta.title, bucket.items.slice(0, 40));
+        if (tmdb) onMovieTmdbLoaded(m, tmdb);
     }
 
-    // Fetch TMDB data for uncached movies in batches of 10
+    // Fetch TMDB for uncached movies (10 concurrent for speed)
+    const toLoad = sorted.slice(0, 400).filter(m => !movieTmdbCache.has(m.id));
     const BATCH = 10;
     for (let i = 0; i < toLoad.length; i += BATCH) {
         await Promise.all(toLoad.slice(i, i + BATCH).map(async m => {
-            // searchMovie uses the catalog title as a query — TMDB returns the real movie
             const tmdb = await searchMovie(m.search_title || m.title, m.year);
-            if (!tmdb?.genreIds) return;
+            if (!tmdb) return;
             movieTmdbCache.set(m.id, tmdb);
-            for (const [, bucket] of buckets) {
-                if (tmdb.genreIds.some(g => bucket.meta.ids.includes(g)) &&
-                    !bucket.items.find(x => x.id === m.id)) {
-                    bucket.items.push(m);
-                }
-            }
+            onMovieTmdbLoaded(m, tmdb); // genre classification happens here
         }));
-
-        // Update rows + genre cache after each batch
-        for (const [, bucket] of buckets) {
-            movieGenreCache.set(bucket.meta.id, [...bucket.items]);
-            if (bucket.items.length > 0)
-                renderMovieRow(bucket.meta.id, bucket.meta.title, bucket.items.slice(0, 40));
-        }
     }
 
-    // Mark all genres as loaded (even empty ones) so tabs don't hang
-    for (const [, bucket] of buckets) {
-        movieGenreCache.set(bucket.meta.id, [...bucket.items]);
+    // Mark all genre caches as at least initialised so tabs don't wait forever
+    for (const genre of MOVIE_GENRE_ROWS) {
+        if (!movieGenreCache.has(genre.id)) movieGenreCache.set(genre.id, []);
     }
 
     renderAllMoviesCatalog();
+}
+
+    // Mark all genres as loaded (even empty ones) so tabs don't hang
+    for (const genre of MOVIE_GENRE_ROWS) {
+        if (!movieGenreCache.has(genre.id)) movieGenreCache.set(genre.id, []);
+    }
+
+    renderAllMoviesCatalog();
+}
+
+/**
+ * Called whenever a movie is successfully matched to TMDB (from poster load OR background load).
+ * Classifies it into genres and schedules a debounced row update.
+ */
+function onMovieTmdbLoaded(movie, tmdb) {
+    if (!tmdb?.genreIds?.length) return;
+    let changed = false;
+    for (const genre of MOVIE_GENRE_ROWS) {
+        if (!tmdb.genreIds.some(g => genre.ids.includes(g))) continue;
+        const items = movieGenreCache.get(genre.id);
+        if (items === undefined) {
+            movieGenreCache.set(genre.id, [movie]);
+            changed = true;
+        } else if (!items.find(x => x.id === movie.id)) {
+            items.push(movie);
+            changed = true;
+        }
+    }
+    if (!changed) return;
+    // Debounce: update DOM rows at most once every 1.5s
+    if (!genreUpdateTimer) {
+        genreUpdateTimer = setTimeout(() => {
+            genreUpdateTimer = null;
+            for (const genre of MOVIE_GENRE_ROWS) {
+                const items = movieGenreCache.get(genre.id) || [];
+                if (items.length > 0)
+                    renderMovieRow(genre.id, genre.title, items.slice(0, 40));
+            }
+        }, 1500);
+    }
 }
 
 /**
@@ -945,7 +956,10 @@ function createMovieCard(movie) {
 async function loadMovieCardPoster(card, movie) {
     const cached = movieTmdbCache.get(movie.id);
     const tmdb = cached || await searchMovie(movie.search_title || movie.title, movie.year);
-    if (tmdb) movieTmdbCache.set(movie.id, tmdb);
+    if (tmdb) {
+        movieTmdbCache.set(movie.id, tmdb);
+        onMovieTmdbLoaded(movie, tmdb); // ← classify genre with the data we already have
+    }
     if (!tmdb?.posterPath) return;
     const url = posterUrl(tmdb.posterPath);
     const placeholder = card.querySelector('.series-card-poster-placeholder');
