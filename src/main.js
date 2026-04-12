@@ -139,79 +139,81 @@ function showStep(stepId) {
 }
 
 // ===== ANDROID BACK BUTTON =====
-// Called by MainActivity.java via evaluateJavascript when back is pressed.
-// Returns true if we handled navigation, false to let Android minimize.
 window.__cineflixBack = function () {
-    // Close movie modal if open
     const modal = $('movie-modal');
     if (modal && !modal.classList.contains('hidden')) {
         modal.classList.add('hidden');
         return true;
     }
-
     const activeView = document.querySelector('.view.active')?.id;
-
     switch (activeView) {
-        case 'view-player':
-            // Stop video and go back
+        case 'view-player': {
             const vp = $('video-player');
             if (vp) { vp.pause(); vp.src = ''; }
-            if (playerOrigin === 'movie') {
-                viewHistory.pop();
-                showView('view-movies');
-            } else {
-                viewHistory.pop();
-                showView('view-episodes');
-            }
+            viewHistory.pop();
+            showView(playerOrigin === 'movie' ? 'view-movies' : 'view-episodes');
             return true;
-
+        }
         case 'view-episodes':
-            viewHistory.pop();
-            showView('view-series');
-            return true;
-
+            viewHistory.pop(); showView('view-series'); return true;
         case 'view-series':
-            viewHistory.pop();
-            showView('view-movies');
-            return true;
-
+            viewHistory.pop(); showView('view-movies'); return true;
         case 'view-movies':
-            return false; // At home → let Android minimize
-
         default:
-            return false; // Unknown state → let Android handle
+            return false;
     }
 };
 
-// ===== LAZY POSTER LOADING (IntersectionObserver) =====
-// Fires only when a card enters the viewport → eliminates mass-loading flicker.
+// ===== LAZY POSTER LOADING =====
+// Max 2 concurrent TMDB calls — prevents scroll jank from many parallel requests.
+let _posterRunning = 0;
+const _posterQueue = [];
+const MAX_POSTER_CONCURRENT = 2;
+
+function _runNextPoster() {
+    if (_posterRunning >= MAX_POSTER_CONCURRENT || _posterQueue.length === 0) return;
+    _posterRunning++;
+    const fn = _posterQueue.shift();
+    Promise.resolve().then(fn).finally(() => { _posterRunning--; _runNextPoster(); });
+}
+
 const _posterObserver = new IntersectionObserver(
     (entries) => {
         entries.forEach(entry => {
             if (entry.isIntersecting) {
                 _posterObserver.unobserve(entry.target);
                 const fn = entry.target.__loadPoster;
-                if (fn) { fn(); entry.target.__loadPoster = null; }
+                if (fn) { entry.target.__loadPoster = null; _posterQueue.push(fn); _runNextPoster(); }
             }
         });
     },
-    { rootMargin: '200px 0px', threshold: 0.01 }
+    { rootMargin: '150px 0px', threshold: 0.01 }
 );
 
 function schedulePosterLoad(card, loadFn) {
+    if (card.dataset.posterQ) return; // already queued — prevent double observation
+    card.dataset.posterQ = '1';
     card.__loadPoster = loadFn;
     _posterObserver.observe(card);
 }
 
 function applyPosterImage(placeholder, url) {
-    if (!placeholder) return;
+    if (!placeholder || placeholder.querySelector('[data-poster]')) return; // prevent duplicates
     const img = document.createElement('img');
-    img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.25s;border-radius:inherit;pointer-events:none;';
-    img.onload = () => { img.style.opacity = '1'; const sp = placeholder.querySelector('span'); if (sp) sp.style.display = 'none'; };
+    img.setAttribute('data-poster', '1');
+    img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.2s;border-radius:inherit;pointer-events:none;';
+    // Use requestAnimationFrame so the opacity change happens in the paint cycle,
+    // not blocking the scroll compositor thread
+    img.onload = () => requestAnimationFrame(() => {
+        img.style.opacity = '1';
+        const sp = placeholder.querySelector('span');
+        if (sp) sp.style.display = 'none';
+    });
     img.src = url;
     placeholder.style.position = 'relative';
     placeholder.appendChild(img);
 }
+
 
 
 // ===== INIT =====
@@ -498,10 +500,12 @@ function renderRow(id, title, series, prepend = false) {
     let row = container.querySelector(`[data-row="${id}"]`);
 
     if (row) {
-        // Update existing row cards
+        // Incrementally append new cards instead of wiping innerHTML (which destroys IntersectionObserver and causes massive flicker)
         const cards = row.querySelector('.row-cards');
-        cards.innerHTML = '';
-        series.forEach(s => cards.appendChild(createCard(s)));
+        const existingCount = cards.childElementCount;
+        if (existingCount < series.length) {
+            series.slice(existingCount).forEach(s => cards.appendChild(createCard(s)));
+        }
         return;
     }
 
@@ -988,8 +992,10 @@ function renderMovieRow(id, title, movies, prepend = false) {
     let row = container.querySelector(`[data-row="${id}"]`);
     if (row) {
         const cards = row.querySelector('.row-cards');
-        cards.innerHTML = '';
-        movies.forEach(m => cards.appendChild(createMovieCard(m)));
+        const existingCount = cards.childElementCount;
+        if (existingCount < movies.length) {
+            movies.slice(existingCount).forEach(m => cards.appendChild(createMovieCard(m)));
+        }
         return;
     }
     row = document.createElement('div');
@@ -1048,6 +1054,8 @@ async function loadMoviesBackground() {
     for (const genre of MOVIE_GENRE_ROWS) {
         if (!movieGenreCache.has(genre.id)) movieGenreCache.set(genre.id, []);
     }
+
+    renderAllMoviesCatalog();
 }
 
 /**
