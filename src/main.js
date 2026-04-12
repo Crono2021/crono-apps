@@ -56,6 +56,7 @@ let lastMovieData = null; // { movie, videos } — cached for instant modal reop
 let playerOrigin = 'episodes'; // 'episodes' | 'movie'
 let catalogScrollPage = 0;
 const CATALOG_PAGE_SIZE = 60;
+let catalogReady = false;
 
 
 const GENRE_ROWS = [
@@ -631,9 +632,25 @@ function showMoviesSection(mode) {
 function findMovieInCatalog(tmdbMovie) {
     const n = normTitle(tmdbMovie.name);
     const no = normTitle(tmdbMovie.originalName || '');
+
     return moviesCatalog.find(m => {
-        const mn = normTitle(m.search_title || m.title);
-        return mn === n || (no && mn === no);
+        const fullTitle = m.search_title || m.title;
+        // 1. Full normalized title (strips year suffix)
+        const mn = normTitle(fullTitle);
+        if (mn === n || (no && mn === no)) return true;
+
+        // 2. Title before first '(' — handles 'Road House (De profesión: duro) (2024)'
+        const mainPart = normTitle(fullTitle.replace(/\s*\(.*$/, '').trim());
+        if (mainPart && (mainPart === n || (no && mainPart === no))) return true;
+
+        // 3. Content INSIDE the first parenthesis (alternate/Spanish title)
+        const altMatch = fullTitle.match(/\(([^)]{3,})\)/);
+        if (altMatch) {
+            const alt = normTitle(altMatch[1]);
+            if (alt === n || (no && alt === no)) return true;
+        }
+
+        return false;
     });
 }
 
