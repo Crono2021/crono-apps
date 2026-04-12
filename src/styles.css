@@ -199,8 +199,6 @@ body {
     display: flex; gap: 10px; padding: 4px 20px 12px;
     overflow-x: auto; scroll-snap-type: x mandatory;
     scrollbar-width: none; scroll-behavior: smooth;
-    /* touch-action: pan-x ensures swipe works on mobile */
-    touch-action: pan-x;
 }
 .row-cards::-webkit-scrollbar { display: none; }
 .row-cards .series-card {
