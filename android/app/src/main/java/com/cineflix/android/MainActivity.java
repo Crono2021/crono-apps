@@ -6,6 +6,7 @@ import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ExoPlayerPlugin.class);
@@ -14,15 +15,31 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * Configure the WebView for a smooth mobile experience:
-     * - Enable touch scrolling and DOM storage
-     * - Allow media autoplay (needed for video element fallback)
-     * - Disable overscroll glow effect
+     * Intercept Android back button: ask JS to handle navigation first.
+     * JS must expose window.__cineflixBack() returning true if handled.
+     * If JS returns false (or isn't ready), we minimize but do NOT exit the app.
+     */
+    @Override
+    public void onBackPressed() {
+        WebView wv = getBridge().getWebView();
+        wv.evaluateJavascript(
+            "(typeof window.__cineflixBack === 'function' && window.__cineflixBack() === true)",
+            value -> {
+                if (!"true".equals(value)) {
+                    // JS didn't handle it → minimize to background (don't kill the process)
+                    runOnUiThread(() -> moveTaskToBack(true));
+                }
+                // else: JS navigated backwards → nothing else to do
+            }
+        );
+    }
+
+    /**
+     * Configure WebView for smooth mobile experience.
      */
     private void configureWebView() {
         WebView wv = getBridge().getWebView();
 
-        // Allow scrolling with finger
         wv.setScrollContainer(true);
         wv.setVerticalScrollBarEnabled(false);
         wv.setHorizontalScrollBarEnabled(false);
@@ -31,10 +48,9 @@ public class MainActivity extends BridgeActivity {
         WebSettings settings = wv.getSettings();
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(false); // allow autoplay
+        settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(true);
         settings.setJavaScriptEnabled(true);
-        // Enable text zoom reset (prevents tiny text on some devices)
         settings.setTextZoom(100);
     }
 }
