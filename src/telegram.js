@@ -445,41 +445,6 @@ export async function streamVideo(media, videoElement, onProgress) {
 // ===== NATIVE ANDROID STREAMING (Capacitor + ExoPlayer) =====
 
 /**
- * Fetch a specific byte range from a Telegram document.
- */
-async function fetchTelegramRange(tgClient, doc, start, size) {
-    // Telegram valid limit values (powers of 2, must be multiple of 4KB)
-    const VALID_LIMITS = [4096, 131072, 524288]; // 4KB, 128KB, 512KB
-
-    const BLOCK = 4096;
-    const alignedStart = Math.floor(start / BLOCK) * BLOCK;
-
-    // Pick the smallest valid limit that covers our requested size
-    const needed = (start - alignedStart) + size;
-    const limit = VALID_LIMITS.find(v => v >= needed) || VALID_LIMITS[VALID_LIMITS.length - 1];
-
-    let received = null;
-    for await (const chunk of tgClient.iterDownload({
-        file: new Api.InputDocumentFileLocation({
-            id: doc.id,
-            accessHash: doc.accessHash,
-            fileReference: doc.fileReference,
-            thumbSize: '',
-        }),
-        offset: BigInt(alignedStart), // using ES native BigInt due to patched GramJS
-        requestSize: limit,
-        dcId: doc.dcId,
-    })) {
-        received = new Uint8Array(chunk);
-        break; // we only need the first block of 'limit' size
-    }
-
-    if (!received) return new Uint8Array(0);
-    const trimStart = start - alignedStart;
-    return received.slice(trimStart, trimStart + size);
-}
-
-/**
  * Check if the app is running inside Capacitor (Android/iOS).
  */
 export function isNativeApp() {
