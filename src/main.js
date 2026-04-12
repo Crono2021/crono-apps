@@ -591,12 +591,7 @@ async function showMovies() {
         const q = $('movies-search-input').value.toLowerCase().trim();
         if (!q) { showMoviesSection('home'); return; }
         showMoviesSection('grid');
-        // Split into words — ALL must appear in the title (more precise than full-phrase)
-        const words = q.split(/\s+/).filter(Boolean);
-        const filtered = moviesCatalog.filter(m => {
-            const mn = m.title.toLowerCase();
-            return words.every(w => mn.includes(w));
-        });
+        const filtered = moviesCatalog.filter(m => m.title.toLowerCase().includes(q));
         $('movies-count').textContent = `${filtered.length} resultado${filtered.length !== 1 ? 's' : ''}`;
         renderMovieGrid(filtered);
     };
