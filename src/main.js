@@ -472,14 +472,15 @@ async function loadCardPoster(card, series) {
     if (!tmdb?.posterPath) return;
     const url = posterUrl(tmdb.posterPath);
     const placeholder = card.querySelector('.series-card-poster-placeholder');
-    const img = new Image();
-    img.onload = () => {
-        placeholder.style.backgroundImage = `url('${url}')`;
-        placeholder.style.backgroundSize = 'cover';
-        placeholder.style.backgroundPosition = 'center';
-        placeholder.querySelector('span').style.display = 'none';
-    };
+    if (!placeholder || !card.isConnected) return;
+    // Use a single <img> with CSS fade — avoids double DOM mutation that causes
+    // layout thrashing / flickering on Android WebView
+    const img = document.createElement('img');
+    img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s;border-radius:inherit;';
+    img.onload = () => { img.style.opacity = '1'; placeholder.querySelector('span').style.display = 'none'; };
     img.src = url;
+    placeholder.style.position = 'relative';
+    placeholder.appendChild(img);
 }
 
 // ===== BACKGROUND GENRE LOADER =====
@@ -1084,14 +1085,14 @@ async function loadMovieCardPoster(card, movie) {
     if (!tmdb?.posterPath) return;
     const url = posterUrl(tmdb.posterPath);
     const placeholder = card.querySelector('.series-card-poster-placeholder');
-    const img = new Image();
-    img.onload = () => {
-        placeholder.style.backgroundImage = `url('${url}')`;
-        placeholder.style.backgroundSize = 'cover';
-        placeholder.style.backgroundPosition = 'center';
-        placeholder.querySelector('span').style.display = 'none';
-    };
+    if (!placeholder || !card.isConnected) return;
+    // Single <img> with CSS fade — no backgroundImage mutation, no reflow flicker
+    const img = document.createElement('img');
+    img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s;border-radius:inherit;';
+    img.onload = () => { img.style.opacity = '1'; placeholder.querySelector('span').style.display = 'none'; };
     img.src = url;
+    placeholder.style.position = 'relative';
+    placeholder.appendChild(img);
 }
 
 // ===== OPEN MOVIE (bot /peli command → direct video files) =====
@@ -1301,29 +1302,19 @@ $('btn-back-series').addEventListener('click', () => showView('view-series'));
 
 // ===== PLAYER =====
 async function playVideo(video, seriesTitle) {
-    // ── Native Android: use ExoPlayer via Capacitor plugin ──────────────────
-    if (isNativeApp()) {
-        try {
-            await streamVideoNative(video.media);
-        } catch (err) {
-            console.error('[Native Player] Error:', err.message);
-            alert(`Error al reproducir: ${err.message}`);
-        }
-        return;
-    }
+    const videoEl = $('video-player');
 
-    // ── Web / Desktop: use <video> + Service Worker streaming ───────────────
     $('player-title').textContent = video.fileName;
     $('player-subtitle').textContent = seriesTitle;
     $('player-download').classList.remove('hidden');
     $('download-progress').style.width = '0%';
     $('download-percent').textContent = '';
     $('download-text').textContent = 'Iniciando reproducción...';
-    $('video-player').src = '';
+    videoEl.src = '';
     showView('view-player');
 
     try {
-        await streamVideo(video.media, $('video-player'), (progress) => {
+        await streamVideo(video.media, videoEl, (progress) => {
             if (progress.ready) {
                 $('player-download').classList.add('hidden');
                 return;
@@ -1335,13 +1326,22 @@ async function playVideo(video, seriesTitle) {
             $('download-text').textContent = `Cargando: ${dlMB} / ${totMB} MB`;
         });
 
-        // With SW streaming, video plays immediately — hide overlay
         $('player-download').classList.add('hidden');
-        $('video-player').play().catch(() => {});
+        await videoEl.play().catch(() => {});
+
+        // On Android WebView: go native fullscreen automatically
+        if (isNativeApp()) {
+            const req = videoEl.requestFullscreen
+                || videoEl.webkitRequestFullscreen
+                || videoEl.mozRequestFullScreen;
+            if (req) req.call(videoEl).catch(() => {});
+        }
     } catch (err) {
         $('download-text').textContent = `Error: ${err.message}`;
+        console.error('[Player]', err);
     }
 }
+
 
 
 // Back from player: go to episodes OR movie modal depending on origin
