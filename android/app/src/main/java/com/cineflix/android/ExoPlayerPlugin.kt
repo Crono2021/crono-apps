@@ -33,7 +33,13 @@ class ExoPlayerPlugin : Plugin() {
     @PluginMethod
     fun registerStream(call: PluginCall) {
         val streamId = call.getString("streamId") ?: run { call.reject("streamId required"); return }
-        val fileSize = call.getLong("fileSize") ?: run { call.reject("fileSize required"); return }
+        
+        val fileSize = call.getLong("fileSize")
+            ?: call.getInt("fileSize")?.toLong()
+            ?: call.getDouble("fileSize")?.toLong()
+            ?: call.getString("fileSize")?.toLongOrNull()
+            ?: run { call.reject("fileSize required. Payload: " + call.data.toString()); return }
+            
         val mimeType = call.getString("mimeType") ?: "video/mp4"
 
         // Start a local HTTP proxy server for this stream
