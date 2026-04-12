@@ -248,6 +248,45 @@ export async function getTrendingMovies(timeWindow = 'week') {
 }
 
 /**
+ * Discover top movies for a given TMDB genre ID.
+ * Returns up to 40 results in ONE API call (cached 7 days).
+ */
+export async function discoverMoviesByGenre(genreId, page = 1) {
+    const key = `discover_movie_g${genreId}_p${page}`;
+    const TTL_7D = 7 * 24 * 60 * 60 * 1000;
+    try {
+        const raw = localStorage.getItem('tmdb_' + key);
+        if (raw) {
+            const { ts, data } = JSON.parse(raw);
+            if (Date.now() - ts < TTL_7D) return data;
+            localStorage.removeItem('tmdb_' + key);
+        }
+    } catch { }
+
+    try {
+        const params = new URLSearchParams({
+            api_key: TMDB_KEY, with_genres: genreId,
+            language: 'es-ES', sort_by: 'popularity.desc',
+            include_adult: false, page,
+        });
+        const res = await fetch(`${TMDB_BASE}/discover/movie?${params}`);
+        const json = await res.json();
+        const results = (json.results || []).map(r => ({
+            id: r.id, name: r.title, originalName: r.original_title,
+            posterPath: r.poster_path, backdropPath: r.backdrop_path,
+            year: r.release_date?.slice(0, 4),
+            rating: Math.round(r.vote_average * 10) / 10,
+            genreIds: r.genre_ids,
+        }));
+        localStorage.setItem('tmdb_' + key, JSON.stringify({ ts: Date.now(), data: results }));
+        return results;
+    } catch (err) {
+        console.warn('[TMDB] Discover genre failed:', genreId, err.message);
+        return [];
+    }
+}
+
+/**
  * Normalize a title for fuzzy matching (remove year, accents, symbols).
  */
 export function normTitle(t) {

@@ -370,6 +370,20 @@ body {
     padding: 20px 16px;
 }
 
+/* "Todo el catálogo" infinite-scroll grid inside rows section */
+.all-movies-grid {
+    padding: 0 16px 60px;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+
+/* Count badge in row header */
+.row-count {
+    font-size: 0.8rem;
+    color: rgba(255,255,255,0.35);
+    font-weight: 400;
+    margin-left: 8px;
+}
+
 /* ===== MOVIE FILES MODAL ===== */
 .modal-overlay {
     position: fixed;

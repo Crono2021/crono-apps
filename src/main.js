@@ -27,7 +27,7 @@ import {
 import {
     searchSeries, searchMovie, getSeasonEpisodes, extractSeasonNumber,
     parseEpisodeFile, posterUrl, stillUrl,
-    getTrending, getTrendingMovies, normTitle,
+    getTrending, getTrendingMovies, discoverMoviesByGenre, normTitle,
 } from './tmdb.js';
 
 
@@ -48,12 +48,15 @@ let genreLoading = false;
 let moviesCatalog = [];
 let moviesReady = false;
 let movieTmdbCache = new Map();
+let movieGenreCache = new Map(); // rowId → catalog movies[] (populated by discover)
 let movieHeroShows = [];
 let movieHeroIndex = 0;
 let movieHeroTimer = null;
 let lastMovieData = null; // { movie, videos } — cached for instant modal reopen
 let playerOrigin = 'episodes'; // 'episodes' | 'movie'
-let catalogReady = false;
+let catalogScrollPage = 0;
+const CATALOG_PAGE_SIZE = 60;
+
 
 const GENRE_ROWS = [
     { id: 'drama',     title: '🎭 Drama',                    ids: [18] },
@@ -612,8 +615,8 @@ async function showMovies() {
         await setupMovieHero(recentMovies.slice(0, 5));
     }
 
-    // Genre rows in background
-    loadMovieGenresBackground();
+    // Genre rows via TMDB Discover (8 API calls, not 500+)
+    loadMovieGenreRows();
 }
 
 function showMoviesSection(mode) {
@@ -708,23 +711,17 @@ function initMovieGenreTabs() {
     allTab.classList.add('active');
     tabs.appendChild(allTab);
     MOVIE_GENRE_ROWS.forEach(g => {
-        tabs.appendChild(makeTab(g.title, () => filterMoviesByGenre(g.ids, g.title)));
+        tabs.appendChild(makeTab(g.title, () => filterMoviesByGenre(g.id, g.title)));
     });
 }
 
-function filterMoviesByGenre(genreIds, label) {
+function filterMoviesByGenre(rowId, label) {
     showMoviesSection('grid');
-    const filtered = [];
-    for (const [id, tmdb] of movieTmdbCache) {
-        if (tmdb?.genreIds?.some(g => genreIds.includes(g))) {
-            const m = moviesCatalog.find(x => x.id === id);
-            if (m && !filtered.find(x => x.id === id)) filtered.push(m);
-        }
-    }
-    renderMovieGrid(filtered);
-    $('movies-count').textContent = filtered.length
-        ? `${filtered.length} películas · ${label}`
-        : `Cargando ${label}...`;
+    const cached = movieGenreCache.get(rowId) || [];
+    renderMovieGrid(cached);
+    $('movies-count').textContent = cached.length
+        ? `${cached.length} películas · ${label}`
+        : `Sin coincidencias en el catálogo para ${label}`;
 }
 
 // ===== MOVIE ROWS =====
@@ -763,27 +760,74 @@ function renderMovieGrid(movies) {
     movies.forEach(m => grid.appendChild(createMovieCard(m)));
 }
 
-async function loadMovieGenresBackground() {
-    const buckets = new Map(MOVIE_GENRE_ROWS.map(r => [r.id, { meta: r, items: [] }]));
-    const BATCH = 10;
-    for (let i = 0; i < Math.min(moviesCatalog.length, 500); i += BATCH) {
-        const batch = moviesCatalog.slice(i, i + BATCH);
-        await Promise.all(batch.map(async m => {
-            const tmdb = await searchMovie(m.search_title || m.title, m.year);
-            if (!tmdb) return;
-            movieTmdbCache.set(m.id, tmdb);
-            for (const [, bucket] of buckets) {
-                if (tmdb.genreIds?.some(g => bucket.meta.ids.includes(g)))
-                    if (!bucket.items.find(x => x.id === m.id)) bucket.items.push(m);
+/**
+ * Load genre rows using TMDB Discover API — 8 genres = 8+16 API calls total vs 500+.
+ * Fetches 2 pages (80 movies) per genre, matches them to our catalog.
+ */
+async function loadMovieGenreRows() {
+    await Promise.all(MOVIE_GENRE_ROWS.map(async genre => {
+        try {
+            // Fetch 2 pages for more catalog matches
+            const [p1, p2] = await Promise.all([
+                discoverMoviesByGenre(genre.ids[0], 1),
+                discoverMoviesByGenre(genre.ids[0], 2),
+            ]);
+            const tmdbResults = [...p1, ...p2];
+            const matched = [];
+            for (const t of tmdbResults) {
+                const m = findMovieInCatalog(t);
+                if (m && !matched.find(x => x.id === m.id)) matched.push(m);
             }
-        }));
-        for (const [, bucket] of buckets)
-            if (bucket.items.length >= 6)
-                renderMovieRow(bucket.meta.id, bucket.meta.title, bucket.items.slice(0, 40));
+            if (matched.length > 0) {
+                movieGenreCache.set(genre.id, matched);
+                renderMovieRow(genre.id, genre.title, matched.slice(0, 40));
+            }
+        } catch (err) {
+            console.warn('[Movies] Genre load failed:', genre.title, err.message);
+        }
+    }));
+    // After all genre rows, add the full scrollable catalog
+    renderAllMoviesCatalog();
+}
+
+/**
+ * Render the full catalog below genre rows with infinite scroll (60 movies per batch).
+ */
+function renderAllMoviesCatalog() {
+    if (document.getElementById('all-movies-section')) return; // already added
+    catalogScrollPage = 0;
+    const container = $('movies-rows');
+    const section = document.createElement('div');
+    section.id = 'all-movies-section';
+    section.innerHTML = `
+        <div class="row-header" style="padding-top:32px">
+            <h2 class="row-title">🎬 Todo el catálogo</h2>
+            <span class="row-count">${moviesCatalog.length.toLocaleString()} películas</span>
+        </div>
+        <div id="all-movies-grid" class="catalog-grid all-movies-grid"></div>
+        <div id="all-movies-sentinel" style="height:1px"></div>
+    `;
+    container.appendChild(section);
+
+    // Sort by year descending
+    const sorted = [...moviesCatalog].sort((a, b) => (b.year || 0) - (a.year || 0));
+
+    function loadBatch() {
+        const grid = document.getElementById('all-movies-grid');
+        if (!grid) return;
+        const start = catalogScrollPage * CATALOG_PAGE_SIZE;
+        const batch = sorted.slice(start, start + CATALOG_PAGE_SIZE);
+        if (!batch.length) { observer.disconnect(); return; }
+        catalogScrollPage++;
+        batch.forEach(m => grid.appendChild(createMovieCard(m)));
     }
-    for (const [, bucket] of buckets)
-        if (bucket.items.length > 0)
-            renderMovieRow(bucket.meta.id, bucket.meta.title, bucket.items.slice(0, 40));
+
+    const observer = new IntersectionObserver(entries => {
+        if (entries.some(e => e.isIntersecting)) loadBatch();
+    }, { rootMargin: '400px' });
+
+    loadBatch(); // first batch immediately
+    observer.observe(document.getElementById('all-movies-sentinel'));
 }
 
 // ===== MOVIE CARDS =====
