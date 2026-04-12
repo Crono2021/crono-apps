@@ -448,7 +448,7 @@ export async function streamVideo(media, videoElement, onProgress) {
  * Check if the app is running inside Capacitor (Android/iOS).
  */
 export function isNativeApp() {
-    return !!(window.Capacitor?.isNativePlatform?.());
+    return !!(window.Capacitor && window.Capacitor.isNativePlatform);
 }
 
 /**
