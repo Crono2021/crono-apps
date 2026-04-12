@@ -33,6 +33,11 @@ function parseTxtLine(rawLine) {
     line = line.replace(/\.+$/, '').trim();
     if (!line || line.length < 2) return null;
 
+    // ── Skip raw file entries (not real movie titles) ───────────────────────
+    // e.g. "La Jungla [ES] 1080p.mp4", "Movie.2024.BluRay.mkv"
+    if (/\.(mp4|mkv|avi|mov|ts|m2ts|webm)\s*$/i.test(line)) return null;
+    if (/\[(?:ES|ES5|CAST|LAT|Audio\s+Latino)[^\]]*\]\s*\d{3,4}p/i.test(line)) return null;
+
     // Extract year — try several patterns
     let year = null;
     const yearPatterns = [
@@ -50,6 +55,9 @@ function parseTxtLine(rawLine) {
     let searchTitle = line
         .replace(/\s*\([^)]*(?:Castellano|Latino|Espa[ñn]ol|Subtitulado|cast)\s*[^)]*\)/gi, '')
         .replace(/\s*\([^)]*(?:Romance|Drama|Comedia|Acci[oó]n|Thriller|Terror|Fantas[ií]a|Ciencia Ficci[oó]n)\s*[^)]*\)/gi, '')
+        .replace(/\s*\[(?:ES|ES5|CAST|LAT|Audio\s+Latino)[^\]]*\]/gi, '') // [ES], [CAST] tags
+        .replace(/\s*\[(?:720|1080|2160)p[^\]]*\]/gi, '')                 // [720p] etc.
+        .replace(/\s*\b(?:720p|1080p|4K|BluRay|BDRip|HDRip|HDTV|WEBRip|WEB-DL)\b/gi, '')
         .replace(/\s*\(\d{4}\)\s*$/, '')
         .replace(/\s*[Aa]ño[:\s]+\d{4}\s*$/, '')
         .replace(/\s*[-–]\s*\d{4}\s*$/, '')

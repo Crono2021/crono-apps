@@ -557,7 +557,18 @@ async function loadMovies() {
     if (moviesCatalog.length > 0) return;
     try {
         const res = await fetch('/api/movies');
-        if (res.ok) moviesCatalog = await res.json();
+        if (res.ok) {
+            const all = await res.json();
+            // Filter out raw file entries that got imported into the DB as movie titles
+            // e.g. "La Jungla de Cristal III [ES] 1080p.mp4", filenames with quality tags
+            moviesCatalog = all.filter(m => {
+                const t = m.title || '';
+                if (/\.(mp4|mkv|avi|mov|ts|m2ts|webm)\s*$/i.test(t)) return false;
+                if (/\[(?:ES|ES5|CAST|LAT)[^\]]*\]\s*\d{3,4}p/i.test(t)) return false;
+                if (/\b(?:720p|1080p|4K|2160p)\b/i.test(t)) return false;
+                return true;
+            });
+        }
     } catch { moviesCatalog = []; }
 }
 
