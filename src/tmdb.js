@@ -20,7 +20,7 @@ function throttledFetch(url) {
                     if (_queue.length) _queue.shift()();
                 });
         };
-        if (_activeReqs < 5) run();
+        if (_activeReqs < 10) run();
         else _queue.push(run);
     });
 }

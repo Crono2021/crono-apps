@@ -616,8 +616,8 @@ async function showMovies() {
         await setupMovieHero(recentMovies.slice(0, 5));
     }
 
-    // Genre rows via TMDB Discover (8 API calls, not 500+)
-    loadMovieGenreRows();
+    // Load TMDB genres per catalog movie in background (correct approach: TMDB search finds the right movie)
+    loadMoviesBackground();
 }
 
 function showMoviesSection(mode) {
@@ -819,37 +819,66 @@ function renderMovieGrid(movies) {
 }
 
 /**
- * Load genre rows using TMDB Discover API — 8 genres × 3 pages = 24 API calls vs 500+.
- * Fetches 3 pages (120 movies) per genre for better catalog match rate.
- * ALWAYS sets movieGenreCache so genre tabs don't hang forever.
+ * Classify catalog movies into genres using searchMovie().
+ * TMDB search handles our messy catalog titles and returns real genreIds.
+ * Updates genre rows progressively as data arrives (every 10-movie batch).
+ * Results are cached in localStorage so subsequent loads are instant.
  */
-async function loadMovieGenreRows() {
-    await Promise.all(MOVIE_GENRE_ROWS.map(async genre => {
-        try {
-            const [p1, p2, p3] = await Promise.all([
-                discoverMoviesByGenre(genre.ids[0], 1),
-                discoverMoviesByGenre(genre.ids[0], 2),
-                discoverMoviesByGenre(genre.ids[0], 3),
-            ]);
-            const tmdbResults = [...p1, ...p2, ...p3];
-            const matched = [];
-            for (const t of tmdbResults) {
-                const m = findMovieInCatalog(t);
-                if (m && !matched.find(x => x.id === m.id)) matched.push(m);
+async function loadMoviesBackground() {
+    // Sort by year desc — recent movies are most relevant
+    const sorted = [...moviesCatalog].sort((a, b) => (b.year || 0) - (a.year || 0));
+    // Only process first 400 (rest shown in "Todo el catálogo" without genres)
+    const toLoad = sorted.slice(0, 400).filter(m => !movieTmdbCache.has(m.id));
+
+    const buckets = new Map(MOVIE_GENRE_ROWS.map(r => [r.id, { meta: r, items: [] }]));
+
+    // Init buckets from already-cached TMDB data (instant on revisit)
+    for (const m of sorted.slice(0, 400)) {
+        const tmdb = movieTmdbCache.get(m.id);
+        if (!tmdb?.genreIds) continue;
+        for (const [, bucket] of buckets) {
+            if (tmdb.genreIds.some(g => bucket.meta.ids.includes(g)) &&
+                !bucket.items.find(x => x.id === m.id)) {
+                bucket.items.push(m);
             }
-            // ALWAYS set cache — even if empty — so the tab filter knows loading is done
-            movieGenreCache.set(genre.id, matched);
-            if (matched.length > 0) {
-                renderMovieRow(genre.id, genre.title, matched.slice(0, 40));
-            } else {
-                console.log('[Movies] No discover matches for', genre.title, 'results:', matched.length);
-            }
-        } catch (err) {
-            console.warn('[Movies] Genre load failed:', genre.title, err.message);
-            movieGenreCache.set(genre.id, []); // Mark loaded even on error
         }
-    }));
-    // After all genre rows, add the full scrollable catalog
+    }
+    // Render existing cached rows immediately
+    for (const [, bucket] of buckets) {
+        movieGenreCache.set(bucket.meta.id, [...bucket.items]);
+        if (bucket.items.length > 0)
+            renderMovieRow(bucket.meta.id, bucket.meta.title, bucket.items.slice(0, 40));
+    }
+
+    // Fetch TMDB data for uncached movies in batches of 10
+    const BATCH = 10;
+    for (let i = 0; i < toLoad.length; i += BATCH) {
+        await Promise.all(toLoad.slice(i, i + BATCH).map(async m => {
+            // searchMovie uses the catalog title as a query — TMDB returns the real movie
+            const tmdb = await searchMovie(m.search_title || m.title, m.year);
+            if (!tmdb?.genreIds) return;
+            movieTmdbCache.set(m.id, tmdb);
+            for (const [, bucket] of buckets) {
+                if (tmdb.genreIds.some(g => bucket.meta.ids.includes(g)) &&
+                    !bucket.items.find(x => x.id === m.id)) {
+                    bucket.items.push(m);
+                }
+            }
+        }));
+
+        // Update rows + genre cache after each batch
+        for (const [, bucket] of buckets) {
+            movieGenreCache.set(bucket.meta.id, [...bucket.items]);
+            if (bucket.items.length > 0)
+                renderMovieRow(bucket.meta.id, bucket.meta.title, bucket.items.slice(0, 40));
+        }
+    }
+
+    // Mark all genres as loaded (even empty ones) so tabs don't hang
+    for (const [, bucket] of buckets) {
+        movieGenreCache.set(bucket.meta.id, [...bucket.items]);
+    }
+
     renderAllMoviesCatalog();
 }
 
