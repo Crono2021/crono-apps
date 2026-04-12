@@ -591,7 +591,12 @@ async function showMovies() {
         const q = $('movies-search-input').value.toLowerCase().trim();
         if (!q) { showMoviesSection('home'); return; }
         showMoviesSection('grid');
-        const filtered = moviesCatalog.filter(m => m.title.toLowerCase().includes(q));
+        // Split into words — ALL must appear in the title (more precise than full-phrase)
+        const words = q.split(/\s+/).filter(Boolean);
+        const filtered = moviesCatalog.filter(m => {
+            const mn = m.title.toLowerCase();
+            return words.every(w => mn.includes(w));
+        });
         $('movies-count').textContent = `${filtered.length} resultado${filtered.length !== 1 ? 's' : ''}`;
         renderMovieGrid(filtered);
     };
@@ -1019,7 +1024,24 @@ function populateMovieFilesList(movie, videos) {
     const displayTitle = movie.title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
     const list = $('modal-files-list');
     list.innerHTML = '';
-    for (const video of videos) {
+
+    // Filter bot results to exclude unrelated movies that share words with the title.
+    // Significant words = >3 chars, not pure numbers.
+    const sigWords = displayTitle.toLowerCase()
+        .split(/\s+/)
+        .filter(w => w.length > 3 && !/^\d+$/.test(w));
+
+    const relevant = sigWords.length >= 2
+        ? videos.filter(video => {
+            const cap = (video.caption || video.fileName || '').toLowerCase();
+            const matches = sigWords.filter(w => cap.includes(w)).length;
+            return matches / sigWords.length >= 0.6; // 60% of key words must appear
+        })
+        : videos; // title too short to filter reliably — show all
+
+    const toShow = relevant.length > 0 ? relevant : videos; // fallback: if filter removed everything, show all
+
+    for (const video of toShow) {
         const sizeStr = video.fileSize > 1073741824
             ? `${(video.fileSize / 1073741824).toFixed(1)} GB`
             : `${(video.fileSize / (1024 * 1024)).toFixed(0)} MB`;
