@@ -470,7 +470,9 @@ export async function streamVideoNative(media) {
             : Number(String(doc.size)); // coerce GramJS custom numeric types
     } catch { fileSize = 0; }
 
-    if (!fileSize || fileSize <= 0) {
+    fileSize = Math.floor(fileSize); // MUST be strict integer without float residuals for Capacitor bridge
+
+    if (!fileSize || fileSize <= 0 || isNaN(fileSize)) {
         console.warn('[Native] No fileSize available, cannot stream:', doc);
         throw new Error('No se pudo obtener el tamaño del archivo');
     }
