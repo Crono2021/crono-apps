@@ -1020,21 +1020,28 @@ function populateMovieFilesList(movie, videos) {
     const list = $('modal-files-list');
     list.innerHTML = '';
 
-    // Filter bot results to exclude unrelated movies that share words with the title.
-    // Significant words = >3 chars, not pure numbers.
-    const sigWords = displayTitle.toLowerCase()
+    // Normalize text: lowercase + strip accents + keep only alphanumeric+spaces
+    const normStr = s => s.toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ');
+
+    // Significant words from title: >3 chars, not pure numbers, accent-normalized
+    const sigWords = normStr(displayTitle)
         .split(/\s+/)
         .filter(w => w.length > 3 && !/^\d+$/.test(w));
 
     const relevant = sigWords.length >= 2
         ? videos.filter(video => {
-            const cap = (video.caption || video.fileName || '').toLowerCase();
-            const matches = sigWords.filter(w => cap.includes(w)).length;
-            return matches / sigWords.length >= 0.6; // 60% of key words must appear
+            // Build a Set of WHOLE words from the caption (exact match, no substring)
+            const capWords = new Set(
+                normStr(video.caption || video.fileName || '').split(/\s+/).filter(Boolean)
+            );
+            const matches = sigWords.filter(w => capWords.has(w)).length;
+            return matches / sigWords.length >= 0.7; // 70% of key words as whole words
         })
         : videos; // title too short to filter reliably — show all
 
-    const toShow = relevant.length > 0 ? relevant : videos; // fallback: if filter removed everything, show all
+    const toShow = relevant.length > 0 ? relevant : videos; // fallback: never leave modal empty
 
     for (const video of toShow) {
         const sizeStr = video.fileSize > 1073741824
