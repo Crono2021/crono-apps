@@ -629,26 +629,50 @@ function showMoviesSection(mode) {
     if (mode === 'grid' && movieHeroTimer) { clearInterval(movieHeroTimer); movieHeroTimer = null; }
 }
 
+/**
+ * Find a catalog movie that matches a TMDB result.
+ * Handles messy catalog titles like:
+ *   "Road House (De profesión: duro) (2024)"
+ *   "MIRACLE ON 34TH STREET COMEDIA 1994"
+ *   "Stuart Little 1 - Edición Coleccionistas - 1999"
+ */
 function findMovieInCatalog(tmdbMovie) {
     const n = normTitle(tmdbMovie.name);
     const no = normTitle(tmdbMovie.originalName || '');
+    if (!n && !no) return null;
 
     return moviesCatalog.find(m => {
         const fullTitle = m.search_title || m.title;
-        // 1. Full normalized title (strips year suffix)
+        // 1. Full normalized title (y_suffix removed by normTitle)
         const mn = normTitle(fullTitle);
-        if (mn === n || (no && mn === no)) return true;
 
-        // 2. Title before first '(' — handles 'Road House (De profesión: duro) (2024)'
-        const mainPart = normTitle(fullTitle.replace(/\s*\(.*$/, '').trim());
-        if (mainPart && (mainPart === n || (no && mainPart === no))) return true;
+        // Exact matches
+        if (n && mn === n) return true;
+        if (no && mn === no) return true;
 
-        // 3. Content INSIDE the first parenthesis (alternate/Spanish title)
-        const altMatch = fullTitle.match(/\(([^)]{3,})\)/);
-        if (altMatch) {
-            const alt = normTitle(altMatch[1]);
-            if (alt === n || (no && alt === no)) return true;
+        // 2. Title before first '(' — "Road House (De profesión...)" → "road house"
+        const mainPart = normTitle(fullTitle.replace(/\s*\(.*$/, '').replace(/\s*\|.*$/, '').trim());
+        if (mainPart.length >= 4) {
+            if (n && mainPart === n) return true;
+            if (no && mainPart === no) return true;
         }
+
+        // 3. Content inside FIRST parenthesis (alternate/Spanish title)
+        const altMatch = fullTitle.match(/\(([^)]{4,})\)/);
+        if (altMatch && !/^\d{4}$/.test(altMatch[1].trim())) {
+            const alt = normTitle(altMatch[1]);
+            if (n && alt === n) return true;
+            if (no && alt === no) return true;
+        }
+
+        // 4. Substring: TMDB title contained IN catalog title
+        //    Handles "MIRACLE ON 34TH STREET COMEDIA 1994" matching TMDB "Miracle on 34th Street"
+        //    Minimum 5 chars to avoid false positives ("Up", "It", etc.)
+        if (n && n.length >= 5 && mn.includes(n)) return true;
+        if (no && no.length >= 5 && mn.includes(no)) return true;
+        // Also check main part
+        if (n && n.length >= 5 && mainPart.includes(n)) return true;
+        if (no && no.length >= 5 && mainPart.includes(no)) return true;
 
         return false;
     });
@@ -732,8 +756,25 @@ function initMovieGenreTabs() {
     });
 }
 
-function filterMoviesByGenre(rowId, label) {
+/**
+ * Filter movies by genre tab click.
+ * Uses movieGenreCache (from discover) - polls while genre is still loading.
+ */
+async function filterMoviesByGenre(rowId, label) {
     showMoviesSection('grid');
+    $('movies-count').textContent = `Cargando ${label}...`;
+    $('movies-grid').innerHTML = '';
+
+    // Wait up to 20s for genre data if still loading
+    if (!movieGenreCache.has(rowId)) {
+        await new Promise(resolve => {
+            const check = setInterval(() => {
+                if (movieGenreCache.has(rowId)) { clearInterval(check); resolve(); }
+            }, 400);
+            setTimeout(() => { clearInterval(check); resolve(); }, 20000);
+        });
+    }
+
     const cached = movieGenreCache.get(rowId) || [];
     renderMovieGrid(cached);
     $('movies-count').textContent = cached.length
@@ -778,29 +819,34 @@ function renderMovieGrid(movies) {
 }
 
 /**
- * Load genre rows using TMDB Discover API — 8 genres = 8+16 API calls total vs 500+.
- * Fetches 2 pages (80 movies) per genre, matches them to our catalog.
+ * Load genre rows using TMDB Discover API — 8 genres × 3 pages = 24 API calls vs 500+.
+ * Fetches 3 pages (120 movies) per genre for better catalog match rate.
+ * ALWAYS sets movieGenreCache so genre tabs don't hang forever.
  */
 async function loadMovieGenreRows() {
     await Promise.all(MOVIE_GENRE_ROWS.map(async genre => {
         try {
-            // Fetch 2 pages for more catalog matches
-            const [p1, p2] = await Promise.all([
+            const [p1, p2, p3] = await Promise.all([
                 discoverMoviesByGenre(genre.ids[0], 1),
                 discoverMoviesByGenre(genre.ids[0], 2),
+                discoverMoviesByGenre(genre.ids[0], 3),
             ]);
-            const tmdbResults = [...p1, ...p2];
+            const tmdbResults = [...p1, ...p2, ...p3];
             const matched = [];
             for (const t of tmdbResults) {
                 const m = findMovieInCatalog(t);
                 if (m && !matched.find(x => x.id === m.id)) matched.push(m);
             }
+            // ALWAYS set cache — even if empty — so the tab filter knows loading is done
+            movieGenreCache.set(genre.id, matched);
             if (matched.length > 0) {
-                movieGenreCache.set(genre.id, matched);
                 renderMovieRow(genre.id, genre.title, matched.slice(0, 40));
+            } else {
+                console.log('[Movies] No discover matches for', genre.title, 'results:', matched.length);
             }
         } catch (err) {
             console.warn('[Movies] Genre load failed:', genre.title, err.message);
+            movieGenreCache.set(genre.id, []); // Mark loaded even on error
         }
     }));
     // After all genre rows, add the full scrollable catalog
