@@ -107,10 +107,25 @@ export async function searchSeries(title, year) {
 
 /**
  * Search TMDB for a movie by title and optional year.
+ * Returns poster, overview, genreIds, etc.
  */
 export async function searchMovie(title, year) {
-    const cleanTitle = title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
-    const key = `movie_${cleanTitle}_${year || ''}`.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    // ── Clean catalog title noise ──────────────────────────────────────────
+    let cleanTitle = title
+        .split(/\s*[|·]\s*/)[0]                                           // take part before '|' or '·'
+        .replace(/\s*\(\s*(Castellano|Cast\.|Latino|Audio|Español|V\.O\.|VOSE?|Doblado|Subtitulado)[^)]*\)/gi, '') // language tags
+        .replace(/\s*\(\d{4}\)\s*$/, '')                                  // trailing year in parens
+        .replace(/\s+\b(19|20)\d{2}\b\s*$/, '')                          // trailing bare year
+        .replace(/\s*\([^)]*\)\s*$/, '')                                  // any other trailing parens
+        .replace(/\s*-\s*(Edición|Edition|Version|Versión)[^-]*/gi, '')   // edition markers
+        .trim();
+
+    // Use text before first '(' if meaningful (strips embedded genre tags etc.)
+    const beforeParen = cleanTitle.replace(/\s*\(.*/, '').trim();
+    if (beforeParen.length >= 4) cleanTitle = beforeParen;
+
+    // Use 'mv2_' prefix so old cached entries (missing genreIds) are ignored
+    const key = `mv2_${cleanTitle}_${year || ''}`.toLowerCase().replace(/[^a-z0-9_]/g, '_');
     const cached = cacheGet(key);
     if (cached !== null) return cached;
 
@@ -122,17 +137,22 @@ export async function searchMovie(title, year) {
         const res = await throttledFetch(`${TMDB_BASE}/search/movie?${params}`);
         const json = await res.json();
         let r = json.results?.[0];
+        // Retry without year constraint if no result
         if (!r && year) {
             const p2 = new URLSearchParams({ api_key: TMDB_KEY, query: cleanTitle, language: 'es-ES', include_adult: false });
-            const r2 = await throttledFetch(`${TMDB_BASE}/search/movie?${p2}`);
-            r = (await r2.json()).results?.[0];
+            r = (await (await throttledFetch(`${TMDB_BASE}/search/movie?${p2}`)).json()).results?.[0];
         }
         if (!r) { cacheSet(key, null); return null; }
         const info = {
-            id: r.id, name: r.title, overview: r.overview,
-            posterPath: r.poster_path, backdropPath: r.backdrop_path,
+            id: r.id,
+            name: r.title,
+            originalName: r.original_title,
+            overview: r.overview,
+            posterPath: r.poster_path,
+            backdropPath: r.backdrop_path,
             year: r.release_date?.slice(0, 4),
             rating: Math.round(r.vote_average * 10) / 10,
+            genreIds: r.genre_ids,   // ← Required for genre row classification
         };
         cacheSet(key, info);
         return info;
