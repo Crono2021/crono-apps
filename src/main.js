@@ -561,11 +561,25 @@ async function loadMovies() {
             const all = await res.json();
             // Filter out raw file entries that got imported into the DB as movie titles
             // e.g. "La Jungla de Cristal III [ES] 1080p.mp4", filenames with quality tags
-            moviesCatalog = all.filter(m => {
+            // Filter raw filenames and deduplicate titles so we don't have multiple cards for the same movie
+            const valid = all.filter(m => {
                 const t = m.title || '';
                 if (/\.(mp4|mkv|avi|mov|ts|m2ts|webm)\s*$/i.test(t)) return false;
                 if (/\[(?:ES|ES5|CAST|LAT)[^\]]*\]\s*\d{3,4}p/i.test(t)) return false;
                 if (/\b(?:720p|1080p|4K|2160p)\b/i.test(t)) return false;
+                return true;
+            });
+
+            const seen = new Set();
+            moviesCatalog = valid.filter(m => {
+                // Normalize title tightly to dedup duplicates like "Dora (2025)" and "Dora"
+                const norm = (m.search_title || m.title).toLowerCase()
+                    .replace(/\s*\(\s*(Castellano|Cast\.|Latino|Audio|Español|V\.O\.|VOSE?|Doblado|Subtitulado)[^)]*\)/gi, '')
+                    .replace(/\s*\(\d{4}\)\s*$/, '')
+                    .replace(/\s+\b(19|20)\d{2}\b\s*$/, '')
+                    .replace(/[^a-z0-9]/g, '');
+                if (norm.length > 2 && seen.has(norm)) return false;
+                seen.add(norm);
                 return true;
             });
         }
@@ -962,6 +976,11 @@ async function loadMovieCardPoster(card, movie) {
     if (tmdb) {
         movieTmdbCache.set(movie.id, tmdb);
         onMovieTmdbLoaded(movie, tmdb); // ← classify genre with the data we already have
+        // Update title and year to official TMDB data
+        const titleEl = card.querySelector('.series-card-title');
+        if (titleEl) titleEl.textContent = tmdb.name;
+        const yearEl = card.querySelector('.series-card-year');
+        if (yearEl && tmdb.year) yearEl.textContent = tmdb.year;
     }
     if (!tmdb?.posterPath) return;
     const url = posterUrl(tmdb.posterPath);
