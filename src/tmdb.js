@@ -215,6 +215,39 @@ export async function getTrending(timeWindow = 'week') {
 }
 
 /**
+ * Get trending movies from TMDB (cached 24h).
+ */
+export async function getTrendingMovies(timeWindow = 'week') {
+    const key = `trending_movie_${timeWindow}`;
+    const TTL_24H = 24 * 60 * 60 * 1000;
+    try {
+        const raw = localStorage.getItem('tmdb_' + key);
+        if (raw) {
+            const { ts, data } = JSON.parse(raw);
+            if (Date.now() - ts < TTL_24H) return data;
+            localStorage.removeItem('tmdb_' + key);
+        }
+    } catch { }
+
+    try {
+        const params = new URLSearchParams({ api_key: TMDB_KEY, language: 'es-ES' });
+        const res = await fetch(`${TMDB_BASE}/trending/movie/${timeWindow}?${params}`);
+        const json = await res.json();
+        const results = (json.results || []).map(r => ({
+            id: r.id, name: r.title, originalName: r.original_title,
+            overview: r.overview, posterPath: r.poster_path,
+            backdropPath: r.backdrop_path, year: r.release_date?.slice(0, 4),
+            rating: Math.round(r.vote_average * 10) / 10, genreIds: r.genre_ids,
+        }));
+        localStorage.setItem('tmdb_' + key, JSON.stringify({ ts: Date.now(), data: results }));
+        return results;
+    } catch (err) {
+        console.warn('[TMDB] Movie trending failed:', err.message);
+        return [];
+    }
+}
+
+/**
  * Normalize a title for fuzzy matching (remove year, accents, symbols).
  */
 export function normTitle(t) {

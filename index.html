@@ -104,10 +104,10 @@
             </div>
         </div>
 
-        <!-- MOVIES VIEW -->
+        <!-- MOVIES VIEW — Netflix layout -->
         <div id="view-movies" class="view">
             <header class="topbar">
-                <h1 class="topbar-title">🎬 Películas</h1>
+                <h1 class="topbar-title">Cine en Castellano HD</h1>
                 <div class="topbar-search">
                     <input type="text" id="movies-search-input" placeholder="🔍 Buscar películas...">
                 </div>
@@ -120,16 +120,37 @@
                 <button id="nav-movies-active" class="main-nav-btn active">🎬 Películas</button>
             </nav>
 
-            <div id="movies-loading" class="center-message hidden">
-                <div class="spinner"></div>
-                <p>Cargando catálogo de películas...</p>
+            <!-- Genre tabs -->
+            <div id="movies-genre-tabs" class="genre-tabs"></div>
+
+            <!-- Search / Genre result grid -->
+            <div id="movies-search-results" class="search-results">
+                <div class="search-header">
+                    <span id="movies-count" class="search-count"></span>
+                </div>
+                <div id="movies-grid" class="catalog-grid"></div>
             </div>
 
-            <div id="movies-search-info" class="search-header" style="display:none">
-                <span id="movies-count" class="search-count"></span>
+            <!-- Netflix-style home -->
+            <div id="movies-content">
+                <!-- Hero -->
+                <div id="movies-hero" class="hero-section">
+                    <div id="movies-hero-backdrop" class="hero-backdrop"></div>
+                    <div class="hero-overlay"></div>
+                    <div class="hero-content">
+                        <div class="hero-badge">🎬 En cartelera</div>
+                        <h2 id="movies-hero-title" class="hero-title">Cargando...</h2>
+                        <div id="movies-hero-meta" class="hero-meta"></div>
+                        <p id="movies-hero-overview" class="hero-overview"></p>
+                        <div class="hero-buttons">
+                            <button id="movies-hero-play-btn" class="hero-btn hero-btn-primary">▶ Ver ahora</button>
+                        </div>
+                    </div>
+                    <div id="movies-hero-dots" class="hero-dots"></div>
+                </div>
+                <!-- Content rows -->
+                <div id="movies-rows" class="catalog-rows"></div>
             </div>
-
-            <div id="movies-grid" class="catalog-grid movies-grid"></div>
         </div>
 
         <!-- MOVIE FILES MODAL (overlay shown when bot searches) -->
@@ -181,7 +202,7 @@
         <!-- PLAYER -->
         <div id="view-player" class="view">
             <header class="topbar">
-                <button id="btn-back-episodes" class="btn-back">←</button>
+                <button id="btn-back-player" class="btn-back">←</button>
                 <div class="topbar-info">
                     <h1 id="player-title" class="topbar-title"></h1>
                     <p id="player-subtitle" class="topbar-sub"></p>
