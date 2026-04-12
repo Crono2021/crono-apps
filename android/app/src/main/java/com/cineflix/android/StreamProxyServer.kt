@@ -44,7 +44,7 @@ class StreamProxyServer(
         val rangeHeader = session.headers["range"] ?: "bytes=0-"
         val (start, endRequested) = parseRange(rangeHeader)
         val end = if (endRequested < 0) fileSize - 1 else minOf(endRequested, fileSize - 1)
-        val chunkSize = (end - start + 1).toInt().coerceAtMost(1 * 1024 * 1024) // 1MB max
+        val chunkSize = (end - start + 1).toInt().coerceAtMost(64 * 1024) // 64KB per bridge call
 
         // Ask JS for the bytes
         val requestId = "$streamId-$start-${System.currentTimeMillis()}"

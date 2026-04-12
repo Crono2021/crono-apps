@@ -86,14 +86,15 @@ class ExoPlayerPlugin : Plugin() {
     @PluginMethod
     fun replyRange(call: PluginCall) {
         val requestId = call.getString("requestId") ?: run { call.reject("requestId required"); return }
-        val chunkArray = call.getArray("chunk") ?: run { call.reject("chunk required"); return }
+        val base64 = call.getString("chunk") ?: ""
 
-        // Convert JSArray of ints back to a ByteArray
-        val bytes = ByteArray(chunkArray.length()) { i ->
-            (chunkArray.getInt(i) and 0xFF).toByte()
+        // Decode Base64 to bytes (much faster than JSON number arrays)
+        val bytes = if (base64.isNotEmpty()) {
+            android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+        } else {
+            ByteArray(0)
         }
 
-        // Find the proxy that owns this requestId and deliver the bytes
         for (proxy in proxyServers.values) {
             if (proxy.deliverChunk(requestId, bytes)) break
         }
