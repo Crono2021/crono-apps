@@ -853,14 +853,6 @@ async function loadMoviesBackground() {
     renderAllMoviesCatalog();
 }
 
-    // Mark all genres as loaded (even empty ones) so tabs don't hang
-    for (const genre of MOVIE_GENRE_ROWS) {
-        if (!movieGenreCache.has(genre.id)) movieGenreCache.set(genre.id, []);
-    }
-
-    renderAllMoviesCatalog();
-}
-
 /**
  * Called whenever a movie is successfully matched to TMDB (from poster load OR background load).
  * Classifies it into genres and schedules a debounced row update.
