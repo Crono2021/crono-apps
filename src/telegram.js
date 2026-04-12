@@ -270,7 +270,9 @@ export async function initServiceWorker() {
     }
 
     try {
-        const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        const swUrl = (import.meta.env.BASE_URL || '/') + 'sw.js';
+        const swScope = import.meta.env.BASE_URL || '/';
+        const reg = await navigator.serviceWorker.register(swUrl, { scope: swScope });
 
         // Wait for the SW to become active
         await new Promise((resolve) => {
@@ -354,7 +356,7 @@ export async function streamVideo(media, videoElement, onProgress) {
         // Give the SW a tick to register
         await new Promise(r => setTimeout(r, 100));
 
-        videoElement.src = `/tg-stream/${streamId}`;
+        videoElement.src = (import.meta.env.BASE_URL || '/') + `tg-stream/${streamId}`;
 
         // Cleanup when done
         videoElement.addEventListener('ended', () => {
@@ -405,3 +407,49 @@ export async function streamVideo(media, videoElement, onProgress) {
     videoElement.src = URL.createObjectURL(new Blob(chunks, { type: mimeType }));
     videoElement.play().catch(() => {});
 }
+
+// ===== NATIVE ANDROID STREAMING (Capacitor + ExoPlayer) =====
+
+/**
+ * Check if the app is running inside Capacitor (Android/iOS).
+ */
+export function isNativeApp() {
+    return !!(window.Capacitor?.isNativePlatform?.());
+}
+
+/**
+ * Stream a video natively via ExoPlayer (Android only).
+ * The Kotlin plugin starts a local NanoHTTPD server that proxies
+ * byte-range requests back to JS / GramJS.
+ */
+export async function streamVideoNative(media) {
+    const { ExoPlayer } = window.Capacitor.Plugins;
+    const c = await getClient();
+    const doc = media.document;
+    const streamId = `${doc.id.toString()}-${Date.now()}`;
+    const fileSize = Number(doc.size);
+    const mimeType = doc.mimeType || 'video/mp4';
+
+    // 1. Register stream with native proxy server
+    await ExoPlayer.registerStream({ streamId, fileSize, mimeType });
+
+    // 2. Listen for byte-range requests from the native proxy
+    const listener = await ExoPlayer.addListener('fetchRange', async ({ requestId, start, size }) => {
+        try {
+            const chunk = await fetchTelegramRange(c, doc, start, size);
+            // Deliver bytes back as a plain number array (Capacitor serialises to JSON)
+            await ExoPlayer.replyRange({ requestId, chunk: Array.from(chunk) });
+        } catch (err) {
+            console.error('[Native Stream] fetchRange error:', err.message);
+            await ExoPlayer.replyRange({ requestId, chunk: [] });
+        }
+    });
+
+    // 3. Launch ExoPlayer fullscreen
+    await ExoPlayer.play({ streamId });
+
+    // Clean up listener when done (ExoPlayer closes → player activity finishes)
+    // The Kotlin side calls stopStream on back, but we also remove the JS listener.
+    setTimeout(() => listener?.remove?.(), 5 * 60 * 1000); // auto-cleanup after 5 min max
+}
+

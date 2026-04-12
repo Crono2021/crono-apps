@@ -50,9 +50,11 @@ function fetchChunk(streamId, start, size) {
 
 self.addEventListener('fetch', (e) => {
     const url = new URL(e.request.url);
-    if (!url.pathname.startsWith('/tg-stream/')) return;
+    const TG_MARKER = 'tg-stream/';
+    const markerIdx = url.pathname.indexOf(TG_MARKER);
+    if (markerIdx === -1) return;
 
-    const streamId = url.pathname.slice('/tg-stream/'.length);
+    const streamId = url.pathname.slice(markerIdx + TG_MARKER.length);
     const meta = streams.get(streamId);
     if (!meta || !port) {
         e.respondWith(new Response('Stream not ready', { status: 503 }));

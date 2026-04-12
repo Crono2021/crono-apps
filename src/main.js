@@ -68,6 +68,7 @@ import {
     isLoggedIn, sendCode, verifyCode, verify2FA, logout,
     sendBotCommand, clickInlineButton, getVideoMessages,
     streamVideo, initServiceWorker, searchMovieByPayload,
+    playInMpv, isNativeApp, streamVideoNative,
 } from './telegram.js';
 import {
     searchSeries, searchMovie, getSeasonEpisodes, extractSeasonNumber,
@@ -1300,6 +1301,18 @@ $('btn-back-series').addEventListener('click', () => showView('view-series'));
 
 // ===== PLAYER =====
 async function playVideo(video, seriesTitle) {
+    // ── Native Android: use ExoPlayer via Capacitor plugin ──────────────────
+    if (isNativeApp()) {
+        try {
+            await streamVideoNative(video.media);
+        } catch (err) {
+            console.error('[Native Player] Error:', err.message);
+            alert(`Error al reproducir: ${err.message}`);
+        }
+        return;
+    }
+
+    // ── Web / Desktop: use <video> + Service Worker streaming ───────────────
     $('player-title').textContent = video.fileName;
     $('player-subtitle').textContent = seriesTitle;
     $('player-download').classList.remove('hidden');
@@ -1329,6 +1342,7 @@ async function playVideo(video, seriesTitle) {
         $('download-text').textContent = `Error: ${err.message}`;
     }
 }
+
 
 // Back from player: go to episodes OR movie modal depending on origin
 $('btn-back-player') && $('btn-back-player').addEventListener('click', () => {
