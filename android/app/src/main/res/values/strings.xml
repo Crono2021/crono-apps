@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Cineflix</string>
+    <string name="title_activity_main">Cineflix</string>
+    <string name="package_name">com.cineflix.android</string>
+    <string name="custom_url_scheme">com.cineflix.android</string>
+</resources>
