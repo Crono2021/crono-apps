@@ -28,6 +28,10 @@ class TelegramManager(private val context: Context, private val webView: WebView
     )
     private val msgCollectors = java.util.concurrent.ConcurrentHashMap<String, MsgCollector>()
 
+    // Cache fileId para evitar el round-trip de GetMessage al hacer streaming
+    // clave = "chatId:msgId", valor = Pair(fileId, mimeType)
+    val fileIdCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, String>>()
+
     init {
         initClient()
     }
@@ -59,6 +63,18 @@ class TelegramManager(private val context: Context, private val webView: WebView
                         val content = msg.content
                         val isVideo = content is TdApi.MessageDocument || content is TdApi.MessageVideo
                         if (isVideo) {
+                            // Guardar en caché fileId para evitar GetMessage al reproducir
+                            val cacheKey = "${msg.chatId}:${msg.id}"
+                            if (content is TdApi.MessageDocument) {
+                                val doc = content.document
+                                fileIdCache[cacheKey] = Pair(doc.document.id, doc.mimeType.ifEmpty { "video/mp4" })
+                                // Pre-iniciar descarga (prioridad baja, 0 bytes por ahora)
+                                client?.send(TdApi.DownloadFile(doc.document.id, 1, 0, 32768, false)) {}
+                            } else if (content is TdApi.MessageVideo) {
+                                val vid = content.video
+                                fileIdCache[cacheKey] = Pair(vid.video.id, vid.mimeType.ifEmpty { "video/mp4" })
+                                client?.send(TdApi.DownloadFile(vid.video.id, 1, 0, 32768, false)) {}
+                            }
                             try {
                                 val videoObj = org.json.JSONObject()
                                 videoObj.put("msgId", msg.id)

@@ -59,32 +59,38 @@ class LocalStreamProxy(private val telegramManager: TelegramManager) : NanoHTTPD
         val client = telegramManager.getClient()
             ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "TDLib not init")
 
-        // ── 1. Resolve fileId from message ──────────────────────────────────
-        val latch  = CountDownLatch(1)
-        var fileId = -1
-        var mimeType = "video/mp4"
+        // ── 1. Resolve fileId — use cache (pre-populated on UpdateNewMessage) to skip GetMessage ──
+        val cacheKey = "$chatId:$msgId"
+        val cached   = telegramManager.fileIdCache[cacheKey]
+        var fileId   = cached?.first ?: -1
+        var mimeType = cached?.second ?: "video/mp4"
         var totalSize = 0L
 
-        client.send(TdApi.GetMessage(chatId, msgId)) { result ->
-            if (result is TdApi.Message) {
-                when (val c = result.content) {
-                    is TdApi.MessageVideo -> {
-                        fileId    = c.video.video.id
-                        totalSize = c.video.video.expectedSize
-                        mimeType  = c.video.mimeType.ifEmpty { "video/mp4" }
+        if (cached != null) {
+            Log.i(TAG, "Cache HIT $cacheKey -> fileId=$fileId")
+        } else {
+            Log.i(TAG, "Cache MISS — calling GetMessage chat=$chatId msg=$msgId")
+            val latch = CountDownLatch(1)
+            client.send(TdApi.GetMessage(chatId, msgId)) { result ->
+                if (result is TdApi.Message) {
+                    when (val c = result.content) {
+                        is TdApi.MessageVideo -> {
+                            fileId    = c.video.video.id
+                            totalSize = c.video.video.expectedSize
+                            mimeType  = c.video.mimeType.ifEmpty { "video/mp4" }
+                        }
+                        is TdApi.MessageDocument -> {
+                            fileId    = c.document.document.id
+                            totalSize = c.document.document.expectedSize
+                            mimeType  = c.document.mimeType.ifEmpty { "video/mp4" }
+                        }
+                        else -> {}
                     }
-                    is TdApi.MessageDocument -> {
-                        fileId    = c.document.document.id
-                        totalSize = c.document.document.expectedSize
-                        mimeType  = c.document.mimeType.ifEmpty { "video/mp4" }  // mimeType is on Document, not File
-                    }
-                    else -> {}
                 }
+                latch.countDown()
             }
-            latch.countDown()
+            latch.await(10, TimeUnit.SECONDS)
         }
-
-        latch.await(10, TimeUnit.SECONDS)
 
         if (fileId == -1)
             return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not a video/document")
@@ -93,8 +99,9 @@ class LocalStreamProxy(private val telegramManager: TelegramManager) : NanoHTTPD
         activeFiles.putIfAbsent(fileId, FileState(expectedSize = totalSize))
         fileLocks.putIfAbsent(fileId, Object())
 
-        // ── 3. Start async download (synchronous=false so we can stream progressively) ──
-        client.send(TdApi.DownloadFile(fileId, 1, 0, 0, false)) {}
+        // ── 3. Start async download — request first 1MB to fill buffer quickly ──
+        client.send(TdApi.DownloadFile(fileId, 32, 0, 1048576, false)) {}
+
 
         // ── 4. Wait for local file path to appear ───────────────────────────
         val state = activeFiles[fileId]!!

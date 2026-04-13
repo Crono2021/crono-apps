@@ -61,8 +61,8 @@ class ExoPlayerPlugin : Plugin() {
         // Timeout alto porque TDLib puede tardar en descargar la primera parte (especialmente 4K)
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(60_000) 
+            .setConnectTimeoutMs(30_000)   // 30s to connect to local proxy
+            .setReadTimeoutMs(120_000)     // 120s read — TDLib may take time to deliver first bytes
             .setDefaultRequestProperties(mapOf("Cache-Control" to "no-cache"))
 
         val mediaItem = MediaItem.fromUri(streamUrl)
