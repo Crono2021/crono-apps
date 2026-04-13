@@ -40,6 +40,13 @@ class StreamProxyServer(
             return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found")
         }
 
+        if (session.method == Method.HEAD) {
+            val response = newFixedLengthResponse(Response.Status.OK, mimeType, "")
+            response.addHeader("Content-Length", fileSize.toString())
+            response.addHeader("Accept-Ranges", "bytes")
+            return response
+        }
+
         // Parse the Range header: "bytes=start-end"
         val rangeHeader = session.headers["range"] ?: "bytes=0-"
         val (start, endRequested) = parseRange(rangeHeader)

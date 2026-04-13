@@ -53,7 +53,7 @@ class PlayerActivity : Activity() {
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 android.widget.Toast.makeText(
                     this@PlayerActivity,
-                    "Error de reproducción: ${error.message}",
+                    "Error: ${error.errorCodeName} - ${error.message}",
                     android.widget.Toast.LENGTH_LONG
                 ).show()
                 finish()
