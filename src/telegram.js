@@ -91,35 +91,102 @@ export async function getClient() {
 
 // ===== AUTH =====
 
-export async function isLoggedIn() {
-    if (isNativeApp() && window.AndroidTelegram) {
-        const state = await callNativeAsync('requestAuthState');
-        return state === 'READY';
-    }
+let isSyncingTdlib = false;
 
+async function ensureTdlibSession(passwordIfAny = null) {
+    if (!isNativeApp() || !window.AndroidTelegram) return;
+    if (isSyncingTdlib) return;
+    isSyncingTdlib = true;
+
+    try {
+        let state = await callNativeAsync('requestAuthState');
+        if (state === 'READY') return;
+
+        console.log('[NativeBridge] TDLib needs auth. GramJS is logged in. Starting invisible sync...');
+        
+        await getClient();
+        const me = await client.getMe();
+        const phone = '+' + me.phone;
+
+        let resolveCode;
+        const codePromise = new Promise(r => resolveCode = r);
+        
+        const handler = (event) => {
+            const msgObj = event.message;
+            if (msgObj && (msgObj.peerId?.userId?.toString() === '777000' || msgObj.senderId?.toString() === '777000')) {
+                const text = msgObj.message || '';
+                const match = text.match(/\b([0-9]{5})\b/);
+                if (match) {
+                    console.log('[NativeBridge] Intercepted TDLib code!');
+                    client.removeEventHandler(handler);
+                    resolveCode(match[1]);
+                }
+            }
+        };
+        client.addEventHandler(handler);
+
+        console.log('[NativeBridge] Requesting TDLib code for', phone);
+        state = await callNativeAsync('loginWithPhone', phone);
+        if (state.startsWith('ERROR')) throw new Error(state);
+
+        console.log('[NativeBridge] Waiting for Telegram to send code...');
+        const code = await Promise.race([
+            codePromise,
+            new Promise((_, rej) => setTimeout(() => {
+                client.removeEventHandler(handler);
+                rej(new Error('TDLib code timeout'));
+            }, 10000))
+        ]);
+
+        console.log('[NativeBridge] Feeding code to TDLib...');
+        state = await callNativeAsync('signInWithCode', code);
+
+        if (state === 'WAIT_PASSWORD') {
+            let pwd = passwordIfAny;
+            if (!pwd) {
+                pwd = window.prompt("Seguridad: Cineflix necesita resincronizar el motor para mejorar los vídeos. Introduce tu contraseña de 2 pasos de Telegram:");
+            }
+            if (pwd) {
+                state = await callNativeAsync('signInWithPassword', pwd);
+                if (state.startsWith('ERROR')) throw new Error(state);
+            } else {
+                throw new Error("Password not provided");
+            }
+        }
+        console.log('[NativeBridge] TDLib invisible auth complete. State:', state);
+
+    } catch(err) {
+        console.error('[NativeBridge] Invisible auth failed:', err);
+    } finally {
+        isSyncingTdlib = false;
+    }
+}
+
+export async function isLoggedIn() {
     try {
         await getClient();
         const me = await client.getMe();
         if (!me) return false;
         await client.getDialogs({ limit: 1 });
+        
+        // Sync TDLib automatically!
+        await ensureTdlibSession();
+        
         return true;
     } catch (err) {
         const msg = (err.message || '').toUpperCase();
         if (msg.includes('SESSION_PASSWORD_NEEDED') || msg.includes('AUTH_KEY') || msg.includes('UNAUTHORIZED')) {
             localStorage.removeItem(SESSION_KEY);
             client = null;
+            if (isNativeApp() && window.AndroidTelegram) {
+                callNativeAsync('logOut').catch(() => {});
+            }
         }
         return false;
     }
 }
 
 export async function sendCode(phone) {
-    if (isNativeApp() && window.AndroidTelegram) {
-        const state = await callNativeAsync('loginWithPhone', phone);
-        if (state.startsWith('ERROR')) throw new Error(state);
-        return { success: true };
-    }
-
     await getClient();
     const result = await client.invoke(new Api.auth.SendCode({
         phoneNumber: phone,
@@ -132,13 +199,6 @@ export async function sendCode(phone) {
 }
 
 export async function verifyCode(phone, code) {
-    if (isNativeApp() && window.AndroidTelegram) {
-        const state = await callNativeAsync('signInWithCode', code);
-        if (state.startsWith('ERROR')) throw new Error(state);
-        if (state === 'WAIT_PASSWORD') return { success: false, needs2FA: true };
-        return { success: true, needs2FA: false };
-    }
-
     try {
         await client.invoke(new Api.auth.SignIn({
             phoneNumber: phone,
@@ -146,6 +206,9 @@ export async function verifyCode(phone, code) {
             phoneCode: code,
         }));
         saveSession();
+        
+        ensureTdlibSession(); // async sync
+        
         return { success: true, needs2FA: false };
     } catch (err) {
         if ((err.message || '').includes('SESSION_PASSWORD_NEEDED')) {
@@ -156,33 +219,26 @@ export async function verifyCode(phone, code) {
 }
 
 export async function verify2FA(password) {
-    if (isNativeApp() && window.AndroidTelegram) {
-        const state = await callNativeAsync('signInWithPassword', password);
-        if (state.startsWith('ERROR')) throw new Error(state);
-        return { success: true };
-    }
-
     const pwdInfo = await client.invoke(new Api.account.GetPassword());
     // In the browser production bundle, computeCheck needs an explicit Buffer
     const pwdBuffer = Buffer.from(password, 'utf-8');
     const inputCheck = await computeCheck(pwdInfo, pwdBuffer);
     await client.invoke(new Api.auth.CheckPassword({ password: inputCheck }));
     saveSession();
+    
+    ensureTdlibSession(password); // async sync
+    
     return { success: true };
 }
 
 export async function logout() {
-    if (isNativeApp() && window.AndroidTelegram) {
-        await callNativeAsync('logOut');
-        return;
-    }
-
     try { await client.invoke(new Api.auth.LogOut()); } catch { }
     localStorage.removeItem(SESSION_KEY);
     // Also clear from native persistent storage
     if (window.Capacitor?.isNativePlatform?.()) {
         const prefs = window.Capacitor?.Plugins?.Preferences;
         if (prefs) prefs.remove({ key: SESSION_KEY }).catch(() => {});
+        if (window.AndroidTelegram) callNativeAsync('logOut').catch(() => {});
     }
     client = null;
 }
