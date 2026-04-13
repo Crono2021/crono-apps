@@ -151,6 +151,183 @@ class TelegramManager(private val context: Context, private val webView: WebView
         }
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Nuevas funciones de migración completa a TDLib para Data UI
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @JavascriptInterface
+    fun searchMovieByPayload(queryId: String, payload: String) {
+        val botUsername = "videoclubpacobot"
+        Log.i(TAG, "JS requested searchMovieByPayload: $payload")
+        
+        client?.send(TdApi.SearchPublicChat(botUsername)) { botChatResult ->
+            if (botChatResult is TdApi.Chat) {
+                val chatId = botChatResult.id
+                val inputMessageContent = TdApi.InputMessageText(TdApi.FormattedText("/peli $payload", arrayOf()), false, false)
+                client?.send(TdApi.SendMessage(chatId, 0, 0, null, null, inputMessageContent)) { sendResult ->
+                    if (sendResult is TdApi.Message) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            kotlinx.coroutines.delay(4000)
+                            fetchAndSendVideos(queryId, chatId, 30, sendResult.id)
+                        }
+                    } else if (sendResult is TdApi.Error) {
+                        notifyJSCallbackError(queryId, sendResult.message)
+                    }
+                }
+            } else if (botChatResult is TdApi.Error) {
+                notifyJSCallbackError(queryId, "Bot not found: ${botChatResult.message}")
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun getVideoMessages(queryId: String, limit: Int, minId: Long) {
+        val botUsername = "videoclubpacobot"
+        Log.i(TAG, "JS requested getVideoMessages")
+        
+        client?.send(TdApi.SearchPublicChat(botUsername)) { botChatResult ->
+            if (botChatResult is TdApi.Chat) {
+                fetchAndSendVideos(queryId, botChatResult.id, limit, minId)
+            } else if (botChatResult is TdApi.Error) {
+                 notifyJSCallbackError(queryId, "Bot not found: ${botChatResult.message}")
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun sendBotCommand(queryId: String, payload: String) {
+        val botUsername = "videoclubpacobot"
+        Log.i(TAG, "JS requested sendBotCommand: $payload")
+        client?.send(TdApi.SearchPublicChat(botUsername)) { botChatResult ->
+            if (botChatResult is TdApi.Chat) {
+                val chatId = botChatResult.id
+                val inputMessageContent = TdApi.InputMessageText(TdApi.FormattedText("/start $payload", arrayOf()), false, false)
+                client?.send(TdApi.SendMessage(chatId, 0, 0, null, null, inputMessageContent)) { sendResult ->
+                    if (sendResult is TdApi.Message) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            kotlinx.coroutines.delay(2500)
+                            client?.send(TdApi.GetChatHistory(chatId, 0, 0, 5, false)) { historyResult ->
+                                if (historyResult is TdApi.Messages) {
+                                    for (msg in historyResult.messages) {
+                                        val replyMarkup = msg.replyMarkup
+                                        if (replyMarkup is TdApi.ReplyMarkupInlineKeyboard) {
+                                            val buttonsJson = org.json.JSONArray()
+                                            for (row in replyMarkup.rows) {
+                                                for (btn in row) {
+                                                    val btnType = btn.type
+                                                    if (btnType is TdApi.InlineKeyboardButtonTypeCallback) {
+                                                        val btnJson = org.json.JSONObject()
+                                                        btnJson.put("text", btn.text)
+                                                        btnJson.put("data", android.util.Base64.encodeToString(btnType.data, android.util.Base64.NO_WRAP))
+                                                        btnJson.put("msgId", msg.id)
+                                                        buttonsJson.put(btnJson)
+                                                    }
+                                                }
+                                            }
+                                            val response = org.json.JSONObject()
+                                            response.put("messageId", msg.id)
+                                            response.put("buttons", buttonsJson)
+                                            val textContent = msg.content
+                                            if (textContent is TdApi.MessageText) {
+                                                response.put("text", textContent.text.text)
+                                            } else {
+                                                response.put("text", "...")
+                                            }
+                                            notifyJSCallbackSuccess(queryId, response.toString())
+                                            return@send
+                                        }
+                                    }
+                                    val err = org.json.JSONObject()
+                                    err.put("messageId", org.json.JSONObject.NULL)
+                                    err.put("buttons", org.json.JSONArray())
+                                    err.put("text", "No response from bot")
+                                    notifyJSCallbackSuccess(queryId, err.toString())
+                                }
+                            }
+                        }
+                    } else if (sendResult is TdApi.Error) {
+                        notifyJSCallbackError(queryId, sendResult.message)
+                    }
+                }
+            } else if (botChatResult is TdApi.Error) {
+                notifyJSCallbackError(queryId, "Bot not found: ${botChatResult.message}")
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun clickInlineButton(queryId: String, msgId: Long, dataBase64: String) {
+        val botUsername = "videoclubpacobot"
+        val dataBytes = android.util.Base64.decode(dataBase64, android.util.Base64.DEFAULT)
+        client?.send(TdApi.SearchPublicChat(botUsername)) { botChatResult ->
+            if (botChatResult is TdApi.Chat) {
+                client?.send(TdApi.GetCallbackQueryAnswer(botChatResult.id, msgId, TdApi.CallbackQueryPayloadData(dataBytes))) { answerResult ->
+                    if (answerResult is TdApi.Error) {
+                        notifyJSCallbackError(queryId, answerResult.message)
+                    } else {
+                        notifyJSCallbackSuccess(queryId, "{\"success\":true}")
+                    }
+                }
+            } else if (botChatResult is TdApi.Error) {
+                notifyJSCallbackError(queryId, "Bot not found: ${botChatResult.message}")
+            }
+        }
+    }
+
+    private fun fetchAndSendVideos(queryId: String, chatId: Long, limit: Int, minId: Long) {
+        client?.send(TdApi.GetChatHistory(chatId, 0, 0, limit, false)) { historyResult ->
+            if (historyResult is TdApi.Error) {
+                notifyJSCallbackError(queryId, historyResult.message)
+                return@send
+            }
+            if (historyResult is TdApi.Messages) {
+                val videosJson = org.json.JSONArray()
+                for (msg in historyResult.messages) {
+                    if (minId != 0L && msg.id <= minId) continue
+                    val content = msg.content
+                    if (content is TdApi.MessageDocument || content is TdApi.MessageVideo) {
+                        val videoObj = org.json.JSONObject()
+                        videoObj.put("msgId", msg.id)
+                        videoObj.put("chatId", chatId.toString())
+                        videoObj.put("date", msg.date)
+                        if (content is TdApi.MessageDocument) {
+                            val doc = content.document
+                            val isMedia = doc.mimeType.contains("video") || doc.fileName.endsWith(".mp4") || doc.fileName.endsWith(".mkv")
+                            if (!isMedia) continue
+                            videoObj.put("fileName", doc.fileName)
+                            videoObj.put("fileSize", doc.document.size)
+                            videoObj.put("mimeType", doc.mimeType)
+                            videoObj.put("caption", content.caption.text)
+                            videosJson.put(videoObj)
+                        } else if (content is TdApi.MessageVideo) {
+                            val video = content.video
+                            videoObj.put("fileName", video.fileName)
+                            videoObj.put("fileSize", video.video.size)
+                            videoObj.put("mimeType", video.mimeType)
+                            videoObj.put("caption", content.caption.text)
+                            videosJson.put(videoObj)
+                        }
+                    }
+                }
+                notifyJSCallbackSuccess(queryId, videosJson.toString())
+            }
+        }
+    }
+
+    private fun notifyJSCallbackSuccess(queryId: String, jsonPayload: String) {
+        CoroutineScope(Dispatchers.Main).launch {
+            // Escape possible single quotes if we wrap in single quotes? We pass raw JSON so we shouldn't quote it if expecting object
+            webView.evaluateJavascript("window.onTelegramCallback('$queryId', true, $jsonPayload);", null)
+        }
+    }
+
+    private fun notifyJSCallbackError(queryId: String, errorMsg: String) {
+        CoroutineScope(Dispatchers.Main).launch {
+            val safeEscaped = errorMsg.replace("'", "\\'")
+            webView.evaluateJavascript("window.onTelegramCallback('$queryId', false, '$safeEscaped');", null)
+        }
+    }
+
     // Método seguro para llamar a JS
     private fun notifyJS(functionName: String, args: String) {
         CoroutineScope(Dispatchers.Main).launch {
