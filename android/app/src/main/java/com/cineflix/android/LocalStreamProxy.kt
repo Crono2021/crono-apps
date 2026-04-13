@@ -76,7 +76,7 @@ class LocalStreamProxy(private val telegramManager: TelegramManager) : NanoHTTPD
                     is TdApi.MessageDocument -> {
                         fileId    = c.document.document.id
                         totalSize = c.document.document.expectedSize
-                        mimeType  = c.document.document.mimeType.ifEmpty { "video/mp4" }
+                        mimeType  = c.document.mimeType.ifEmpty { "video/mp4" }  // mimeType is on Document, not File
                     }
                     else -> {}
                 }
