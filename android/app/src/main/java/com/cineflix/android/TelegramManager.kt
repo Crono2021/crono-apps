@@ -163,8 +163,8 @@ class TelegramManager(private val context: Context, private val webView: WebView
         client?.send(TdApi.SearchPublicChat(botUsername)) { botChatResult ->
             if (botChatResult is TdApi.Chat) {
                 val chatId = botChatResult.id
-                val inputMessageContent = TdApi.InputMessageText(TdApi.FormattedText("/peli $payload", arrayOf()), false, false)
-                client?.send(TdApi.SendMessage(chatId, 0, 0, null, null, inputMessageContent)) { sendResult ->
+                val inputMessageContent = TdApi.InputMessageText(TdApi.FormattedText("/peli $payload", emptyArray()), null, false)
+                client?.send(TdApi.SendMessage(chatId, null, null, null, null, inputMessageContent)) { sendResult ->
                     if (sendResult is TdApi.Message) {
                         CoroutineScope(Dispatchers.IO).launch {
                             kotlinx.coroutines.delay(4000)
@@ -201,12 +201,12 @@ class TelegramManager(private val context: Context, private val webView: WebView
         client?.send(TdApi.SearchPublicChat(botUsername)) { botChatResult ->
             if (botChatResult is TdApi.Chat) {
                 val chatId = botChatResult.id
-                val inputMessageContent = TdApi.InputMessageText(TdApi.FormattedText("/start $payload", arrayOf()), false, false)
-                client?.send(TdApi.SendMessage(chatId, 0, 0, null, null, inputMessageContent)) { sendResult ->
+                val inputMessageContent = TdApi.InputMessageText(TdApi.FormattedText("/start $payload", emptyArray()), null, false)
+                client?.send(TdApi.SendMessage(chatId, null, null, null, null, inputMessageContent)) { sendResult ->
                     if (sendResult is TdApi.Message) {
                         CoroutineScope(Dispatchers.IO).launch {
                             kotlinx.coroutines.delay(2500)
-                            client?.send(TdApi.GetChatHistory(chatId, 0, 0, 5, false)) { historyResult ->
+                            client?.send(TdApi.GetChatHistory(chatId, 0L, 0, 5, false)) { historyResult ->
                                 if (historyResult is TdApi.Messages) {
                                     for (msg in historyResult.messages) {
                                         val replyMarkup = msg.replyMarkup
@@ -275,7 +275,7 @@ class TelegramManager(private val context: Context, private val webView: WebView
     }
 
     private fun fetchAndSendVideos(queryId: String, chatId: Long, limit: Int, minId: Long) {
-        client?.send(TdApi.GetChatHistory(chatId, 0, 0, limit, false)) { historyResult ->
+        client?.send(TdApi.GetChatHistory(chatId, 0L, 0, limit, false)) { historyResult ->
             if (historyResult is TdApi.Error) {
                 notifyJSCallbackError(queryId, historyResult.message)
                 return@send
