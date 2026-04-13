@@ -14,40 +14,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Android repo
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      # ── Build web app from the main cineflix repo ──
-      - name: Checkout Web source (Crono2021/cineflix)
-        uses: actions/checkout@v4
-        with:
-          repository: Crono2021/cineflix
-          ref: master
-          path: web-src
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      - name: Build web app
-        run: |
-          cd web-src
-          npm ci --ignore-scripts
-          npm run build
-          echo "✅ Web built successfully"
-          ls -la dist/
-
-      - name: Copy web build to www/
-        run: |
-          rm -rf www/*
-          cp -r web-src/dist/* www/
-          echo "✅ www/ updated with fresh web build"
-          ls -la www/
-
-      # ── Capacitor sync ──
-      - name: Install Capacitor dependencies
+      - name: Install Capacitor CLI
         run: npm install
 
       - name: Sync Capacitor Android project
@@ -55,7 +31,6 @@ jobs:
           chmod +x node_modules/.bin/cap
           node_modules/.bin/cap sync android
 
-      # ── Android build ──
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
