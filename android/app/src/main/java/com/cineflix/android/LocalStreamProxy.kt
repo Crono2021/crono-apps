@@ -99,8 +99,9 @@ class LocalStreamProxy(private val telegramManager: TelegramManager) : NanoHTTPD
         activeFiles.putIfAbsent(fileId, FileState(expectedSize = totalSize))
         fileLocks.putIfAbsent(fileId, Object())
 
-        // ── 3. Start async download — request first 1MB to fill buffer quickly ──
-        client.send(TdApi.DownloadFile(fileId, 32, 0, 1048576, false)) {}
+        // ── 3. Download the FULL file (limit=0 = no limit). Priority 32 = high.
+        //    Re-issue on every request so TDLib knows the current read position.
+        client.send(TdApi.DownloadFile(fileId, 32, 0, 0, false)) {}
 
 
         // ── 4. Wait for local file path to appear ───────────────────────────
@@ -127,12 +128,16 @@ class LocalStreamProxy(private val telegramManager: TelegramManager) : NanoHTTPD
 
         Log.d(TAG, "Range $rangeStart-$rangeEnd / $totalSize | file=$localPath")
 
-        // ── 6. Wait for enough bytes to cover rangeStart ─────────────────────
-        // (We only need rangeStart bytes downloaded to begin reading)
+        // ── 6. Hint TDLib where we need data from (important for seeks) ──────
+        if (rangeStart > 0) {
+            client.send(TdApi.DownloadFile(fileId, 32, rangeStart, 0, false)) {}
+        }
+
+        // Wait for enough bytes to cover rangeStart
         val neededToStart = rangeStart + 1
         if (state.downloadedSize < neededToStart && !state.isCompleted) {
             synchronized(lock) {
-                val deadline2 = System.currentTimeMillis() + 60_000
+                val deadline2 = System.currentTimeMillis() + 90_000
                 while (state.downloadedSize < neededToStart && !state.isCompleted) {
                     val remaining = deadline2 - System.currentTimeMillis()
                     if (remaining <= 0) break

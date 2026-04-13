@@ -68,12 +68,12 @@ class TelegramManager(private val context: Context, private val webView: WebView
                             if (content is TdApi.MessageDocument) {
                                 val doc = content.document
                                 fileIdCache[cacheKey] = Pair(doc.document.id, doc.mimeType.ifEmpty { "video/mp4" })
-                                // Pre-iniciar descarga (prioridad baja, 0 bytes por ahora)
-                                client?.send(TdApi.DownloadFile(doc.document.id, 1, 0, 32768, false)) {}
+                                // Pre-iniciar descarga completa (limit=0 = sin limite)
+                                client?.send(TdApi.DownloadFile(doc.document.id, 1, 0, 0, false)) {}
                             } else if (content is TdApi.MessageVideo) {
                                 val vid = content.video
                                 fileIdCache[cacheKey] = Pair(vid.video.id, vid.mimeType.ifEmpty { "video/mp4" })
-                                client?.send(TdApi.DownloadFile(vid.video.id, 1, 0, 32768, false)) {}
+                                client?.send(TdApi.DownloadFile(vid.video.id, 1, 0, 0, false)) {}
                             }
                             try {
                                 val videoObj = org.json.JSONObject()
