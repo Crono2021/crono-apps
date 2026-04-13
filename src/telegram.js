@@ -465,6 +465,9 @@ function uint8ToBase64(bytes) {
     return btoa(binary);
 }
 
+import { registerPlugin } from '@capacitor/core';
+const ExoPlayer = registerPlugin('ExoPlayer');
+
 /**
  * Stream a video natively via ExoPlayer (Android only).
  * Réplica de la arquitectura Tevegram (LocalStreamProxy):
@@ -475,7 +478,6 @@ function uint8ToBase64(bytes) {
  *   5. ExoPlayer reproduce desde http://127.0.0.1:<port>/stream
  */
 export async function streamVideoNative(media) {
-    const { ExoPlayer } = window.Capacitor.Plugins;
     const c = await getClient();
     const doc = media.document;
 

@@ -11,6 +11,7 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@capacitor/core": "^8.3.0",
     "@choreruiz/capacitor-node-js": "^1.0.2",
     "buffer": "^6.0.3",
     "express": "^4.19.2",
