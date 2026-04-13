@@ -5,11 +5,6 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 
-import android.os.Bundle;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import com.getcapacitor.BridgeActivity;
-
 public class MainActivity extends BridgeActivity {
 
     private TelegramManager telegramManager;
@@ -20,39 +15,39 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ExoPlayerPlugin.class);
         super.onCreate(savedInstanceState);
         configureWebView();
-        
-        // Inicializar Motor TDLib
+
         WebView wv = getBridge().getWebView();
+
+        // Inicializar Motor TDLib
         telegramManager = new TelegramManager(this, wv);
         wv.addJavascriptInterface(telegramManager, "AndroidTelegram");
 
-        // Inicializar Proxy Local
+        // Inicializar Proxy Local y conectar eventos UpdateFile al proxy
         streamProxy = new LocalStreamProxy(telegramManager);
-        telegramManager.setStreamProxy(streamProxy);  // ← conectar UpdateFile
+        telegramManager.setStreamProxy(streamProxy);
+
         try {
             streamProxy.start();
             int port = streamProxy.getListeningPort();
-            android.util.Log.i("MainActivity", "🚀 LocalStreamProxy iniciado en el puerto " + port);
-            
-            // Pasamos el puerto a JS como variable global antes de cargar scripts
+            android.util.Log.i("MainActivity", "LocalStreamProxy iniciado en el puerto " + port);
+
+            // Exponer el puerto via JavascriptInterface (accesible en cualquier momento,
+            // sin interferir con el WebViewClient de Capacitor)
+            wv.addJavascriptInterface(new Object() {
+                @android.webkit.JavascriptInterface
+                public int getPort() { return port; }
+            }, "AndroidProxyPort");
+
+            // Inyeccion directa tambien (cubre recargas y evaluaciones tardias)
             wv.evaluateJavascript("window.CINEFLIX_PROXY_PORT = " + port + ";", null);
-            
-            // Reforzar: inyectar de nuevo cuando la página termine de cargar
-            wv.setWebViewClient(new android.webkit.WebViewClient() {
-                @Override
-                public void onPageFinished(android.webkit.WebView view, String url) {
-                    view.evaluateJavascript("window.CINEFLIX_PROXY_PORT = " + port + ";", null);
-                }
-            });
+
         } catch (Exception e) {
             android.util.Log.e("MainActivity", "Error iniciando LocalStreamProxy", e);
         }
     }
 
     /**
-     * Intercept Android back button: ask JS to handle navigation first.
-     * JS must expose window.__cineflixBack() returning true if handled.
-     * If JS returns false (or isn't ready), we minimize but do NOT exit the app.
+     * Android back button: JS handles navigation first.
      */
     @Override
     public void onBackPressed() {
@@ -61,20 +56,14 @@ public class MainActivity extends BridgeActivity {
             "(typeof window.__cineflixBack === 'function' && window.__cineflixBack() === true)",
             value -> {
                 if (!"true".equals(value)) {
-                    // JS didn't handle it → minimize to background (don't kill the process)
                     runOnUiThread(() -> moveTaskToBack(true));
                 }
-                // else: JS navigated backwards → nothing else to do
             }
         );
     }
 
-    /**
-     * Configure WebView for smooth mobile experience.
-     */
     private void configureWebView() {
         WebView wv = getBridge().getWebView();
-
         wv.setScrollContainer(true);
         wv.setVerticalScrollBarEnabled(false);
         wv.setHorizontalScrollBarEnabled(false);
@@ -92,8 +81,6 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (streamProxy != null) {
-            streamProxy.stop();
-        }
+        if (streamProxy != null) streamProxy.stop();
     }
 }
