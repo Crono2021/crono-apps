@@ -275,7 +275,7 @@ class TelegramEngine(private val context: Context) {
                             return@send
                         }
                     }
-                    deferred.complete(SeasonResponse(0L, "", emptyList()))
+                    deferred.complete(SeasonResponse(0L, chatId, "", emptyList()))
                 }
             }
         }
