@@ -6,9 +6,11 @@ import android.util.Log
 import android.view.ViewGroup
 import android.view.Window
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.ui.PlayerView
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -17,14 +19,16 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 
 /**
- * ExoPlayerPlugin — Puente Capacitor ↔ ExoPlayer + StreamProxy.
- * 
- * Réplica de la arquitectura de Tevegram:
- *   1. JS descarga chunks vía GramJS
- *   2. Los envía como Base64 a través del bridge
- *   3. Kotlin los escribe en disco (temp file)
- *   4. StreamProxy sirve el archivo vía HTTP 127.0.0.1
- *   5. ExoPlayer reproduce desde el proxy local
+ * ExoPlayerPlugin — Puente Capacitor ↔ ExoPlayer con HLS local.
+ *
+ * Arquitectura:
+ *   1. JS: initStream(fileSize, mimeType)  → prepara HlsProxy (NanoHTTPD) + temp file
+ *   2. JS: play()                          → lanza ExoPlayer → GET /stream.m3u8
+ *   3. JS: pushChunk(base64)               → escribe bytes → NanoHTTPD sirve /segment/N
+ *   4. JS: downloadComplete()              → añade #EXT-X-ENDLIST al M3U8
+ *
+ * Ventaja sobre ProgressiveMediaSource:
+ *   HlsMediaSource tiene retry automático y espera segmentos → no hay NETWORK_CONNECTION_FAILED
  */
 @CapacitorPlugin(name = "ExoPlayer")
 class ExoPlayerPlugin : Plugin() {
@@ -35,44 +39,51 @@ class ExoPlayerPlugin : Plugin() {
 
     private var playerDialog: Dialog? = null
     private var exoPlayer: ExoPlayer? = null
-    private var streamProxy: StreamProxy? = null
+    private var hlsProxy: HlsProxy? = null
 
     override fun load() {
         super.load()
-        // Iniciar StreamProxy al arrancar el plugin (como Tevegram hace en onCreate)
-        streamProxy = StreamProxy(context)
-        val port = streamProxy!!.start()
-        Log.i(TAG, "🚀 StreamProxy iniciado en puerto $port")
+        // Iniciar NanoHTTPD al cargar el plugin
+        hlsProxy = HlsProxy(context)
+        try {
+            hlsProxy!!.start()
+            Log.i(TAG, "🚀 HlsProxy iniciado en puerto ${hlsProxy!!.getPort()}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error iniciando HlsProxy: ${e.message}")
+        }
     }
 
     /**
-     * Prepara un nuevo stream. JS envía fileSize y mimeType.
-     * NOTA: JavaScript envía números como Double a través del bridge JSON.
-     * getLong() no convierte Double→Long, así que usamos getDouble() como fallback.
+     * Prepara un nuevo stream.
+     * JS: await ExoPlayer.initStream({ fileSize: 1234567890, mimeType: 'video/x-matroska' })
+     *
+     * NOTA: JS envía números como Double a través del JSON bridge.
+     * getLong() no convierte Double→Long, usamos getDouble() como fallback.
      */
     @PluginMethod
     fun initStream(call: PluginCall) {
         val fileSize = call.getLong("fileSize")
             ?: call.getDouble("fileSize")?.toLong()
             ?: run {
-                call.reject("fileSize required (got null)")
+                call.reject("fileSize required")
                 return
             }
         val mimeType = call.getString("mimeType") ?: "video/mp4"
 
-        streamProxy?.initStream(fileSize, mimeType)
+        hlsProxy?.initStream(fileSize, mimeType)
 
         val result = JSObject()
-        result.put("url", streamProxy?.getUrl() ?: "")
+        result.put("url", hlsProxy?.getM3u8Url() ?: "")
+        result.put("port", hlsProxy?.getPort() ?: 0)
         call.resolve(result)
 
         Log.i(TAG, "📁 Stream preparado: ${fileSize / 1024 / 1024}MB ($mimeType)")
+        Log.i(TAG, "📋 M3U8 URL: ${hlsProxy?.getM3u8Url()}")
     }
 
     /**
-     * Recibe un chunk de datos codificado en Base64 desde JS.
-     * Lo decodifica y lo añade al archivo temporal en disco.
-     * JS: await ExoPlayer.pushChunk({ data: 'base64string...' })
+     * Recibe un chunk de datos en Base64 y lo escribe al archivo temporal.
+     * JS: await ExoPlayer.pushChunk({ data: 'base64string' })
      */
     @PluginMethod
     fun pushChunk(call: PluginCall) {
@@ -83,107 +94,122 @@ class ExoPlayerPlugin : Plugin() {
 
         try {
             val bytes = Base64.decode(base64Data, Base64.NO_WRAP)
-            streamProxy?.appendData(bytes)
+            hlsProxy?.appendData(bytes)
             call.resolve()
         } catch (e: Exception) {
             Log.e(TAG, "Error decodificando chunk: ${e.message}")
-            call.reject("Error decodificando: ${e.message}")
+            call.reject("Error: ${e.message}")
         }
     }
 
     /**
-     * Marca la descarga como completa. Esto desbloquea cualquier
-     * petición Range pendiente que esté esperando datos.
+     * Marca la descarga como completa.
      * JS: await ExoPlayer.downloadComplete()
      */
     @PluginMethod
     fun downloadComplete(call: PluginCall) {
-        streamProxy?.markComplete()
+        hlsProxy?.markComplete()
         call.resolve()
-        Log.i(TAG, "✅ Descarga marcada como completa")
+        Log.i(TAG, "✅ Descarga marcada completa")
     }
 
     /**
-     * Lanza ExoPlayer fullscreen apuntando al StreamProxy local.
-     * JS: await ExoPlayer.play()
+     * Lanza ExoPlayer fullscreen con HLS apuntando al proxy local.
+     * JS: ExoPlayer.play({})
      */
     @PluginMethod
     fun play(call: PluginCall) {
-        val streamUrl = streamProxy?.getUrl()
-        if (streamUrl.isNullOrEmpty()) {
-            call.reject("No hay stream activo")
+        val m3u8Url = hlsProxy?.getM3u8Url()
+        if (m3u8Url.isNullOrEmpty()) {
+            call.reject("No hay stream activo (HlsProxy no iniciado)")
             return
         }
 
+        Log.i(TAG, "▶️ Lanzando ExoPlayer → $m3u8Url")
+
         activity.runOnUiThread {
-            showPlayerOverlay(streamUrl)
+            showPlayerOverlay(m3u8Url)
             call.resolve()
         }
     }
 
-    private fun showPlayerOverlay(streamUrl: String) {
-        // Liberar recursos anteriores
+    private fun showPlayerOverlay(m3u8Url: String) {
+        // Limpiar anterior
         exoPlayer?.release()
         playerDialog?.dismiss()
 
-        // Crear dialog fullscreen
+        // Dialog fullscreen
         playerDialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         playerDialog?.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
-        // PlayerView
         val playerView = PlayerView(activity)
         playerDialog?.setContentView(playerView, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
+        // DataSource factory con timeouts generosos para el proxy local
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(30_000)    // 30s — el proxy puede tardar en tener el primer segmento
+            .setReadTimeoutMs(60_000)       // 60s — segmentos grandes pueden tardarse
+            .setDefaultRequestProperties(mapOf("Cache-Control" to "no-cache"))
+
+        // ━━ HlsMediaSource — robusto, retry automático, espera segmentos ━━
+        val mediaItem = MediaItem.fromUri(m3u8Url)
+        val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
+            .createMediaSource(mediaItem)
+
         // Construir ExoPlayer
-        exoPlayer = ExoPlayer.Builder(activity).build()
+        exoPlayer = ExoPlayer.Builder(activity)
+            .setHandleAudioBecomingNoisy(true)  // pausa al desconectar auriculares
+            .build()
         playerView.player = exoPlayer
 
-        // Listener de errores
-        exoPlayer?.addListener(object : androidx.media3.common.Player.Listener {
-            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+        // Listener de errores con log detallado
+        exoPlayer?.addListener(object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
                 Log.e(TAG, "❌ ExoPlayer error: ${error.errorCodeName} - ${error.message}")
-                android.widget.Toast.makeText(
-                    context,
-                    "Error: ${error.errorCodeName}",
-                    android.widget.Toast.LENGTH_LONG
-                ).show()
+                Log.e(TAG, "   Causa: ${error.cause?.message}")
+                activity.runOnUiThread {
+                    android.widget.Toast.makeText(
+                        context,
+                        "Error ${error.errorCodeName}: ${error.message}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                val stateName = when (state) {
+                    Player.STATE_IDLE -> "IDLE"
+                    Player.STATE_BUFFERING -> "BUFFERING"
+                    Player.STATE_READY -> "READY"
+                    Player.STATE_ENDED -> "ENDED"
+                    else -> "UNKNOWN"
+                }
+                Log.i(TAG, "⏯ ExoPlayer state: $stateName")
             }
         })
 
-        // ━━ ARQUITECTURA TEVEGRAM ━━
-        // Conectar ExoPlayer al StreamProxy local vía HTTP, exactamente
-        // como Tevegram conecta a http://127.0.0.1:45302
-        Log.i(TAG, "▶️ ExoPlayer → $streamUrl")
-
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(30_000)
-
-        val mediaItem = MediaItem.fromUri(streamUrl)
-        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(mediaItem)
-
         exoPlayer?.setMediaSource(mediaSource)
         exoPlayer?.prepare()
-        exoPlayer?.play()
+        exoPlayer?.playWhenReady = true
 
-        // Limpiar recursos al cerrar
         playerDialog?.setOnDismissListener {
             exoPlayer?.release()
             exoPlayer = null
         }
 
         playerDialog?.show()
+        Log.i(TAG, "🎬 Dialog mostrado")
     }
 
     override fun handleOnDestroy() {
         exoPlayer?.release()
         playerDialog?.dismiss()
-        streamProxy?.stop()
+        try { hlsProxy?.stop() } catch (_: Exception) {}
+        hlsProxy?.cleanup()
         super.handleOnDestroy()
     }
 }
