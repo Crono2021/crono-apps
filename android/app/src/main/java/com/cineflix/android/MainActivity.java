@@ -5,13 +5,38 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 
+import android.os.Bundle;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import com.getcapacitor.BridgeActivity;
+
 public class MainActivity extends BridgeActivity {
+
+    private TelegramManager telegramManager;
+    private LocalStreamProxy streamProxy;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ExoPlayerPlugin.class);
         super.onCreate(savedInstanceState);
         configureWebView();
+        
+        // Inicializar Motor TDLib
+        WebView wv = getBridge().getWebView();
+        telegramManager = new TelegramManager(this, wv);
+        wv.addJavascriptInterface(telegramManager, "AndroidTelegram");
+
+        // Inicializar Proxy Local
+        streamProxy = new LocalStreamProxy(telegramManager);
+        try {
+            streamProxy.start();
+            android.util.Log.i("MainActivity", "🚀 LocalStreamProxy iniciado en el puerto " + streamProxy.getListeningPort());
+            
+            // Pasamos el puerto a JS como variable global antes de cargar scripts
+            wv.evaluateJavascript("window.CINEFLIX_PROXY_PORT = " + streamProxy.getListeningPort() + ";", null);
+        } catch (Exception e) {
+            android.util.Log.e("MainActivity", "Error iniciando LocalStreamProxy", e);
+        }
     }
 
     /**
@@ -52,5 +77,13 @@ public class MainActivity extends BridgeActivity {
         settings.setAllowFileAccess(true);
         settings.setJavaScriptEnabled(true);
         settings.setTextZoom(100);
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        if (streamProxy != null) {
+            streamProxy.stop();
+        }
     }
 }
