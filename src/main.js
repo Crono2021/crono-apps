@@ -1385,7 +1385,7 @@ async function playVideo(video, seriesTitle) {
     // ── Native Android: use ExoPlayer via Capacitor plugin ──────────────────
     if (isNativeApp()) {
         try {
-            await streamVideoNative(video.media);
+            await streamVideoNative(video);
         } catch (err) {
             console.error('[Native Player] Error:', err.message);
             alert('[Native Player] Error: ' + err.message + '\n' + (err.stack ? err.stack : 'No stacktrace'));

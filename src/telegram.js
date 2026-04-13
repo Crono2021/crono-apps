@@ -356,6 +356,7 @@ export async function getVideoMessages(limit = 50, minId = 0) {
             width, height, duration,
             date: msg.date, caption: msg.message || '',
             media: msg.media,
+            chatId: bot.id.toString()
         });
     }
     return videos;
@@ -591,19 +592,18 @@ function getExoPlayer() {
     return plugin;
 }
 
-export async function streamVideoNative(media) {
+export async function streamVideoNative(videoObj) {
     const ExoPlayer = getExoPlayer();
     
-    // Necesitamos chatId y msgId. Si media no los tiene, no podemos usar TDLib!
-    // Asumiremos que el frontend nos pasa el doc o el chat_id y msg_id.
-    let chatId = media.chatId || (media.message ? media.message.peerId?.channelId : null);
-    let msgId = media.msgId || (media.message ? media.message.id : null);
+    // Extraemos chatId y msgId del objeto video
+    let chatId = videoObj.chatId;
+    let msgId = videoObj.msgId;
     
-    // Convertir el channelId a Supergroup ID (-100...) si es GramJS ID
+    // Si chatId es un usuario y estamos usando API Hash de GramJS
     if (chatId && typeof chatId === 'object' && chatId.value) {
-        chatId = "-100" + chatId.value.toString();
-    } else if (chatId && !chatId.toString().startsWith('-100')) {
-        chatId = "-100" + chatId.toString();
+        chatId = chatId.value.toString();
+    } else if (chatId) {
+        chatId = chatId.toString();
     }
 
     if (!chatId || !msgId) {
