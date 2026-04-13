@@ -73,9 +73,9 @@ class JSBridgeDataSource(
             return actualRead
         }
 
-        // 2. CACHE MISS: Fetch a MASSIVE chunk (512KB) from Telegram to populate the cache
-        // ExoPlayer requests 8KB, but we steal 512KB in one go to prevent network thrashing
-        val prefetchSize = minOf(bytesRemaining, 512L * 1024L).toInt()
+        // 2. CACHE MISS: Fetch a stable chunk (128KB) from Telegram to populate the cache
+        // ExoPlayer requests 8KB, but we steal 128KB in one go to prevent network thrashing, keeping it under Capacitor's JSON bridge stress limits
+        val prefetchSize = minOf(bytesRemaining, 128L * 1024L).toInt()
 
         val requestId = "$streamId-$currentPosition-${System.currentTimeMillis()}"
         val holder = ChunkHolder()
