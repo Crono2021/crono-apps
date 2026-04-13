@@ -277,7 +277,7 @@ async function fetchTelegramRange(tgClient, doc, start, size) {
             fileReference: doc.fileReference,
             thumbSize: '',
         }),
-        offset: bigInt(alignedStart),
+        offset: typeof doc.size === 'bigint' ? BigInt(alignedStart) : bigInt(alignedStart),
         requestSize: limit,
         dcId: doc.dcId,
     })) {
