@@ -282,7 +282,11 @@ class TelegramEngine(private val context: Context) {
         deferred.await()
     }
 
-    /** Click an inline button and wait for the bot to finish sending episode videos */
+    /**
+     * Click an inline button (season) and wait for the bot to finish sending episode videos.
+     * Web equivalent: clickInlineButton(msgId, data) + getVideoMessages()
+     * Smart-wait: we stop 1.5s after the last video arrived, or after 12s max.
+     */
     suspend fun clickInlineButton(chatId: Long, msgId: Long, dataBase64: String): List<VideoInfo> =
         withContext(Dispatchers.IO) {
             val dataBytes = android.util.Base64.decode(dataBase64, android.util.Base64.DEFAULT)
@@ -300,9 +304,9 @@ class TelegramEngine(private val context: Context) {
             val ok = callbackDeferred.await()
             if (!ok) { msgCollectors.remove(collectorKey); return@withContext emptyList() }
 
-            // Smart wait: 1.5s silence after last message, max 10s
+            // Smart wait: stop 1.5s after last video OR after 12s total (web uses 3s fixed)
             val silenceMs = 1500L
-            val maxWait   = 10_000L
+            val maxWait   = 12_000L
             val start     = System.currentTimeMillis()
             while (System.currentTimeMillis() - start < maxWait) {
                 delay(200)
@@ -310,6 +314,57 @@ class TelegramEngine(private val context: Context) {
                 val hasVideos = synchronized(collector.videos) { collector.videos.isNotEmpty() }
                 if (since >= silenceMs && hasVideos) break
             }
+            msgCollectors.remove(collectorKey)
+            synchronized(collector.videos) { collector.videos.toList() }
+        }
+
+    /**
+     * Search for a movie using /peli command — exact equivalent of web's searchMovieByPayload.
+     * The bot sends video files directly (no inline keyboard needed).
+     */
+    suspend fun searchMovieByPayload(searchTitle: String): List<VideoInfo> =
+        withContext(Dispatchers.IO) {
+            val chatId = getBotChatId() ?: return@withContext emptyList()
+
+            // Get the last message id before sending so we only collect AFTER our command
+            val anchorDeferred = CompletableDeferred<Long>()
+            client?.send(TdApi.GetChatHistory(chatId, 0L, 0, 1, false)) { hist ->
+                val lastId = if (hist is TdApi.Messages && hist.messages.isNotEmpty())
+                    hist.messages[0].id else 0L
+                anchorDeferred.complete(lastId)
+            }
+            val anchorMsgId = anchorDeferred.await()
+
+            // Register collector BEFORE sending command
+            val collectorKey = "peli_${System.currentTimeMillis()}"
+            val collector = MsgCollector(chatId = chatId, afterMsgId = anchorMsgId)
+            msgCollectors[collectorKey] = collector
+
+            // Send /peli <title>
+            val text = TdApi.FormattedText("/peli $searchTitle", emptyArray())
+            val sendDeferred = CompletableDeferred<Boolean>()
+            client?.send(TdApi.SendMessage(chatId, null, null, null, null,
+                TdApi.InputMessageText(text, null, false)
+            )) { result -> sendDeferred.complete(result !is TdApi.Error) }
+
+            if (!sendDeferred.await()) {
+                msgCollectors.remove(collectorKey)
+                return@withContext emptyList()
+            }
+
+            // Wait 4s + smart silence (same logic as web: "await new Promise(r => setTimeout(r, 4000))")
+            delay(4000)
+            val silenceMs = 1500L
+            val maxExtra  = 8_000L
+            val start     = System.currentTimeMillis()
+            while (System.currentTimeMillis() - start < maxExtra) {
+                delay(200)
+                val since = System.currentTimeMillis() - collector.lastReceived
+                val hasVideos = synchronized(collector.videos) { collector.videos.isNotEmpty() }
+                if (since >= silenceMs && hasVideos) break
+                if (since >= silenceMs && !hasVideos && System.currentTimeMillis() - start > 3_000) break
+            }
+
             msgCollectors.remove(collectorKey)
             synchronized(collector.videos) { collector.videos.toList() }
         }

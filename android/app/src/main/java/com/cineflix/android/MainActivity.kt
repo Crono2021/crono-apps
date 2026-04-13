@@ -68,11 +68,11 @@ class MainActivity : ComponentActivity() {
                 viewModel    = homeVm,
                 userName     = userName,
                 onSeriesClick = { item ->
-                    epVm.openSeries(item.title, item.payload)
+                    epVm.openSeries(item.title, item.payload, isMovie = false)
                     screen = Screen.Episodes
                 },
                 onMovieClick  = { item ->
-                    epVm.openSeries(item.title, item.payload)
+                    epVm.openSeries(item.title, item.payload, isMovie = true)
                     screen = Screen.Episodes
                 },
                 onLogout = {

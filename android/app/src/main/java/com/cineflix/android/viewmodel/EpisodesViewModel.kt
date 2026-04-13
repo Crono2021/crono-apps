@@ -24,33 +24,49 @@ class EpisodesViewModel(private val engine: TelegramEngine) : ViewModel() {
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
-    /** Send /start <payload> to bot to discover seasons */
-    fun openSeries(title: String, payload: String) {
+    /** Send /start <payload> to bot to discover seasons (series flow) */
+    fun openSeries(title: String, payload: String, isMovie: Boolean = false) {
         viewModelScope.launch {
             _state.value = UiState(loading = true, title = title)
             try {
-                val response = engine.sendBotCommand(payload)
-                if (response != null && response.buttons.isNotEmpty()) {
+                if (isMovie) {
+                    // Movies: /peli <title> → bot sends video files directly (no keyboard)
+                    // Equivalent to web's searchMovieByPayload(searchTitle)
+                    val searchTitle = title.replace(Regex("\\s*\\(\\d{4}\\)\\s*$"), "").trim()
+                    val videos = engine.searchMovieByPayload(searchTitle)
+                    val sorted = videos.sortedBy { it.date }
                     _state.value = _state.value.copy(
-                        loading         = false,
-                        seasons         = response.buttons,
-                        currentBotMsgId = response.messageId,
-                        botChatId       = response.chatId,
+                        loading  = false,
+                        episodes = sorted,
+                        error    = if (sorted.isEmpty()) "El bot no encontró ningún archivo para esta película." else null,
                     )
-                    // Pre-open first season automatically
-                    openSeason(response.buttons.first(), response.messageId, response.chatId)
                 } else {
-                    _state.value = _state.value.copy(
-                        loading         = false,
-                        currentBotMsgId = response?.messageId ?: 0L,
-                        botChatId       = response?.chatId ?: 0L,
-                    )
+                    // Series: /start <payload> → bot sends inline keyboard with seasons
+                    val response = engine.sendBotCommand(payload)
+                    if (response != null && response.buttons.isNotEmpty()) {
+                        _state.value = _state.value.copy(
+                            loading         = false,
+                            seasons         = response.buttons,
+                            currentBotMsgId = response.messageId,
+                            botChatId       = response.chatId,
+                        )
+                        // Pre-open first season automatically
+                        openSeason(response.buttons.first(), response.messageId, response.chatId)
+                    } else {
+                        _state.value = _state.value.copy(
+                            loading         = false,
+                            currentBotMsgId = response?.messageId ?: 0L,
+                            botChatId       = response?.chatId ?: 0L,
+                            error           = if (response?.buttons?.isEmpty() == true) "No se encontraron temporadas" else null,
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(loading = false, error = e.message)
             }
         }
     }
+
 
     /** Click a season button and collect episodes */
     fun openSeason(button: TelegramEngine.SeasonButton, msgId: Long, botChatId: Long = _state.value.botChatId) {
