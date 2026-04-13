@@ -68,7 +68,7 @@ import {
     isLoggedIn, sendCode, verifyCode, verify2FA, logout,
     sendBotCommand, clickInlineButton, getVideoMessages,
     streamVideo, initServiceWorker, searchMovieByPayload,
-    playInMpv, isNativeApp, streamVideoNative, restoreNativeSession,
+    isNativeApp, streamVideoNative, restoreNativeSession,
 } from './telegram.js';
 import {
     searchSeries, searchMovie, getSeasonEpisodes, extractSeasonNumber,
@@ -1388,6 +1388,7 @@ async function playVideo(video, seriesTitle) {
             await streamVideoNative(video.media);
         } catch (err) {
             console.error('[Native Player] Error:', err.message);
+            alert('[Native Player] Error: ' + err.message + '\n' + (err.stack ? err.stack : 'No stacktrace'));
         }
         return;
     }

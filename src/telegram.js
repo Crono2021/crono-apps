@@ -443,6 +443,8 @@ export async function streamVideo(media, videoElement, onProgress) {
 }
 
 // ===== NATIVE ANDROID STREAMING (Capacitor + ExoPlayer) =====
+// Arquitectura Tevegram: ServerSocket local en Kotlin sirve HTTP Range
+// mientras GramJS descarga chunks progresivamente desde Telegram.
 
 /**
  * Check if the app is running inside Capacitor (Android/iOS).
@@ -452,77 +454,103 @@ export function isNativeApp() {
 }
 
 /**
+ * Convierte Uint8Array a Base64 de forma eficiente (sin overflow de stack).
+ */
+function uint8ToBase64(bytes) {
+    const CHUNK = 0x8000; // 32KB por iteración
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+    }
+    return btoa(binary);
+}
+
+import { registerPlugin } from '@capacitor/core';
+const ExoPlayer = registerPlugin('ExoPlayer');
+
+/**
  * Stream a video natively via ExoPlayer (Android only).
- * The Kotlin plugin starts a local NanoHTTPD server that proxies
- * byte-range requests back to JS / GramJS.
+ * Réplica de la arquitectura Tevegram (LocalStreamProxy):
+ *   1. JS descarga chunks con GramJS
+ *   2. Los envía como Base64 al plugin Capacitor
+ *   3. Kotlin los escribe en un archivo temporal en disco
+ *   4. StreamProxy (ServerSocket) sirve el archivo vía HTTP Range
+ *   5. ExoPlayer reproduce desde http://127.0.0.1:<port>/stream
  */
 export async function streamVideoNative(media) {
-    const { ExoPlayer } = window.Capacitor.Plugins;
     const c = await getClient();
     const doc = media.document;
-    const streamId = `${doc.id.toString()}-${Date.now()}`;
 
-    // Safe fileSize: GramJS may return doc.size as BigInt or custom object
+    // Safe fileSize coercion
     let fileSize;
     try {
         fileSize = typeof doc.size === 'bigint'
             ? Number(doc.size)
-            : Number(String(doc.size)); // coerce GramJS custom numeric types
+            : Number(String(doc.size));
     } catch { fileSize = 0; }
-
-    fileSize = Math.floor(fileSize); // MUST be strict integer without float residuals for Capacitor bridge
+    fileSize = Math.floor(fileSize);
 
     if (!fileSize || fileSize <= 0 || isNaN(fileSize)) {
-        console.warn('[Native] No fileSize available, cannot stream:', doc);
+        console.warn('[Native] No fileSize, cannot stream:', doc);
         throw new Error('No se pudo obtener el tamaño del archivo');
     }
 
     const mimeType = doc.mimeType || 'video/mp4';
+    const CHUNK_SIZE = 512 * 1024; // 512KB per chunk (safe for Binder IPC)
+    const BUFFER_BEFORE_PLAY = 2 * 1024 * 1024; // 2MB antes de lanzar player
 
-    // 1. Register stream with native proxy server
-    await ExoPlayer.registerStream({ streamId, fileSize, mimeType });
+    console.log('[Native] Iniciando stream:', fileSize, 'bytes,', mimeType);
 
-    // 2. Listen for byte-range requests — send bytes as Base64 (efficient over JSON bridge)
-    const listener = await ExoPlayer.addListener('fetchRange', async ({ requestId, start, size }) => {
+    // 1. Inicializar el proxy local (crea archivo temporal en disco)
+    await ExoPlayer.initStream({ fileSize, mimeType });
+
+    // 2. Descargar y empujar chunks progresivamente
+    let offset = 0;
+    let playerLaunched = false;
+
+    while (offset < fileSize) {
+        const size = Math.min(CHUNK_SIZE, fileSize - offset);
+
+        let chunk;
         try {
-            let chunk;
-            try {
-                chunk = await fetchTelegramRange(c, doc, start, size);
-            } catch (err) {
-                if (err.message && err.message.toLowerCase().includes('disconnected')) {
-                    console.warn('[Native Stream] Reparando socket cerrado de Telegram...');
-                    await c.connect();
-                    chunk = await fetchTelegramRange(c, doc, start, size);
-                } else {
-                    throw err;
-                }
-            }
-            
-            // TUBERÍA BINARIA PURA (Loopback)
-            // Adiós Base64, Adiós Capacitor IPC. Empujamos el binario crudo contra la tarjeta de red interna.
-            const response = await fetch(`http://127.0.0.1:3999/deliverChunk?requestId=${requestId}`, {
-                method: 'POST',
-                body: chunk 
-            });
-
-            if (!response.ok) {
-                throw new Error('Native IPC Pipe Server reject: ' + response.statusText);
-            }
+            chunk = await fetchTelegramRange(c, doc, offset, size);
         } catch (err) {
-            console.error('[Native Stream] fetchRange error:', err.message);
-            alert(`Error de descarga nativa: ${err.message}`);
-            // Liberar el seguro del DataSource pasándole 0 bytes por el tubo
-            await fetch(`http://127.0.0.1:3999/deliverChunk?requestId=${requestId}`, {
-                method: 'POST',
-                body: new Uint8Array(0) 
-            }).catch(() => {});
+            // Reintentar una vez tras reconectar
+            if (err.message && err.message.toLowerCase().includes('disconnect')) {
+                console.warn('[Native] Reconectando...');
+                await c.connect();
+            }
+            // Segundo intento
+            try {
+                chunk = await fetchTelegramRange(c, doc, offset, size);
+            } catch (e2) {
+                console.error('[Native] Error descarga fatal en offset', offset, e2);
+                break;
+            }
         }
-    });
 
-    // 3. Launch ExoPlayer fullscreen
-    await ExoPlayer.play({ streamId });
+        // Enviar chunk como Base64 al plugin nativo → disco
+        const base64 = uint8ToBase64(chunk);
+        await ExoPlayer.pushChunk({ data: base64 });
 
-    // Auto-cleanup listener after 2 hours max
-    setTimeout(() => listener?.remove?.(), 2 * 60 * 60 * 1000);
+        offset += chunk.length;
+
+        // 3. Lanzar ExoPlayer después del buffer inicial
+        if (!playerLaunched && offset >= BUFFER_BEFORE_PLAY) {
+            playerLaunched = true;
+            console.log('[Native] ▶️ Buffer alcanzado, lanzando ExoPlayer...');
+            ExoPlayer.play({}); // fire-and-forget (no await)
+        }
+    }
+
+    // 4. Marcar descarga completa
+    await ExoPlayer.downloadComplete({});
+
+    // Si el archivo era muy pequeño y nunca lanzamos el player
+    if (!playerLaunched) {
+        console.log('[Native] ▶️ Archivo pequeño, lanzando ExoPlayer...');
+        await ExoPlayer.play({});
+    }
+
+    console.log('[Native] ✅ Descarga completa:', offset, 'bytes');
 }
-
