@@ -28,12 +28,22 @@ public class MainActivity extends BridgeActivity {
 
         // Inicializar Proxy Local
         streamProxy = new LocalStreamProxy(telegramManager);
+        telegramManager.setStreamProxy(streamProxy);  // ← conectar UpdateFile
         try {
             streamProxy.start();
-            android.util.Log.i("MainActivity", "🚀 LocalStreamProxy iniciado en el puerto " + streamProxy.getListeningPort());
+            int port = streamProxy.getListeningPort();
+            android.util.Log.i("MainActivity", "🚀 LocalStreamProxy iniciado en el puerto " + port);
             
             // Pasamos el puerto a JS como variable global antes de cargar scripts
-            wv.evaluateJavascript("window.CINEFLIX_PROXY_PORT = " + streamProxy.getListeningPort() + ";", null);
+            wv.evaluateJavascript("window.CINEFLIX_PROXY_PORT = " + port + ";", null);
+            
+            // Reforzar: inyectar de nuevo cuando la página termine de cargar
+            wv.setWebViewClient(new android.webkit.WebViewClient() {
+                @Override
+                public void onPageFinished(android.webkit.WebView view, String url) {
+                    view.evaluateJavascript("window.CINEFLIX_PROXY_PORT = " + port + ";", null);
+                }
+            });
         } catch (Exception e) {
             android.util.Log.e("MainActivity", "Error iniciando LocalStreamProxy", e);
         }

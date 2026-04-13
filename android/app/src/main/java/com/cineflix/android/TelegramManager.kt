@@ -16,6 +16,7 @@ class TelegramManager(private val context: Context, private val webView: WebView
     private val TAG = "TelegramManager"
     private var client: Client? = null
     var authorizationState: TdApi.AuthorizationState? = null
+    var streamProxy: LocalStreamProxy? = null
 
     init {
         initClient()
@@ -36,6 +37,9 @@ class TelegramManager(private val context: Context, private val webView: WebView
                 Log.i(TAG, "Auth state updated: ${result.authorizationState.javaClass.simpleName}")
                 authorizationState = result.authorizationState
                 handleAuthState(result.authorizationState)
+            }
+            is TdApi.UpdateFile -> {
+                streamProxy?.onUpdateFile(result)
             }
             is TdApi.Error -> {
                 Log.e(TAG, "Receive error: ${result.code} - ${result.message}")
