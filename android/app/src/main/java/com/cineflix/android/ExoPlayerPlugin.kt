@@ -77,12 +77,22 @@ class ExoPlayerPlugin : Plugin() {
 
         val streamUrl = "http://127.0.0.1:${proxy.listeningPort}/stream/$streamId"
 
-        val intent = Intent(context, PlayerActivity::class.java).apply {
-            putExtra(PlayerActivity.EXTRA_STREAM_URL, streamUrl)
-            putExtra(PlayerActivity.EXTRA_TITLE, streamId)
+        val mimeType = call.getString("mimeType") ?: "video/*"
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(android.net.Uri.parse(streamUrl), mimeType)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
         }
-        activity.startActivity(intent)
-        call.resolve()
+        
+        try {
+            // Lanza el seleccionador nativo o el reproductor por defecto (ej. VLC)
+            val chooser = Intent.createChooser(intent, "Abrir película con...")
+            chooser.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            context.startActivity(chooser)
+            call.resolve()
+        } catch (e: Exception) {
+            call.reject("No hay ninguna app en el dispositivo capaz de reproducir vídeo: ${e.message}")
+        }
     }
 
     /**
