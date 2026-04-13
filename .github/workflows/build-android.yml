@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'android/**'
+      - 'www/**'
       - 'capacitor.config.json'
       - '.github/workflows/build-android.yml'
   workflow_dispatch:
