@@ -1,1 +1,0 @@
-import{W as e}from"./index-Bhvitak8.js";class t extends e{unavailableNodeJS(){return this.unavailable("The NodeJS engine is not available in the browser!")}start(){throw this.unavailableNodeJS()}send(){throw this.unavailableNodeJS()}whenReady(){throw this.unavailableNodeJS()}}export{t as CapacitorNodeJSWeb};

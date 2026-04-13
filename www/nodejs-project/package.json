@@ -1,9 +1,0 @@
-{
-  "name": "cineflix-node-backend",
-  "version": "1.0.0",
-  "main": "main.js",
-  "dependencies": {
-    "express": "^4.19.2",
-    "telegram": "^2.26.21"
-  }
-}
