@@ -498,18 +498,24 @@ export async function streamVideoNative(media) {
                 }
             }
             
-            // Safe Base64 encoding for large chunks without exceeding V8 call stack size
-            let binary = '';
-            for (let i = 0; i < chunk.length; i += 8192) {
-                binary += String.fromCharCode.apply(null, chunk.subarray(i, i + 8192));
-            }
-            const base64 = btoa(binary);
+            // TUBERÍA BINARIA PURA (Loopback)
+            // Adiós Base64, Adiós Capacitor IPC. Empujamos el binario crudo contra la tarjeta de red interna.
+            const response = await fetch(`http://127.0.0.1:3999/deliverChunk?requestId=${requestId}`, {
+                method: 'POST',
+                body: chunk 
+            });
 
-            await ExoPlayer.replyRange({ requestId, chunk: base64 });
+            if (!response.ok) {
+                throw new Error('Native IPC Pipe Server reject: ' + response.statusText);
+            }
         } catch (err) {
             console.error('[Native Stream] fetchRange error:', err.message);
             alert(`Error de descarga nativa: ${err.message}`);
-            await ExoPlayer.replyRange({ requestId, chunk: '' });
+            // Liberar el seguro del DataSource pasándole 0 bytes por el tubo
+            await fetch(`http://127.0.0.1:3999/deliverChunk?requestId=${requestId}`, {
+                method: 'POST',
+                body: new Uint8Array(0) 
+            }).catch(() => {});
         }
     });
 
