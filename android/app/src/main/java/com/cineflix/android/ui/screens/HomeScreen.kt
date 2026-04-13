@@ -5,6 +5,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -25,6 +26,14 @@ import coil.compose.AsyncImage
 import com.cineflix.android.ui.theme.*
 import com.cineflix.android.viewmodel.*
 
+/**
+ * HomeScreen: Faithful Compose port of the original Netflix-style web UI.
+ *   - Sticky topbar with title + search + logout
+ *   - Main nav tabs: 📺 Series / 🎬 Películas
+ *   - Genre filter chips (scrollable horizontal)
+ *   - Hero section (backdrop + gradient overlay + title + "Ver ahora" button)
+ *   - Horizontal scrollable content rows by genre
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -34,257 +43,521 @@ fun HomeScreen(
     onMovieClick: (MovieItem) -> Unit,
     onLogout: () -> Unit,
 ) {
-    val tab           by viewModel.tab.collectAsState()
-    val query         by viewModel.searchQuery.collectAsState()
-    val series        by viewModel.filteredCatalog.collectAsState()
-    val movies        by viewModel.filteredMovies.collectAsState()
-    val loading       by viewModel.loading.collectAsState()
+    val tab      by viewModel.tab.collectAsState()
+    val query    by viewModel.searchQuery.collectAsState()
+    val series   by viewModel.filteredCatalog.collectAsState()
+    val movies   by viewModel.filteredMovies.collectAsState()
+    val loading  by viewModel.loading.collectAsState()
+    val hero     by viewModel.heroItem.collectAsState()
+    val heroRows by viewModel.contentRows.collectAsState()
+    val movieRows by viewModel.movieRows.collectAsState()
 
-    Scaffold(
-        containerColor = Background,
-        topBar = {
-            TopBar(userName = userName, onLogout = onLogout)
-        }
-    ) { paddingValues ->
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
-            // Search bar
-            SearchBar(query = query, onQueryChange = viewModel::setSearch)
-            Spacer(Modifier.height(8.dp))
+    // Outer vertically-scrollable column (like view-catalog overflow-y: auto)
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(AppBg)
+            .verticalScroll(rememberScrollState())
+    ) {
+        // ── Sticky Topbar ─────────────────────────────────────────────────
+        TopBar(
+            query    = query,
+            onQuery  = viewModel::setSearch,
+            tab      = tab,
+            onTab    = viewModel::setTab,
+            onLogout = onLogout,
+        )
 
-            // Tabs
-            TabRow(
-                selectedTabIndex = tab.ordinal,
-                containerColor   = SurfaceDark,
-                contentColor     = CineflixRed,
-                indicator        = { tabPositions ->
-                    TabRowDefaults.SecondaryIndicator(
-                        Modifier.tabIndicatorOffset(tabPositions[tab.ordinal]),
-                        color = CineflixRed,
-                    )
+        // ── Genre Tabs ────────────────────────────────────────────────────
+        GenreTabs(
+            isMovies  = tab == HomeTab.MOVIES,
+            onGenre   = viewModel::setGenre,
+        )
+
+        when {
+            // ── Search Results ─────────────────────────────────────────────
+            query.isNotBlank() -> {
+                val items = if (tab == HomeTab.MOVIES) movies else series
+                val count = items.size
+                Text(
+                    "$count resultado${if (count != 1) "s" else ""}",
+                    color = TextMuted, fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+                if (tab == HomeTab.MOVIES) {
+                    CatalogGrid(movies, onMovieClick, viewModel::posterUrl)
+                } else {
+                    CatalogGrid(series, onSeriesClick, viewModel::posterUrl)
                 }
-            ) {
-                Tab(selected = tab == HomeTab.SERIES,
-                    onClick = { viewModel.setTab(HomeTab.SERIES) },
-                    text = { Text("Series", color = if (tab == HomeTab.SERIES) CineflixRed else TextMuted) })
-                Tab(selected = tab == HomeTab.MOVIES,
-                    onClick = { viewModel.setTab(HomeTab.MOVIES) },
-                    text = { Text("Películas", color = if (tab == HomeTab.MOVIES) CineflixRed else TextMuted) })
-                Tab(selected = tab == HomeTab.TRENDING,
-                    onClick = { viewModel.setTab(HomeTab.TRENDING) },
-                    text = { Text("Tendencia", color = if (tab == HomeTab.TRENDING) CineflixRed else TextMuted) })
             }
 
-            if (loading) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = CineflixRed)
-                }
-            } else {
-                AnimatedContent(targetState = tab, label = "tab_content") { currentTab ->
-                    when (currentTab) {
-                        HomeTab.SERIES  -> ContentGrid(
-                            items = series,
-                            posterUrl = viewModel::posterUrl,
-                            onItemClick = { onSeriesClick(it) },
-                        )
-                        HomeTab.MOVIES -> MovieGrid(
-                            items = movies,
-                            posterUrl = viewModel::posterUrl,
-                            onItemClick = { onMovieClick(it) },
-                        )
-                        HomeTab.TRENDING -> ContentGrid(
-                            items = series.sortedByDescending { it.rating }.take(40),
-                            posterUrl = viewModel::posterUrl,
-                            onItemClick = { onSeriesClick(it) },
-                        )
+            loading -> {
+                Box(
+                    Modifier.fillMaxWidth().height(300.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = Purple, strokeWidth = 3.dp)
+                        Spacer(Modifier.height(12.dp))
+                        Text("Cargando catálogo...", color = TextMuted, fontSize = 13.sp)
                     }
                 }
             }
+
+            else -> {
+                // ── Hero Section ───────────────────────────────────────────
+                if (hero != null) {
+                    HeroSection(
+                        item     = hero!!,
+                        onPlay   = {
+                            if (tab == HomeTab.MOVIES) onMovieClick(hero!!.asMovieItem())
+                            else onSeriesClick(hero!!.asCatalogItem())
+                        },
+                        isMovies = tab == HomeTab.MOVIES,
+                    )
+                }
+
+                // ── Content Rows ───────────────────────────────────────────
+                val rows = if (tab == HomeTab.MOVIES) movieRows else heroRows
+                rows.forEach { row ->
+                    ContentRow(
+                        title    = row.title,
+                        items    = row.items,
+                        onClick  = { item ->
+                            if (tab == HomeTab.MOVIES) onMovieClick(item.asMovieItem())
+                            else onSeriesClick(item.asCatalogItem())
+                        },
+                        posterUrl = viewModel::posterUrl,
+                    )
+                }
+            }
         }
+        Spacer(Modifier.height(40.dp))
     }
 }
 
+// ── Topbar ─────────────────────────────────────────────────────────────────
 @Composable
-private fun TopBar(userName: String?, onLogout: () -> Unit) {
-    Surface(color = SurfaceDark, shadowElevation = 4.dp) {
+private fun TopBar(
+    query: String,
+    onQuery: (String) -> Unit,
+    tab: HomeTab,
+    onTab: (HomeTab) -> Unit,
+    onLogout: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(TopbarBg)
+            .border(BorderStroke(0.5.dp, Color(0x0FFFFFFF)), shape = RectangleShape),
+    ) {
+        // First row: title + search + logout button
         Row(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("🎬", fontSize = 24.sp)
-            Spacer(Modifier.width(8.dp))
             Text(
-                "Cineflix",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary,
-                modifier = Modifier.weight(1f),
+                "Cine en Castellano HD",
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 16.sp,
+                color = Color.White,
+                modifier = Modifier.padding(end = 12.dp),
             )
-            if (!userName.isNullOrEmpty()) {
-                Text(userName, style = MaterialTheme.typography.bodySmall, color = TextMuted)
-                Spacer(Modifier.width(8.dp))
+            // Search input
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQuery,
+                placeholder = { Text("🔍 Buscar...", color = TextMuted, fontSize = 13.sp) },
+                singleLine = true,
+                modifier = Modifier.weight(1f).height(44.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor    = Purple,
+                    unfocusedBorderColor  = Color(0x1AFFFFFF),
+                    focusedTextColor      = Color.White,
+                    unfocusedTextColor    = Color.White,
+                    cursorColor           = Purple,
+                    focusedContainerColor = Color(0x14FFFFFF),
+                    unfocusedContainerColor = Color(0x14FFFFFF),
+                ),
+                shape = RoundedCornerShape(20.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            // Logout button (like .btn-icon with ⏻)
+            IconButton(
+                onClick = onLogout,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color(0x0AFFFFFF)),
+            ) {
+                Icon(Icons.Default.PowerSettingsNew, contentDescription = "Cerrar sesión",
+                    tint = Color(0xFFF87171), modifier = Modifier.size(20.dp))
             }
-            IconButton(onClick = onLogout) {
-                Icon(Icons.Default.ExitToApp, contentDescription = "Cerrar sesión", tint = TextMuted)
-            }
+        }
+
+        // Main nav tabs: 📺 Series / 🎬 Películas
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(Surface1)
+                .padding(horizontal = 16.dp),
+        ) {
+            NavTab("📺 Series", tab == HomeTab.SERIES) { onTab(HomeTab.SERIES) }
+            NavTab("🎬 Películas", tab == HomeTab.MOVIES) { onTab(HomeTab.MOVIES) }
         }
     }
 }
 
 @Composable
-private fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
-    OutlinedTextField(
-        value = query,
-        onValueChange = onQueryChange,
-        placeholder = { Text("Buscar series, películas...", color = TextMuted) },
-        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = TextMuted) },
-        trailingIcon = {
-            if (query.isNotEmpty()) {
-                IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Default.Clear, contentDescription = "Limpiar", tint = TextMuted)
-                }
-            }
-        },
-        singleLine = true,
+private fun NavTab(text: String, active: Boolean, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.BottomCenter,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 14.sp,
+            color = if (active) PurpleMedium else Color(0x80FFFFFF),
+        )
+        if (active) {
+            Spacer(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .offset(y = 10.dp)
+                    .background(PurpleMedium, RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp))
+            )
+        }
+    }
+}
+
+// ── Genre Tabs ─────────────────────────────────────────────────────────────
+private val SERIES_GENRES = listOf(
+    "✦ Todos" to null,
+    "🎭 Drama" to 18,
+    "😂 Comedia" to 35,
+    "⚡ Acción" to 10759,
+    "🚀 Sci-Fi" to 10765,
+    "🔍 Crimen" to 80,
+    "🎨 Animación" to 16,
+    "👨‍👩‍👧 Familiar" to 10751,
+)
+private val MOVIE_GENRES = listOf(
+    "✶ Todas" to null,
+    "⚡ Acción" to 28,
+    "😂 Comedia" to 35,
+    "🎭 Drama" to 18,
+    "👻 Terror" to 27,
+    "🚀 Sci-Fi" to 878,
+    "🔍 Crimen" to 80,
+    "👨‍👩‍👧 Familiar" to 10751,
+)
+
+@Composable
+private fun GenreTabs(isMovies: Boolean, onGenre: (Int?) -> Unit) {
+    var active by remember { mutableStateOf<Int?>(null) }
+    val genres = if (isMovies) MOVIE_GENRES else SERIES_GENRES
+
+    // Reset on tab switch
+    LaunchedEffect(isMovies) { active = null }
+
+    LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor    = CineflixRed,
-            unfocusedBorderColor  = Color(0xFF333350),
-            focusedTextColor      = TextPrimary,
-            unfocusedTextColor    = TextPrimary,
-            cursorColor           = CineflixRed,
-            focusedContainerColor = Color(0xFF1A1A28),
-            unfocusedContainerColor = Color(0xFF15151F),
-        ),
-        shape = RoundedCornerShape(14.dp),
-    )
-}
-
-@Composable
-private fun ContentGrid(
-    items: List<CatalogItem>,
-    posterUrl: (String) -> String?,
-    onItemClick: (CatalogItem) -> Unit,
-) {
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 120.dp),
-        contentPadding = PaddingValues(12.dp),
+            .background(Color(0xF20A0A12))
+            .border(BorderStroke(0.5.dp, Color(0x0DFFFFFF)), RectangleShape),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier.fillMaxSize(),
     ) {
-        items(items, key = { it.id }) { item ->
-            PosterCard(
-                title     = item.title,
-                posterUrl = item.posterPath.let { posterUrl(it) },
-                rating    = item.rating,
-                onClick   = { onItemClick(item) },
+        items(genres) { (label, id) ->
+            GenreChip(
+                label   = label,
+                selected = active == id,
+                onClick = { active = id; onGenre(id) },
             )
         }
     }
 }
 
 @Composable
-private fun MovieGrid(
-    items: List<MovieItem>,
-    posterUrl: (String) -> String?,
-    onItemClick: (MovieItem) -> Unit,
-) {
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 120.dp),
-        contentPadding = PaddingValues(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier.fillMaxSize(),
+private fun GenreChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val containerColor = if (selected) Color.White else Color(0x0DFFFFFF)
+    val textColor = if (selected) AppBg else TextFaint
+    val borderColor = if (selected) Color.White else Color(0x1FFFFFFF)
+
+    Surface(
+        onClick = onClick,
+        color = containerColor,
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, borderColor),
+        modifier = Modifier,
     ) {
-        items(items, key = { it.id }) { item ->
-            PosterCard(
-                title     = item.title,
-                posterUrl = item.posterPath.let { posterUrl(it) },
-                rating    = item.rating,
-                onClick   = { onItemClick(item) },
+        Text(
+            label,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = textColor,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+        )
+    }
+}
+
+// ── Hero Section ───────────────────────────────────────────────────────────
+@Composable
+private fun HeroSection(
+    item: HeroItem,
+    onPlay: () -> Unit,
+    isMovies: Boolean,
+) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(340.dp)
+    ) {
+        // Backdrop image
+        AsyncImage(
+            model = item.backdropUrl,
+            contentDescription = item.title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        // Double gradient overlay (left + bottom) — same as web CSS
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Color(0xEB0A0A12), Color(0x800A0A12), Color.Transparent),
+                        endX = 600f,
+                    )
+                )
+        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color(0x990A0A12), AppBg),
+                        startY = 150f,
+                    )
+                )
+        )
+
+        // Content
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 24.dp, end = 80.dp, bottom = 28.dp),
+        ) {
+            // Badge 🔥 Tendencia / 🎬 En cartelera
+            Surface(
+                color = NetflixRed,
+                shape = RoundedCornerShape(4.dp),
+            ) {
+                Text(
+                    if (isMovies) "🎬 En cartelera" else "🔥 Tendencia",
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 10.sp,
+                    color = Color.White,
+                    letterSpacing = 0.8.sp,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                item.title,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 26.sp,
+                color = Color.White,
+                lineHeight = 30.sp,
+                maxLines = 2,
             )
+
+            if (item.rating > 0f || item.year.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (item.rating > 0f) {
+                        Text("★ ${"%.1f".format(item.rating)}", color = RatingYellow,
+                            fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                    if (item.year.isNotEmpty()) {
+                        Text(item.year, color = TextFaint, fontSize = 13.sp)
+                    }
+                }
+            }
+
+            if (item.overview.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    item.overview,
+                    color = Color(0xFFD4D4D8),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = onPlay,
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                modifier = Modifier.height(40.dp),
+            ) {
+                Text("▶ Ver ahora", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
         }
     }
 }
 
+// ── Content Row (horizontal scroll, like .row-cards) ──────────────────────
 @Composable
-fun PosterCard(
+private fun ContentRow(
     title: String,
-    posterUrl: String?,
-    rating: Float = 0f,
-    onClick: () -> Unit,
+    items: List<HeroItem>,
+    onClick: (HeroItem) -> Unit,
+    posterUrl: (String) -> String?,
 ) {
+    if (items.isEmpty()) return
+    Column(Modifier.padding(top = 8.dp)) {
+        Text(
+            title,
+            fontWeight = FontWeight.Bold,
+            fontSize = 17.sp,
+            color = TextTitle,
+            modifier = Modifier.padding(start = 20.dp, bottom = 8.dp),
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(items, key = { it.id }) { item ->
+                SeriesCard(
+                    title     = item.title,
+                    year      = item.year,
+                    posterUrl = item.posterPath.let { posterUrl(it) },
+                    onClick   = { onClick(item) },
+                    cardWidth = 140.dp,
+                )
+            }
+        }
+    }
+}
+
+// ── Catalog Grid (search results) ─────────────────────────────────────────
+@Composable
+private fun <T : Any> CatalogGrid(
+    items: List<T>,
+    onItemClick: (T) -> Unit,
+    posterUrl: (String) -> String?,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 120.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(max = 2000.dp),
+    ) {
+        items(items, key = { item ->
+            when (item) {
+                is CatalogItem -> item.id
+                is MovieItem -> item.id
+                else -> item.hashCode()
+            }
+        }) { item ->
+            when (item) {
+                is CatalogItem -> SeriesCard(
+                    title = item.title, year = item.year,
+                    posterUrl = item.posterPath.let { posterUrl(it) },
+                    onClick = { onItemClick(item) },
+                )
+                is MovieItem -> SeriesCard(
+                    title = item.title, year = item.year,
+                    posterUrl = item.posterPath.let { posterUrl(it) },
+                    onClick = { onItemClick(item) },
+                )
+            }
+        }
+    }
+}
+
+// ── Series Card — matches .series-card CSS exactly ─────────────────────────
+@Composable
+fun SeriesCard(
+    title: String,
+    year: String,
+    posterUrl: String?,
+    onClick: () -> Unit,
+    cardWidth: androidx.compose.ui.unit.Dp = 150.dp,
+) {
+    val displayTitle = title.replace(Regex("\\s*\\(\\d{4}\\)\\s*$"), "").trim()
+
     Card(
         onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(2f / 3f),
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = SurfaceCard),
-        elevation = CardDefaults.cardElevation(4.dp),
+        modifier = Modifier.width(cardWidth),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Surface3),
+        border = BorderStroke(1.dp, Color(0x0FFFFFFF)),
+        elevation = CardDefaults.cardElevation(0.dp),
     ) {
-        Box(Modifier.fillMaxSize()) {
-            if (!posterUrl.isNullOrEmpty()) {
-                AsyncImage(
-                    model = posterUrl,
-                    contentDescription = title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(SurfaceMid),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("🎬", fontSize = 32.sp)
-                }
-            }
-            // Gradient overlay at bottom
+        Column {
+            // Poster (2:3 ratio like .series-card-poster)
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.45f)
-                    .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, Color(0xDD000000))
-                        )
-                    )
-            )
-            // Title
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomStart)
-                    .padding(8.dp)
+                    .aspectRatio(2f / 3f)
+                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             ) {
-                if (rating > 0f) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Star, contentDescription = null,
-                            tint = CineflixGold, modifier = Modifier.size(10.dp))
-                        Spacer(Modifier.width(2.dp))
-                        Text("%.1f".format(rating), fontSize = 10.sp, color = CineflixGold)
+                if (!posterUrl.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = posterUrl,
+                        contentDescription = displayTitle,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    // Placeholder: linear-gradient(135deg, #1e1b4b, #312e81) + first letter
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF1E1B4B), Color(0xFF312E81))
+                                )
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            displayTitle.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                            fontSize = 36.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0x40FFFFFF),
+                        )
                     }
-                    Spacer(Modifier.height(2.dp))
                 }
+            }
+            // Meta
+            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
                 Text(
-                    title,
+                    displayTitle,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = TextTitle,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 16.sp,
                 )
+                if (year.isNotEmpty()) {
+                    Text(year, fontSize = 11.sp, color = TextYear, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 2.dp))
+                }
             }
         }
     }

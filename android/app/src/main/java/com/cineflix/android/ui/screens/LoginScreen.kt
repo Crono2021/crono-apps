@@ -10,7 +10,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
@@ -25,6 +24,14 @@ import com.cineflix.android.TelegramEngine
 import com.cineflix.android.ui.theme.*
 import com.cineflix.android.viewmodel.AuthViewModel
 
+/**
+ * Login screen that EXACTLY replicates the web app:
+ *  - Dark bg with radial purple gradient (not red!)
+ *  - Phone input with +34 pre-filled
+ *  - Purple gradient button
+ *  - Glassmorphism card
+ *  - Title: "Cine en Castellano HD" with purple/cyan gradient text
+ */
 @Composable
 fun LoginScreen(
     viewModel: AuthViewModel,
@@ -38,43 +45,67 @@ fun LoginScreen(
         if (authState is TelegramEngine.AuthState.Ready) onLoggedIn()
     }
 
+    // Dark bg with radial purple gradient — exactly like web:
+    // radial-gradient(ellipse at 50% 0%, #1a1a3e 0%, #0a0a12 70%)
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Background, Color(0xFF0D0D1A)))),
-        contentAlignment = Alignment.Center
+            .background(AppBg),
+        contentAlignment = Alignment.Center,
     ) {
+        // Radial gradient top overlay
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.5f)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0xFF1A1A3E), Color.Transparent),
+                        radius = 800f,
+                    )
+                )
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 32.dp),
+                .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // Logo
-            Text("🎬", fontSize = 64.sp)
-            Spacer(Modifier.height(12.dp))
+            // 🎥 Logo — same as web login-logo
+            Text("🎥", fontSize = 64.sp)
+            Spacer(Modifier.height(8.dp))
+
+            // Gradient title text (purple → cyan, matching .login-title)
             Text(
-                "Cineflix",
+                "Cine en Castellano HD",
                 style = MaterialTheme.typography.displayMedium,
-                color = TextPrimary,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.ExtraBold,
+                color = Purple,           // gradient text not possible natively, use purple
+                textAlign = TextAlign.Center,
+                lineHeight = 34.sp,
             )
+            Spacer(Modifier.height(4.dp))
             Text(
-                "Tus series y películas de Telegram",
-                style = MaterialTheme.typography.bodyMedium,
+                "Tu videoclub en streaming (v2.1)",
+                style = MaterialTheme.typography.bodySmall,
                 color = TextMuted,
                 textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(48.dp))
+            Spacer(Modifier.height(32.dp))
 
-            // Card
+            // Glassmorphism card — rgba(255,255,255,0.04) + blur + border
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = SurfaceCard,
-                shape = RoundedCornerShape(20.dp),
-                tonalElevation = 4.dp,
+                color = Color(0x0AFFFFFF),
+                shape = RoundedCornerShape(24.dp),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp, Color(0x14FFFFFF)
+                ),
+                tonalElevation = 0.dp,
             ) {
-                Column(Modifier.padding(24.dp)) {
+                Column(Modifier.padding(horizontal = 28.dp, vertical = 32.dp)) {
                     AnimatedContent(
                         targetState = authState,
                         transitionSpec = {
@@ -88,8 +119,21 @@ fun LoginScreen(
                             is TelegramEngine.AuthState.Unknown -> PhoneStep(loading, error, viewModel)
                             is TelegramEngine.AuthState.WaitCode -> CodeStep(loading, error, viewModel)
                             is TelegramEngine.AuthState.WaitPassword -> PasswordStep(loading, error, viewModel)
-                            else -> Box(Modifier.height(80.dp), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(color = CineflixRed)
+                            else -> {
+                                Box(
+                                    Modifier.fillMaxWidth().height(90.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator(
+                                            color = Purple,
+                                            modifier = Modifier.size(36.dp),
+                                            strokeWidth = 3.dp,
+                                        )
+                                        Spacer(Modifier.height(12.dp))
+                                        Text("Conectando con Telegram...", color = TextMuted, fontSize = 13.sp)
+                                    }
+                                }
                             }
                         }
                     }
@@ -101,76 +145,134 @@ fun LoginScreen(
 
 @Composable
 private fun PhoneStep(loading: Boolean, error: String?, viewModel: AuthViewModel) {
-    var phone by remember { mutableStateOf("") }
     val focus = LocalFocusManager.current
+    // Phone pre-filled with "+34" as in the original HTML: value="+34"
+    var phone by remember { mutableStateOf("+34") }
     Column {
-        Text("Número de teléfono", style = MaterialTheme.typography.labelLarge, color = TextSecondary)
+        StepLabel("Número de teléfono")
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = phone,
+        InputRow(
+            value        = phone,
             onValueChange = { phone = it; viewModel.clearError() },
-            placeholder = { Text("+34 600 000 000", color = TextMuted) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { focus.clearFocus(); viewModel.sendPhone(phone) }),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = textFieldColors(),
-            shape = RoundedCornerShape(12.dp),
+            placeholder  = "+34 600 000 000",
+            keyboardType = KeyboardType.Phone,
+            onDone       = { focus.clearFocus(); viewModel.sendPhone(phone) },
+            buttonText   = "Enviar",
+            loading      = loading,
+            onButton     = { viewModel.sendPhone(phone) },
         )
         ErrorText(error)
-        Spacer(Modifier.height(16.dp))
-        PrimaryButton("Enviar código", loading) { viewModel.sendPhone(phone) }
     }
 }
 
 @Composable
 private fun CodeStep(loading: Boolean, error: String?, viewModel: AuthViewModel) {
-    var code by remember { mutableStateOf("") }
     val focus = LocalFocusManager.current
+    var code by remember { mutableStateOf("") }
     Column {
-        Text("Código de verificación", style = MaterialTheme.typography.labelLarge, color = TextSecondary)
-        Text("Revisa la app de Telegram en tu móvil", style = MaterialTheme.typography.bodySmall, color = TextMuted)
+        StepLabel("Código de verificación")
+        Text("Te hemos enviado un código a Telegram", color = TextMuted, fontSize = 13.sp)
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = code,
-            onValueChange = { code = it.filter { c -> c.isDigit() }.take(6); viewModel.clearError() },
-            placeholder = { Text("12345", color = TextMuted) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { focus.clearFocus(); viewModel.verifyCode(code) }),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = textFieldColors(),
-            shape = RoundedCornerShape(12.dp),
+        InputRow(
+            value         = code,
+            onValueChange = { code = it.filter { c -> c.isDigit() }.take(5); viewModel.clearError() },
+            placeholder   = "12345",
+            keyboardType  = KeyboardType.Number,
+            onDone        = { focus.clearFocus(); viewModel.verifyCode(code) },
+            buttonText    = "Verificar",
+            loading       = loading,
+            onButton      = { viewModel.verifyCode(code) },
         )
         ErrorText(error)
-        Spacer(Modifier.height(16.dp))
-        PrimaryButton("Verificar", loading) { viewModel.verifyCode(code) }
     }
 }
 
 @Composable
 private fun PasswordStep(loading: Boolean, error: String?, viewModel: AuthViewModel) {
-    var pass by remember { mutableStateOf("") }
     val focus = LocalFocusManager.current
+    var pass by remember { mutableStateOf("") }
     Column {
-        Text("Contraseña 2FA", style = MaterialTheme.typography.labelLarge, color = TextSecondary)
-        Text("Tu cuenta tiene verificación en dos pasos", style = MaterialTheme.typography.bodySmall, color = TextMuted)
+        StepLabel("Contraseña 2FA")
+        Text("Tu cuenta tiene verificación en dos pasos", color = TextMuted, fontSize = 13.sp)
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = pass,
+        PasswordInputRow(
+            value         = pass,
             onValueChange = { pass = it; viewModel.clearError() },
-            placeholder = { Text("Contraseña", color = TextMuted) },
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { focus.clearFocus(); viewModel.verify2FA(pass) }),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = textFieldColors(),
-            shape = RoundedCornerShape(12.dp),
+            placeholder   = "Contraseña",
+            onDone        = { focus.clearFocus(); viewModel.verify2FA(pass) },
+            buttonText    = "Entrar",
+            loading       = loading,
+            onButton      = { viewModel.verify2FA(pass) },
         )
         ErrorText(error)
-        Spacer(Modifier.height(16.dp))
-        PrimaryButton("Entrar", loading) { viewModel.verify2FA(pass) }
+    }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+@Composable
+private fun StepLabel(text: String) {
+    Text(
+        text.uppercase(),
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 11.sp,
+        letterSpacing = 0.8.sp,
+        color = TextFaint,
+        modifier = Modifier.padding(bottom = 8.dp),
+    )
+}
+
+@Composable
+private fun InputRow(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    keyboardType: KeyboardType,
+    onDone: () -> Unit,
+    buttonText: String,
+    loading: Boolean,
+    onButton: () -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text(placeholder, color = TextMuted, fontSize = 14.sp) },
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { onDone() }),
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+            colors = fieldColors(),
+            shape = RoundedCornerShape(12.dp),
+        )
+        PrimaryButton(buttonText, loading, onButton)
+    }
+}
+
+@Composable
+private fun PasswordInputRow(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    onDone: () -> Unit,
+    buttonText: String,
+    loading: Boolean,
+    onButton: () -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text(placeholder, color = TextMuted, fontSize = 14.sp) },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { onDone() }),
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+            colors = fieldColors(),
+            shape = RoundedCornerShape(12.dp),
+        )
+        PrimaryButton(buttonText, loading, onButton)
     }
 }
 
@@ -179,12 +281,15 @@ private fun PrimaryButton(text: String, loading: Boolean, onClick: () -> Unit) {
     Button(
         onClick = onClick,
         enabled = !loading,
-        modifier = Modifier.fillMaxWidth().height(52.dp),
         shape = RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = CineflixRed),
+        modifier = Modifier.height(52.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = PurpleDark,
+            disabledContainerColor = PurpleDark.copy(alpha = 0.5f),
+        ),
     ) {
-        if (loading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-        else Text(text, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        if (loading) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+        else Text(text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
     }
 }
 
@@ -193,20 +298,20 @@ private fun ErrorText(error: String?) {
     AnimatedVisibility(visible = !error.isNullOrEmpty()) {
         Text(
             error ?: "",
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
+            color = Color(0xFFF87171),
+            fontSize = 13.sp,
             modifier = Modifier.padding(top = 6.dp),
         )
     }
 }
 
 @Composable
-private fun textFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor   = CineflixRed,
-    unfocusedBorderColor = Color(0xFF333350),
-    focusedTextColor     = TextPrimary,
-    unfocusedTextColor   = TextPrimary,
-    cursorColor          = CineflixRed,
-    focusedContainerColor   = Color(0xFF1A1A28),
-    unfocusedContainerColor = Color(0xFF15151F),
+private fun fieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor    = Purple,
+    unfocusedBorderColor  = Color(0x1AFFFFFF),
+    focusedTextColor      = Color.White,
+    unfocusedTextColor    = Color.White,
+    cursorColor           = Purple,
+    focusedContainerColor = Color(0x0FFFFFFF),
+    unfocusedContainerColor = Color(0x0FFFFFFF),
 )
