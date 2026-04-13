@@ -32,8 +32,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.cineflix.android.TelegramEngine
-import com.cineflix.android.ui.theme.Background
-import com.cineflix.android.ui.theme.CineflixRed
+import com.cineflix.android.ui.theme.AppBg
+import com.cineflix.android.ui.theme.NetflixRed
 import com.cineflix.android.ui.theme.CineflixTheme
 import kotlinx.coroutines.*
 import java.io.File
@@ -48,11 +48,11 @@ import java.io.File
 class PlayerActivity : ComponentActivity() {
 
     companion object {
-        private const val EXTRA_FILE_ID   = "file_id"
-        private const val EXTRA_TITLE     = "title"
-        private const val EXTRA_SUBTITLE  = "subtitle"
-        private const val EXTRA_CHAT_ID   = "chat_id"
-        private const val EXTRA_MSG_ID    = "msg_id"
+        internal const val EXTRA_FILE_ID   = "file_id"
+        internal const val EXTRA_TITLE     = "title"
+        internal const val EXTRA_SUBTITLE  = "subtitle"
+        internal const val EXTRA_CHAT_ID   = "chat_id"
+        internal const val EXTRA_MSG_ID    = "msg_id"
 
         fun start(
             context: Context,
@@ -211,7 +211,7 @@ private fun PlayerScreen(
                 Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                CircularProgressIndicator(color = CineflixRed, modifier = Modifier.size(56.dp))
+                CircularProgressIndicator(color = NetflixRed, modifier = Modifier.size(56.dp))
                 Spacer(Modifier.height(16.dp))
                 Text("Iniciando reproducción...", color = Color.White, fontSize = 14.sp)
                 Text("TDLib descargando...", color = Color(0xFF999999), fontSize = 12.sp)
@@ -221,7 +221,7 @@ private fun PlayerScreen(
         // Buffering (after file ready but ExoPlayer is buffering)
         if (!preparing && buffering) {
             CircularProgressIndicator(
-                color = CineflixRed,
+                color = NetflixRed,
                 modifier = Modifier.align(Alignment.Center).size(48.dp),
             )
         }
@@ -232,11 +232,11 @@ private fun PlayerScreen(
                 Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Icon(Icons.Default.Warning, contentDescription = null, tint = CineflixRed, modifier = Modifier.size(48.dp))
+                Icon(Icons.Default.Warning, contentDescription = null, tint = NetflixRed, modifier = Modifier.size(48.dp))
                 Spacer(Modifier.height(8.dp))
                 Text(err, color = Color.White, fontSize = 14.sp)
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = CineflixRed)) {
+                Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = NetflixRed)) {
                     Text("Volver")
                 }
             }
@@ -344,8 +344,8 @@ private fun PlayerControls(
                 value = if (duration > 0) position.toFloat() / duration else 0f,
                 onValueChange = { v -> exoPlayer.seekTo((v * duration).toLong()) },
                 colors = SliderDefaults.colors(
-                    thumbColor = CineflixRed,
-                    activeTrackColor = CineflixRed,
+                    thumbColor = NetflixRed,
+                    activeTrackColor = NetflixRed,
                     inactiveTrackColor = Color(0xFF555555),
                 ),
             )
