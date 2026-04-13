@@ -35,6 +35,28 @@ class ExoPlayerPlugin : Plugin() {
     private val streamSizes = ConcurrentHashMap<String, Long>()
     private val activeDataSources = ConcurrentHashMap<String, MutableList<JSBridgeDataSource>>()
 
+    // Tubería binaria silenciosa para saltarnos el Binder Json Bridge IPC
+    private var binaryPipe: BinaryPipeServer? = null
+
+    override fun load() {
+        super.load()
+        binaryPipe = BinaryPipeServer { requestId, chunk ->
+            var delivered = false
+            for (list in activeDataSources.values) {
+                for (ds in list) {
+                    if (ds.deliverChunk(requestId, chunk)) {
+                        delivered = true
+                        break
+                    }
+                }
+                if (delivered) break
+            }
+            delivered
+        }
+        // Start listening locally on port 3999
+        binaryPipe?.start()
+    }
+
     @PluginMethod
     fun registerStream(call: PluginCall) {
         val streamId = call.getString("streamId") ?: run { call.reject("streamId required"); return }

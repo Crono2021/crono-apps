@@ -73,9 +73,9 @@ class JSBridgeDataSource(
             return actualRead
         }
 
-        // 2. CACHE MISS: Fetch a heavily optimized cache chunk (64KB) from Telegram
-        // This is perfectly safe for Android IPC string size limits, mapping instantly to ExoPlayer's DefaultAllocator constraints
-        val prefetchSize = minOf(bytesRemaining, 64L * 1024L).toInt()
+        // 2. CACHE MISS: Fetch a MASSIVE chunk (512KB) from Telegram
+        // This is perfectly safe now because we bypass Android Binder limits by posting through HTTP Loopback
+        val prefetchSize = minOf(bytesRemaining, 512L * 1024L).toInt()
 
         val requestId = "$streamId-$currentPosition-${System.currentTimeMillis()}"
         val holder = ChunkHolder()
