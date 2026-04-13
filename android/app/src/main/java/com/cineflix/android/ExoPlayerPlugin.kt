@@ -8,6 +8,14 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import java.util.concurrent.ConcurrentHashMap
 
+// New imports for Dialog-based overlay
+import android.app.Dialog
+import android.view.ViewGroup
+import android.view.Window
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+
 /**
  * ExoPlayerPlugin — Capacitor bridge between JS and the native ExoPlayer.
  *
@@ -77,22 +85,59 @@ class ExoPlayerPlugin : Plugin() {
 
         val streamUrl = "http://127.0.0.1:${proxy.listeningPort}/stream/$streamId"
 
-        val mimeType = call.getString("mimeType") ?: "video/*"
-
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(android.net.Uri.parse(streamUrl), mimeType)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-        }
-        
-        try {
-            // Lanza el seleccionador nativo o el reproductor por defecto (ej. VLC)
-            val chooser = Intent.createChooser(intent, "Abrir película con...")
-            chooser.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            context.startActivity(chooser)
+        activity.runOnUiThread {
+            showPlayerOverlay(streamUrl)
             call.resolve()
-        } catch (e: Exception) {
-            call.reject("No hay ninguna app en el dispositivo capaz de reproducir vídeo: ${e.message}")
         }
+    }
+
+    private var playerDialog: Dialog? = null
+    private var exoPlayer: ExoPlayer? = null
+
+    private fun showPlayerOverlay(url: String) {
+        // Destroy previous if any
+        exoPlayer?.release()
+        playerDialog?.dismiss()
+
+        // Create a fullscreen dialog
+        playerDialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        playerDialog?.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        // Initialize PlayerView
+        val playerView = PlayerView(activity)
+        playerDialog?.setContentView(playerView, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        // Build and bind ExoPlayer
+        exoPlayer = ExoPlayer.Builder(activity).build()
+        playerView.player = exoPlayer
+
+        // Handle errors with detailed codes exactly as before
+        exoPlayer?.addListener(object : androidx.media3.common.Player.Listener {
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                android.widget.Toast.makeText(
+                    context,
+                    "Error: ${error.errorCodeName} - ${error.message}",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+                playerDialog?.dismiss()
+            }
+        })
+
+        val mediaItem = MediaItem.fromUri(android.net.Uri.parse(url))
+        exoPlayer?.setMediaItem(mediaItem)
+        exoPlayer?.prepare()
+        exoPlayer?.play()
+
+        // Ensure resources are uncoupled when the user closes the video dialog
+        playerDialog?.setOnDismissListener {
+            exoPlayer?.release()
+            exoPlayer = null
+        }
+
+        playerDialog?.show()
     }
 
     /**
