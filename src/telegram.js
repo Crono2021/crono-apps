@@ -495,17 +495,20 @@ export async function streamVideoNative(media) {
 
     const mimeType = doc.mimeType || 'video/mp4';
     const CHUNK_SIZE = 512 * 1024; // 512KB per chunk (safe for Binder IPC)
-    const BUFFER_BEFORE_PLAY = 2 * 1024 * 1024; // 2MB antes de lanzar player
 
     console.log('[Native] Iniciando stream:', fileSize, 'bytes,', mimeType);
 
     // 1. Inicializar el proxy local (crea archivo temporal en disco)
     await ExoPlayer.initStream({ fileSize, mimeType });
 
-    // 2. Descargar y empujar chunks progresivamente
-    let offset = 0;
-    let playerLaunched = false;
+    // Lanzar el reproductor INMEDIATAMENTE para que el usuario no sienta que "no hace nada".
+    // El reproductor nativo mostrará su spinner de carga mientras llegan los chunks.
+    ExoPlayer.play({});
 
+    // 2. Descargar y empujar chunks progresivamente al archivo temporal
+    let offset = 0;
+
+    // TODO: Falta soporte para cancelar el bucle si el usuario cierra la pantalla
     while (offset < fileSize) {
         const size = Math.min(CHUNK_SIZE, fileSize - offset);
 
@@ -517,28 +520,19 @@ export async function streamVideoNative(media) {
             if (err.message && err.message.toLowerCase().includes('disconnect')) {
                 console.warn('[Native] Reconectando...');
                 await c.connect();
-            }
-            // Segundo intento
-            try {
                 chunk = await fetchTelegramRange(c, doc, offset, size);
-            } catch (e2) {
-                console.error('[Native] Error descarga fatal en offset', offset, e2);
-                break;
+            } else {
+                throw err;
             }
         }
 
-        // Enviar chunk como Base64 al plugin nativo → disco
+        // Convertir chunk a Base64
         const base64 = uint8ToBase64(chunk);
+        
+        // Empujar chunk al archivo temporal local
         await ExoPlayer.pushChunk({ data: base64 });
 
-        offset += chunk.length;
-
-        // 3. Lanzar ExoPlayer después del buffer inicial
-        if (!playerLaunched && offset >= BUFFER_BEFORE_PLAY) {
-            playerLaunched = true;
-            console.log('[Native] ▶️ Buffer alcanzado, lanzando ExoPlayer...');
-            ExoPlayer.play({}); // fire-and-forget (no await)
-        }
+        offset += size;
     }
 
     // 4. Marcar descarga completa
