@@ -31,47 +31,26 @@ import androidx.media3.ui.PlayerView
 @CapacitorPlugin(name = "ExoPlayer")
 class ExoPlayerPlugin : Plugin() {
 
-    // Map of active stream proxies: streamId -> StreamProxyServer
-    private val proxyServers = ConcurrentHashMap<String, StreamProxyServer>()
+    // Map of active stream sizes (since DataSources are created on-the-fly by ExoPlayer's Factory)
+    private val streamSizes = ConcurrentHashMap<String, Long>()
+    private val activeDataSources = ConcurrentHashMap<String, MutableList<JSBridgeDataSource>>()
 
-    /**
-     * Called by JS to register a new stream before playing.
-     * JS: await Capacitor.Plugins.ExoPlayer.registerStream({ streamId, fileSize, mimeType })
-     */
     @PluginMethod
     fun registerStream(call: PluginCall) {
         val streamId = call.getString("streamId") ?: run { call.reject("streamId required"); return }
         
-        val fileSize = call.getLong("fileSize")
-            ?: call.getInt("fileSize")?.toLong()
-            ?: call.getDouble("fileSize")?.toLong()
-            ?: call.getString("fileSize")?.toLongOrNull()
-            ?: run { call.reject("fileSize required. Payload: " + call.data.toString()); return }
+        // Resilient parsing logic against JS type bridge
+        val fileSizeStr = call.getString("fileSize") 
+            ?: call.getInt("fileSize")?.toString() 
+            ?: call.getDouble("fileSize")?.toLong()?.toString() 
+            ?: "0"
             
-        val mimeType = call.getString("mimeType") ?: "video/mp4"
+        val fileSize = fileSizeStr.toLongOrNull() ?: 0L
 
-        // Start a local HTTP proxy server for this stream
-        val proxy = StreamProxyServer(
-            streamId = streamId,
-            fileSize = fileSize,
-            mimeType = mimeType,
-            onRangeRequest = { requestId, start, size ->
-                // Ask JS for the bytes
-                val eventData = JSObject().apply {
-                    put("requestId", requestId)
-                    put("streamId", streamId)
-                    put("start", start)
-                    put("size", size)
-                }
-                notifyListeners("fetchRange", eventData)
-            }
-        )
-        proxy.start()
-        proxyServers[streamId] = proxy
+        streamSizes[streamId] = fileSize
+        activeDataSources[streamId] = mutableListOf()
 
-        val result = JSObject()
-        result.put("port", proxy.listeningPort)
-        call.resolve(result)
+        call.resolve()
     }
 
     /**
@@ -81,12 +60,13 @@ class ExoPlayerPlugin : Plugin() {
     @PluginMethod
     fun play(call: PluginCall) {
         val streamId = call.getString("streamId") ?: run { call.reject("streamId required"); return }
-        val proxy = proxyServers[streamId] ?: run { call.reject("Stream not registered"); return }
-
-        val streamUrl = "http://127.0.0.1:${proxy.listeningPort}/stream/$streamId"
+        if (!streamSizes.containsKey(streamId)) {
+            call.reject("Stream no registrado")
+            return
+        }
 
         activity.runOnUiThread {
-            showPlayerOverlay(streamUrl)
+            showPlayerOverlay(streamId)
             call.resolve()
         }
     }
@@ -94,7 +74,7 @@ class ExoPlayerPlugin : Plugin() {
     private var playerDialog: Dialog? = null
     private var exoPlayer: ExoPlayer? = null
 
-    private fun showPlayerOverlay(url: String) {
+    private fun showPlayerOverlay(streamId: String) {
         // Destroy previous if any
         exoPlayer?.release()
         playerDialog?.dismiss()
@@ -122,12 +102,31 @@ class ExoPlayerPlugin : Plugin() {
                     "Error: ${error.errorCodeName} - ${error.message}",
                     android.widget.Toast.LENGTH_LONG
                 ).show()
-                playerDialog?.dismiss()
             }
         })
 
-        val mediaItem = MediaItem.fromUri(android.net.Uri.parse(url))
-        exoPlayer?.setMediaItem(mediaItem)
+        // Define the Custom Native JS Bridge Factory
+        val factory = androidx.media3.datasource.DataSource.Factory {
+            val fileSize = streamSizes[streamId] ?: 0L
+            val ds = JSBridgeDataSource(streamId, fileSize) { requestId, start, size ->
+                val eventData = JSObject().apply {
+                    put("requestId", requestId)
+                    put("streamId", streamId)
+                    put("start", start)
+                    put("size", size)
+                }
+                notifyListeners("fetchRange", eventData)
+            }
+            activeDataSources[streamId]?.add(ds)
+            ds
+        }
+
+        // Bridge directly using ProgressiveMediaSource (completely bypasses HTTP)
+        val mediaItem = MediaItem.fromUri(android.net.Uri.parse("custombridge://$streamId"))
+        val mediaSource = androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(factory)
+            .createMediaSource(mediaItem)
+
+        exoPlayer?.setMediaSource(mediaSource)
         exoPlayer?.prepare()
         exoPlayer?.play()
 
@@ -141,34 +140,39 @@ class ExoPlayerPlugin : Plugin() {
     }
 
     /**
-     * Called by JS to deliver byte chunks back to the proxy server.
-     * JS: Capacitor.Plugins.ExoPlayer.replyRange({ requestId, chunk: number[] })
+     * Called by JS to deliver byte chunks back to the native custom DataSource.
+     * JS: Capacitor.Plugins.ExoPlayer.replyRange({ requestId, chunk: string })
      */
     @PluginMethod
     fun replyRange(call: PluginCall) {
         val requestId = call.getString("requestId") ?: run { call.reject("requestId required"); return }
         val base64 = call.getString("chunk") ?: ""
 
-        // Decode Base64 to bytes (much faster than JSON number arrays)
         val bytes = if (base64.isNotEmpty()) {
             android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
         } else {
             ByteArray(0)
         }
 
-        for (proxy in proxyServers.values) {
-            if (proxy.deliverChunk(requestId, bytes)) break
+        var delivered = false
+        for (list in activeDataSources.values) {
+            for (ds in list) {
+                if (ds.deliverChunk(requestId, bytes)) {
+                    delivered = true
+                    break
+                }
+            }
+            if (delivered) break
         }
+        
         call.resolve()
     }
 
-    /**
-     * Called by JS to stop a proxy and free resources.
-     */
     @PluginMethod
     fun stopStream(call: PluginCall) {
         val streamId = call.getString("streamId") ?: run { call.resolve(); return }
-        proxyServers.remove(streamId)?.stop()
+        activeDataSources.remove(streamId)
+        streamSizes.remove(streamId)
         call.resolve()
     }
 }
