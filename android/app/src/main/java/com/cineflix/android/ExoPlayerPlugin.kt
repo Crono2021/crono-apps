@@ -149,7 +149,7 @@ class ExoPlayerPlugin : Plugin() {
         val base64 = call.getString("chunk") ?: ""
 
         val bytes = if (base64.isNotEmpty()) {
-            android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
+            android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
         } else {
             ByteArray(0)
         }
