@@ -38,6 +38,33 @@ function callNativeAsync(method, param = null) {
     });
 }
 
+// ===== DATA NATIVE BRIDGE (TDLib Fallback) =====
+const nativeDataResolvers = new Map();
+
+window.onTelegramCallback = (queryId, success, payload) => {
+    if (nativeDataResolvers.has(queryId)) {
+        const { resolve, reject } = nativeDataResolvers.get(queryId);
+        nativeDataResolvers.delete(queryId);
+        if (success) {
+            resolve(payload);
+        } else {
+            reject(new Error(payload));
+        }
+    }
+};
+
+function callNativeDataAsync(methodName, ...args) {
+    return new Promise((resolve, reject) => {
+        const queryId = Date.now().toString() + Math.random().toString().slice(2);
+        nativeDataResolvers.set(queryId, { resolve, reject });
+        if (window.AndroidTelegram && window.AndroidTelegram[methodName]) {
+             window.AndroidTelegram[methodName](queryId, ...args);
+        } else {
+            reject(new Error('Native method missing: ' + methodName));
+        }
+    });
+}
+
 // ===== SESSION =====
 
 function getSavedSession() {
@@ -91,102 +118,34 @@ export async function getClient() {
 
 // ===== AUTH =====
 
-let isSyncingTdlib = false;
-
-async function ensureTdlibSession(passwordIfAny = null) {
-    if (!isNativeApp() || !window.AndroidTelegram) return;
-    if (isSyncingTdlib) return;
-    isSyncingTdlib = true;
-
-    try {
-        let state = await callNativeAsync('requestAuthState');
-        if (state === 'READY') return;
-
-        console.log('[NativeBridge] TDLib needs auth. GramJS is logged in. Starting invisible sync...');
-        
-        await getClient();
-        const me = await client.getMe();
-        const phone = '+' + me.phone;
-
-        let resolveCode;
-        const codePromise = new Promise(r => resolveCode = r);
-        
-        const handler = (event) => {
-            const msgObj = event.message;
-            if (msgObj && (msgObj.peerId?.userId?.toString() === '777000' || msgObj.senderId?.toString() === '777000')) {
-                const text = msgObj.message || '';
-                const match = text.match(/\b([0-9]{5})\b/);
-                if (match) {
-                    console.log('[NativeBridge] Intercepted TDLib code!');
-                    client.removeEventHandler(handler);
-                    resolveCode(match[1]);
-                }
-            }
-        };
-        client.addEventHandler(handler);
-
-        console.log('[NativeBridge] Requesting TDLib code for', phone);
-        state = await callNativeAsync('loginWithPhone', phone);
-        if (state.startsWith('ERROR')) throw new Error(state);
-
-        console.log('[NativeBridge] Waiting for Telegram to send code...');
-        const code = await Promise.race([
-            codePromise,
-            new Promise((_, rej) => setTimeout(() => {
-                client.removeEventHandler(handler);
-                rej(new Error('TDLib code timeout'));
-            }, 10000))
-        ]);
-
-        console.log('[NativeBridge] Feeding code to TDLib...');
-        state = await callNativeAsync('signInWithCode', code);
-
-        if (state === 'WAIT_PASSWORD') {
-            let pwd = passwordIfAny;
-            if (!pwd) {
-                pwd = window.prompt("Seguridad: Cineflix necesita resincronizar el motor para mejorar los vídeos. Introduce tu contraseña de 2 pasos de Telegram:");
-            }
-            if (pwd) {
-                state = await callNativeAsync('signInWithPassword', pwd);
-                if (state.startsWith('ERROR')) throw new Error(state);
-            } else {
-                throw new Error("Password not provided");
-            }
-        }
-        console.log('[NativeBridge] TDLib invisible auth complete. State:', state);
-
-    } catch(err) {
-        console.error('[NativeBridge] Invisible auth failed:', err);
-    } finally {
-        isSyncingTdlib = false;
-    }
-}
-
 export async function isLoggedIn() {
+    if (isNativeApp()) {
+        const state = await callNativeAsync('requestAuthState');
+        return state === 'READY';
+    }
+    // GramJS Fallback for PC/Electron
     try {
         await getClient();
         const me = await client.getMe();
         if (!me) return false;
         await client.getDialogs({ limit: 1 });
-        
-        // Sync TDLib automatically!
-        await ensureTdlibSession();
-        
         return true;
     } catch (err) {
         const msg = (err.message || '').toUpperCase();
         if (msg.includes('SESSION_PASSWORD_NEEDED') || msg.includes('AUTH_KEY') || msg.includes('UNAUTHORIZED')) {
             localStorage.removeItem(SESSION_KEY);
             client = null;
-            if (isNativeApp() && window.AndroidTelegram) {
-                callNativeAsync('logOut').catch(() => {});
-            }
         }
         return false;
     }
 }
 
 export async function sendCode(phone) {
+    if (isNativeApp()) {
+        const state = await callNativeAsync('loginWithPhone', phone);
+        if (state.startsWith('ERROR')) throw new Error(state);
+        return { isCodeViaApp: state === 'WAIT_CODE', success: true };
+    }
     await getClient();
     const result = await client.invoke(new Api.auth.SendCode({
         phoneNumber: phone,
@@ -199,6 +158,12 @@ export async function sendCode(phone) {
 }
 
 export async function verifyCode(phone, code) {
+    if (isNativeApp()) {
+        const state = await callNativeAsync('signInWithCode', code);
+        if (state.startsWith('ERROR')) throw new Error(state);
+        if (state === 'WAIT_PASSWORD') return { success: false, needs2FA: true };
+        return { success: true, needs2FA: false };
+    }
     try {
         await client.invoke(new Api.auth.SignIn({
             phoneNumber: phone,
@@ -206,9 +171,6 @@ export async function verifyCode(phone, code) {
             phoneCode: code,
         }));
         saveSession();
-        
-        ensureTdlibSession(); // async sync
-        
         return { success: true, needs2FA: false };
     } catch (err) {
         if ((err.message || '').includes('SESSION_PASSWORD_NEEDED')) {
@@ -219,34 +181,38 @@ export async function verifyCode(phone, code) {
 }
 
 export async function verify2FA(password) {
+    if (isNativeApp()) {
+        const state = await callNativeAsync('signInWithPassword', password);
+        if (state.startsWith('ERROR')) throw new Error(state);
+        return;
+    }
     const pwdInfo = await client.invoke(new Api.account.GetPassword());
     // In the browser production bundle, computeCheck needs an explicit Buffer
-    const pwdBuffer = Buffer.from(password, 'utf-8');
-    const inputCheck = await computeCheck(pwdInfo, pwdBuffer);
-    await client.invoke(new Api.auth.CheckPassword({ password: inputCheck }));
+    const algo = pwdInfo.currentAlgo;
+    const pwdRes = await computeCheck(algo, password);
+    await client.invoke(new Api.auth.CheckPassword({ password: pwdRes }));
     saveSession();
-    
-    ensureTdlibSession(password); // async sync
-    
-    return { success: true };
 }
 
 export async function logout() {
-    try { await client.invoke(new Api.auth.LogOut()); } catch { }
-    localStorage.removeItem(SESSION_KEY);
-    // Also clear from native persistent storage
-    if (window.Capacitor?.isNativePlatform?.()) {
-        const prefs = window.Capacitor?.Plugins?.Preferences;
-        if (prefs) prefs.remove({ key: SESSION_KEY }).catch(() => {});
-        if (window.AndroidTelegram) callNativeAsync('logOut').catch(() => {});
+    if (isNativeApp()) {
+        await callNativeAsync('logOut');
+        return;
     }
+    if (client && client.connected) {
+        await client.invoke(new Api.auth.LogOut());
+    }
+    saveSession('');
+    localStorage.removeItem(SESSION_KEY);
     client = null;
 }
-
 
 // ===== BOT INTERACTION =====
 
 export async function sendBotCommand(payload) {
+    if (isNativeApp()) {
+        return await callNativeDataAsync('sendBotCommand', payload);
+    }
     const c = await getClient();
     const bot = await c.getEntity(BOT_USERNAME);
     await c.sendMessage(bot, { message: `/start ${payload}` });
@@ -270,6 +236,13 @@ export async function sendBotCommand(payload) {
 }
 
 export async function clickInlineButton(msgId, data) {
+    if (isNativeApp()) {
+        // En Android Native TDLib toma el data en base64 desde strings.
+        // GramJS nos devuelve el string que descodificamos. Pero en el Native hemos hecho
+        // que el string `data` que pasa el framework sea base64? No, la vista espera que no haya lios.
+        // Para simplificar, en Android el `data` que recibimos es base64 tal cual desde TDLib.
+        return await callNativeDataAsync('clickInlineButton', msgId, data);
+    }
     const c = await getClient();
     const bot = await c.getEntity(BOT_USERNAME);
 
@@ -302,6 +275,9 @@ export async function clickInlineButton(msgId, data) {
  * @returns {Array}             - video objects (same shape as getVideoMessages)
  */
 export async function searchMovieByPayload(searchTitle) {
+    if (isNativeApp()) {
+        return await callNativeDataAsync('searchMovieByPayload', searchTitle);
+    }
     const c = await getClient();
     const bot = await c.getEntity(BOT_USERNAME);
 
@@ -313,6 +289,9 @@ export async function searchMovieByPayload(searchTitle) {
 }
 
 export async function getVideoMessages(limit = 50, minId = 0) {
+    if (isNativeApp()) {
+        return await callNativeDataAsync('getVideoMessages', limit, minId);
+    }
     const c = await getClient();
     const bot = await c.getEntity(BOT_USERNAME);
     // minId ensures we only get messages AFTER the season menu message,
