@@ -151,12 +151,12 @@ public final class Client {
 
     private static native int createNativeClient();
 
-    public static <T extends TdApi.Object> T execute(TdApi.Function<T> function) {
-        TdApi.Error error = (T) nativeClientExecute(function);
-        if (error instanceof TdApi.Error) {
-            throw new ExecutionException(error);
+    public static <T extends TdApi.Object> T execute(TdApi.Function<T> function) throws ExecutionException {
+        TdApi.Object result = nativeClientExecute(function);
+        if (result instanceof TdApi.Error) {
+            throw new ExecutionException((TdApi.Error) result);
         }
-        return error;
+        return (T) result;
     }
 
     private static native TdApi.Object nativeClientExecute(TdApi.Function function);
