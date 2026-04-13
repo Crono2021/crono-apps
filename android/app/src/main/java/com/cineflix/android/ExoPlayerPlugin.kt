@@ -47,14 +47,17 @@ class ExoPlayerPlugin : Plugin() {
 
     /**
      * Prepara un nuevo stream. JS envía fileSize y mimeType.
-     * JS: await ExoPlayer.initStream({ fileSize: 1234567890, mimeType: 'video/x-matroska' })
+     * NOTA: JavaScript envía números como Double a través del bridge JSON.
+     * getLong() no convierte Double→Long, así que usamos getDouble() como fallback.
      */
     @PluginMethod
     fun initStream(call: PluginCall) {
-        val fileSize = call.getLong("fileSize") ?: run {
-            call.reject("fileSize required")
-            return
-        }
+        val fileSize = call.getLong("fileSize")
+            ?: call.getDouble("fileSize")?.toLong()
+            ?: run {
+                call.reject("fileSize required (got null)")
+                return
+            }
         val mimeType = call.getString("mimeType") ?: "video/mp4"
 
         streamProxy?.initStream(fileSize, mimeType)
