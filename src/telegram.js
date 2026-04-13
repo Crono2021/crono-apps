@@ -498,8 +498,12 @@ export async function streamVideoNative(media) {
                 }
             }
             
-            // Safe Native Polyfill Base64 encoding for Binary Array Buffers without CharCode mismatches
-            const base64 = Buffer.from(chunk).toString('base64');
+            // Safe Base64 encoding for large chunks without exceeding V8 call stack size
+            let binary = '';
+            for (let i = 0; i < chunk.length; i += 8192) {
+                binary += String.fromCharCode.apply(null, chunk.subarray(i, i + 8192));
+            }
+            const base64 = btoa(binary);
 
             await ExoPlayer.replyRange({ requestId, chunk: base64 });
         } catch (err) {
