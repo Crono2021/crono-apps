@@ -485,7 +485,18 @@ export async function streamVideoNative(media) {
     // 2. Listen for byte-range requests — send bytes as Base64 (efficient over JSON bridge)
     const listener = await ExoPlayer.addListener('fetchRange', async ({ requestId, start, size }) => {
         try {
-            const chunk = await fetchTelegramRange(c, doc, start, size);
+            let chunk;
+            try {
+                chunk = await fetchTelegramRange(c, doc, start, size);
+            } catch (err) {
+                if (err.message && err.message.toLowerCase().includes('disconnected')) {
+                    console.warn('[Native Stream] Reparando socket cerrado de Telegram...');
+                    await c.connect();
+                    chunk = await fetchTelegramRange(c, doc, start, size);
+                } else {
+                    throw err;
+                }
+            }
             
             // Safe Base64 encoding for large chunks without exceeding V8 call stack size
             let binary = '';
