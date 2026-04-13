@@ -35,14 +35,15 @@ class EpisodesViewModel(private val engine: TelegramEngine) : ViewModel() {
                         loading         = false,
                         seasons         = response.buttons,
                         currentBotMsgId = response.messageId,
+                        botChatId       = response.chatId,
                     )
                     // Pre-open first season automatically
-                    openSeason(response.buttons.first(), response.messageId)
+                    openSeason(response.buttons.first(), response.messageId, response.chatId)
                 } else {
-                    // No seasons keyboard — it's a movie or single content
                     _state.value = _state.value.copy(
                         loading         = false,
                         currentBotMsgId = response?.messageId ?: 0L,
+                        botChatId       = response?.chatId ?: 0L,
                     )
                 }
             } catch (e: Exception) {
@@ -52,7 +53,7 @@ class EpisodesViewModel(private val engine: TelegramEngine) : ViewModel() {
     }
 
     /** Click a season button and collect episodes */
-    fun openSeason(button: TelegramEngine.SeasonButton, msgId: Long) {
+    fun openSeason(button: TelegramEngine.SeasonButton, msgId: Long, botChatId: Long = _state.value.botChatId) {
         viewModelScope.launch {
             _state.value = _state.value.copy(
                 loading      = true,
@@ -60,10 +61,9 @@ class EpisodesViewModel(private val engine: TelegramEngine) : ViewModel() {
                 episodes     = emptyList(),
             )
             try {
-                val chatId = engine.authState.value.let { 0L } // will be resolved in clickInlineButton
                 val videos = engine.clickInlineButton(
-                    chatId  = _state.value.botChatId,
-                    msgId   = msgId,
+                    chatId     = botChatId,
+                    msgId      = msgId,
                     dataBase64 = button.dataBase64,
                 )
                 val sorted = videos.sortedBy { it.date }
@@ -77,6 +77,7 @@ class EpisodesViewModel(private val engine: TelegramEngine) : ViewModel() {
             }
         }
     }
+
 
     fun clearError() {
         _state.value = _state.value.copy(error = null)

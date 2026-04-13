@@ -75,6 +75,7 @@ class TelegramEngine(private val context: Context) {
 
     data class SeasonResponse(
         val messageId: Long,
+        val chatId: Long,
         val text: String,
         val buttons: List<SeasonButton>,
     )
@@ -89,7 +90,6 @@ class TelegramEngine(private val context: Context) {
 
     // ── Init ─────────────────────────────────────────────────────────────────
     init {
-        Client.setLogVerbosityLevel(0)
         initClient()
     }
 
@@ -271,7 +271,7 @@ class TelegramEngine(private val context: Context) {
                                 }
                             }
                             val bodyText = (msg.content as? TdApi.MessageText)?.text?.text ?: ""
-                            deferred.complete(SeasonResponse(msg.id, bodyText, buttons))
+                            deferred.complete(SeasonResponse(msg.id, chatId, bodyText, buttons))
                             return@send
                         }
                     }

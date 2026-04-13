@@ -71,7 +71,9 @@ fun EpisodesScreen(
                     SeasonSelector(
                         seasons       = state.seasons,
                         activeSeason  = state.activeSeason,
-                        onSeasonClick = { btn -> viewModel.openSeason(btn, state.currentBotMsgId) },
+                        onSeasonClick = { btn ->
+                            viewModel.openSeason(btn, state.currentBotMsgId, state.botChatId)
+                        },
                     )
                 }
             }

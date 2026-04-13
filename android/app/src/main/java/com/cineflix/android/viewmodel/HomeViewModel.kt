@@ -217,10 +217,9 @@ class HomeViewModel(private val engine: TelegramEngine) : ViewModel() {
         http.newCall(Request.Builder().url(url).build()).execute().use { it.body?.string() }
     } catch (e: Exception) { null }
 
-    private fun fetchJsonObj(url: String): JSONObject? = try {
-        val body = fetchJson(url) ?: return null
-        JSONObject(body)
-    } catch (e: Exception) { null }
+    private fun fetchJsonObj(url: String): JSONObject? =
+        runCatching { fetchJson(url)?.let { JSONObject(it) } }.getOrNull()
+
 
     private fun encode(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
 

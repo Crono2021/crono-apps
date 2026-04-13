@@ -34,12 +34,12 @@ class AuthViewModel(private val engine: TelegramEngine) : ViewModel() {
 
     private fun fetchUserName() {
         engine.getMe { user ->
-            _userName.value = user?.let {
-                listOf(it.firstName, it.lastName)
-                    .filter { n -> n.isNotBlank() }
-                    .joinToString(" ")
-                    .ifEmpty { it.username?.let { u -> "@$u" } }
-            }
+            _userName.value = user?.let { u ->
+                    listOf(u.firstName, u.lastName)
+                        .filter { n -> n.isNotBlank() }
+                        .joinToString(" ")
+                        .ifEmpty { u.usernames?.activeUsernames?.firstOrNull()?.let { "@$it" } ?: "" }
+                }
         }
     }
 
