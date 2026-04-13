@@ -21,6 +21,10 @@ class JSBridgeDataSource(
     private var currentPosition: Long = 0
     private var opened = false
 
+    // Native Memory Buffer for Extreme Network Efficiency
+    private var bufferCache: ByteArray? = null
+    private var bufferCacheStart: Long = -1L
+
     // Pending requests: requestId → CountDownLatch + result holder
     val pendingChunks = ConcurrentHashMap<String, ChunkHolder>()
 
@@ -55,36 +59,53 @@ class JSBridgeDataSource(
         if (length == 0) return 0
         if (bytesRemaining == 0L) return C.RESULT_END_OF_INPUT
 
-        // Coerce the read length to at most 128KB per JS bridge call for extreme stability and speed
-        val bytesToRead = minOf(length.toLong(), bytesRemaining, 128L * 1024L).toInt()
+        // 1. FAST PATH: Satisfy ExoPlayer read entirely or partially directly from our Native RAM Cache!
+        if (bufferCache != null && currentPosition >= bufferCacheStart && currentPosition < bufferCacheStart + bufferCache!!.size) {
+            val positionInCache = (currentPosition - bufferCacheStart).toInt()
+            val availableInCache = bufferCache!!.size - positionInCache
+            
+            // Serve instantly from RAM (avoids JavaScript Capacitor Bridge latency entirely)
+            val actualRead = minOf(length, availableInCache, bytesRemaining.toInt())
+            System.arraycopy(bufferCache!!, positionInCache, buffer, offset, actualRead)
+            
+            currentPosition += actualRead
+            bytesRemaining -= actualRead
+            return actualRead
+        }
+
+        // 2. CACHE MISS: Fetch a MASSIVE chunk (512KB) from Telegram to populate the cache
+        // ExoPlayer requests 8KB, but we steal 512KB in one go to prevent network thrashing
+        val prefetchSize = minOf(bytesRemaining, 512L * 1024L).toInt()
 
         val requestId = "$streamId-$currentPosition-${System.currentTimeMillis()}"
         val holder = ChunkHolder()
         pendingChunks[requestId] = holder
 
         // Ask JavaScript for bytes asynchronously
-        onRangeRequest(requestId, currentPosition, bytesToRead)
+        onRangeRequest(requestId, currentPosition, prefetchSize)
 
-        // Block ExoPlayer's loader thread until JS delivers the chunk
+        // Block ExoPlayer's loader thread until JS delivers the big chunk
         val gotData = holder.latch.await(30, TimeUnit.SECONDS)
         pendingChunks.remove(requestId)
 
         if (!gotData) {
             throw IOException("Timeout esperando bloques de Javascript (posible suspensión en segundo plano o desconexión)")
         }
-
         if (holder.error != null) {
             throw IOException("Javascript error: ${holder.error}")
         }
 
         val chunk = holder.data ?: return C.RESULT_END_OF_INPUT
-
         if (chunk.isEmpty()) {
             return C.RESULT_END_OF_INPUT
         }
 
-        // Copy received JS chunk into ExoPlayer's native memory buffer
-        val actualRead = minOf(chunk.size, buffer.size - offset)
+        // Save the newly fetched big block entirely into the Native RAM Cache
+        bufferCache = chunk
+        bufferCacheStart = currentPosition
+
+        // 3. Serve literally just what ExoPlayer wants right now out of this new cache
+        val actualRead = minOf(length, chunk.size, bytesRemaining.toInt())
         System.arraycopy(chunk, 0, buffer, offset, actualRead)
 
         currentPosition += actualRead
