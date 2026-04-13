@@ -487,15 +487,15 @@ function getExoPlayer() {
  *   1. JS descarga chunks con GramJS
  *   2. Los envía como Base64 al plugin Capacitor
  *   3. Kotlin los escribe en un archivo temporal en disco
- *   4. StreamProxy (ServerSocket) sirve el archivo vía HTTP Range
- *   5. ExoPlayer reproduce desde http://127.0.0.1:<port>/stream
+ *   4. HlsProxy (NanoHTTPD) sirve M3U8 + segmentos desde archivo temporal
+ *   5. ExoPlayer usa HLS → retry automático, espera segmentos
  */
 export async function streamVideoNative(media) {
     const ExoPlayer = getExoPlayer();
     const c = await getClient();
     const doc = media.document;
 
-    // Safe fileSize coercion
+    // Safe fileSize coercion (JS → Kotlin bridge envía números como Double)
     let fileSize;
     try {
         fileSize = typeof doc.size === 'bigint'
@@ -505,23 +505,24 @@ export async function streamVideoNative(media) {
     fileSize = Math.floor(fileSize);
 
     if (!fileSize || fileSize <= 0 || isNaN(fileSize)) {
-        console.warn('[Native] No fileSize, cannot stream:', doc);
+        console.warn('[Native] No fileSize:', doc);
         throw new Error('No se pudo obtener el tamaño del archivo');
     }
 
     const mimeType = doc.mimeType || 'video/mp4';
-    const CHUNK_SIZE = 512 * 1024;           // 512KB per Telegram request
-    const BUFFER_BEFORE_PLAY = 2 * 1024 * 1024; // 2MB antes de lanzar player
+    const CHUNK_SIZE = 512 * 1024; // 512KB por petición a Telegram
 
-    console.log('[Native] Iniciando stream:', fileSize, 'bytes,', mimeType);
+    console.log('[Native] 🎬 Iniciando HLS stream:', fileSize, 'bytes,', mimeType);
 
-    // 1. Inicializar el proxy local (crea archivo temporal en disco)
+    // 1. Preparar HlsProxy en Kotlin (crea temp file, NanoHTTPD listo)
     await ExoPlayer.initStream({ fileSize, mimeType });
 
-    // 2. Descargar y empujar chunks progresivamente
-    let offset = 0;
-    let playerLaunched = false;
+    // 2. Lanzar ExoPlayer inmediatamente — HLS espera segmentos por nosotros
+    //    No necesitamos pre-buffer: HlsProxy bloquea /segment/N hasta tener datos
+    ExoPlayer.play({}); // fire-and-forget
 
+    // 3. Descargar y empujar chunks progresivamente
+    let offset = 0;
     while (offset < fileSize) {
         const size = Math.min(CHUNK_SIZE, fileSize - offset);
 
@@ -542,18 +543,12 @@ export async function streamVideoNative(media) {
         await ExoPlayer.pushChunk({ data: base64 });
         offset += size;
 
-        // 3. Lanzar ExoPlayer solo cuando haya suficiente buffer (evita ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
-        if (!playerLaunched && (offset >= BUFFER_BEFORE_PLAY || offset >= fileSize)) {
-            playerLaunched = true;
-            console.log(`[Native] ▶️ Buffer listo (${(offset/1048576).toFixed(1)}MB), lanzando ExoPlayer...`);
-            ExoPlayer.play({}); // fire-and-forget
-        }
-
-        console.log(`[Native] ${Math.round(offset / fileSize * 100)}% (${(offset / 1048576).toFixed(1)}MB/${(fileSize/1048576).toFixed(1)}MB)`);
+        const pct = Math.round(offset / fileSize * 100);
+        console.log(`[Native] ${pct}% (${(offset/1048576).toFixed(1)}/${(fileSize/1048576).toFixed(1)} MB)`);
     }
 
-    // 4. Marcar descarga completa (desbloquea waitForData en StreamProxy)
+    // 4. Marcar completo → HlsProxy añade #EXT-X-ENDLIST al M3U8
     await ExoPlayer.downloadComplete({});
-    console.log('[Native] ✅ Descarga completa:', offset, 'bytes');
+    console.log('[Native] ✅ Stream completo:', fileSize, 'bytes');
 }
 
