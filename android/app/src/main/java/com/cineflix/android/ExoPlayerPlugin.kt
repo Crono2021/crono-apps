@@ -1,158 +1,174 @@
 package com.cineflix.android
 
-import android.content.Intent
+import android.app.Dialog
+import android.util.Base64
+import android.util.Log
+import android.view.ViewGroup
+import android.view.Window
+import androidx.media3.common.MediaItem
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.ui.PlayerView
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
-import java.util.concurrent.ConcurrentHashMap
-
-// New imports for Dialog-based overlay
-import android.app.Dialog
-import android.view.ViewGroup
-import android.view.Window
-import androidx.media3.common.MediaItem
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
 
 /**
- * ExoPlayerPlugin — Capacitor bridge between JS and the native ExoPlayer.
- *
- * JS interface:
- *   window.Capacitor.Plugins.ExoPlayer.registerStream({ streamId, fileSize, mimeType })
- *   window.Capacitor.Plugins.ExoPlayer.play({ streamId })
- *   window.Capacitor.Plugins.ExoPlayer.replyRange({ requestId, chunk: number[] })
- *
- * Events emitted to JS:
- *   ExoPlayer:fetchRange  { requestId, streamId, start, size }
- *   ExoPlayer:playbackEnded  {}
+ * ExoPlayerPlugin — Puente Capacitor ↔ ExoPlayer + StreamProxy.
+ * 
+ * Réplica de la arquitectura de Tevegram:
+ *   1. JS descarga chunks vía GramJS
+ *   2. Los envía como Base64 a través del bridge
+ *   3. Kotlin los escribe en disco (temp file)
+ *   4. StreamProxy sirve el archivo vía HTTP 127.0.0.1
+ *   5. ExoPlayer reproduce desde el proxy local
  */
 @CapacitorPlugin(name = "ExoPlayer")
 class ExoPlayerPlugin : Plugin() {
 
-    // Map of active stream sizes (since DataSources are created on-the-fly by ExoPlayer's Factory)
-    private val streamSizes = ConcurrentHashMap<String, Long>()
-    private val activeDataSources = ConcurrentHashMap<String, MutableList<JSBridgeDataSource>>()
-
-    // Tubería binaria silenciosa para saltarnos el Binder Json Bridge IPC
-    private var binaryPipe: BinaryPipeServer? = null
-
-    override fun load() {
-        super.load()
-        binaryPipe = BinaryPipeServer { requestId, chunk ->
-            var delivered = false
-            for (list in activeDataSources.values) {
-                for (ds in list) {
-                    if (ds.deliverChunk(requestId, chunk)) {
-                        delivered = true
-                        break
-                    }
-                }
-                if (delivered) break
-            }
-            delivered
-        }
-        // Start listening locally on port 3999
-        binaryPipe?.start()
-    }
-
-    @PluginMethod
-    fun registerStream(call: PluginCall) {
-        val streamId = call.getString("streamId") ?: run { call.reject("streamId required"); return }
-        
-        // Resilient parsing logic against JS type bridge
-        val fileSizeStr = call.getString("fileSize") 
-            ?: call.getInt("fileSize")?.toString() 
-            ?: call.getDouble("fileSize")?.toLong()?.toString() 
-            ?: "0"
-            
-        val fileSize = fileSizeStr.toLongOrNull() ?: 0L
-
-        streamSizes[streamId] = fileSize
-        activeDataSources[streamId] = mutableListOf()
-
-        call.resolve()
-    }
-
-    /**
-     * Called by JS to launch ExoPlayer fullscreen with the registered stream.
-     * JS: await Capacitor.Plugins.ExoPlayer.play({ streamId })
-     */
-    @PluginMethod
-    fun play(call: PluginCall) {
-        val streamId = call.getString("streamId") ?: run { call.reject("streamId required"); return }
-        if (!streamSizes.containsKey(streamId)) {
-            call.reject("Stream no registrado")
-            return
-        }
-
-        activity.runOnUiThread {
-            showPlayerOverlay(streamId)
-            call.resolve()
-        }
+    companion object {
+        private const val TAG = "ExoPlayerPlugin"
     }
 
     private var playerDialog: Dialog? = null
     private var exoPlayer: ExoPlayer? = null
+    private var streamProxy: StreamProxy? = null
 
-    private fun showPlayerOverlay(streamId: String) {
-        // Destroy previous if any
+    override fun load() {
+        super.load()
+        // Iniciar StreamProxy al arrancar el plugin (como Tevegram hace en onCreate)
+        streamProxy = StreamProxy(context)
+        val port = streamProxy!!.start()
+        Log.i(TAG, "🚀 StreamProxy iniciado en puerto $port")
+    }
+
+    /**
+     * Prepara un nuevo stream. JS envía fileSize y mimeType.
+     * JS: await ExoPlayer.initStream({ fileSize: 1234567890, mimeType: 'video/x-matroska' })
+     */
+    @PluginMethod
+    fun initStream(call: PluginCall) {
+        val fileSize = call.getLong("fileSize") ?: run {
+            call.reject("fileSize required")
+            return
+        }
+        val mimeType = call.getString("mimeType") ?: "video/mp4"
+
+        streamProxy?.initStream(fileSize, mimeType)
+
+        val result = JSObject()
+        result.put("url", streamProxy?.getUrl() ?: "")
+        call.resolve(result)
+
+        Log.i(TAG, "📁 Stream preparado: ${fileSize / 1024 / 1024}MB ($mimeType)")
+    }
+
+    /**
+     * Recibe un chunk de datos codificado en Base64 desde JS.
+     * Lo decodifica y lo añade al archivo temporal en disco.
+     * JS: await ExoPlayer.pushChunk({ data: 'base64string...' })
+     */
+    @PluginMethod
+    fun pushChunk(call: PluginCall) {
+        val base64Data = call.getString("data") ?: run {
+            call.reject("data required")
+            return
+        }
+
+        try {
+            val bytes = Base64.decode(base64Data, Base64.NO_WRAP)
+            streamProxy?.appendData(bytes)
+            call.resolve()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error decodificando chunk: ${e.message}")
+            call.reject("Error decodificando: ${e.message}")
+        }
+    }
+
+    /**
+     * Marca la descarga como completa. Esto desbloquea cualquier
+     * petición Range pendiente que esté esperando datos.
+     * JS: await ExoPlayer.downloadComplete()
+     */
+    @PluginMethod
+    fun downloadComplete(call: PluginCall) {
+        streamProxy?.markComplete()
+        call.resolve()
+        Log.i(TAG, "✅ Descarga marcada como completa")
+    }
+
+    /**
+     * Lanza ExoPlayer fullscreen apuntando al StreamProxy local.
+     * JS: await ExoPlayer.play()
+     */
+    @PluginMethod
+    fun play(call: PluginCall) {
+        val streamUrl = streamProxy?.getUrl()
+        if (streamUrl.isNullOrEmpty()) {
+            call.reject("No hay stream activo")
+            return
+        }
+
+        activity.runOnUiThread {
+            showPlayerOverlay(streamUrl)
+            call.resolve()
+        }
+    }
+
+    private fun showPlayerOverlay(streamUrl: String) {
+        // Liberar recursos anteriores
         exoPlayer?.release()
         playerDialog?.dismiss()
 
-        // Create a fullscreen dialog
+        // Crear dialog fullscreen
         playerDialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         playerDialog?.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
-        // Initialize PlayerView
+        // PlayerView
         val playerView = PlayerView(activity)
         playerDialog?.setContentView(playerView, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
-        // Build and bind ExoPlayer
+        // Construir ExoPlayer
         exoPlayer = ExoPlayer.Builder(activity).build()
         playerView.player = exoPlayer
 
-        // Handle errors with detailed codes exactly as before
+        // Listener de errores
         exoPlayer?.addListener(object : androidx.media3.common.Player.Listener {
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                Log.e(TAG, "❌ ExoPlayer error: ${error.errorCodeName} - ${error.message}")
                 android.widget.Toast.makeText(
                     context,
-                    "Error: ${error.errorCodeName} - ${error.message}",
+                    "Error: ${error.errorCodeName}",
                     android.widget.Toast.LENGTH_LONG
                 ).show()
             }
         })
 
-        // Define the Custom Native JS Bridge Factory
-        val factory = androidx.media3.datasource.DataSource.Factory {
-            val fileSize = streamSizes[streamId] ?: 0L
-            val ds = JSBridgeDataSource(streamId, fileSize) { requestId, start, size ->
-                val eventData = JSObject().apply {
-                    put("requestId", requestId)
-                    put("streamId", streamId)
-                    put("start", start)
-                    put("size", size)
-                }
-                notifyListeners("fetchRange", eventData)
-            }
-            activeDataSources[streamId]?.add(ds)
-            ds
-        }
+        // ━━ ARQUITECTURA TEVEGRAM ━━
+        // Conectar ExoPlayer al StreamProxy local vía HTTP, exactamente
+        // como Tevegram conecta a http://127.0.0.1:45302
+        Log.i(TAG, "▶️ ExoPlayer → $streamUrl")
 
-        // Bridge directly using ProgressiveMediaSource (completely bypasses HTTP)
-        val mediaItem = MediaItem.fromUri(android.net.Uri.parse("custombridge://$streamId"))
-        val mediaSource = androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(factory)
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(30_000)
+
+        val mediaItem = MediaItem.fromUri(streamUrl)
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
             .createMediaSource(mediaItem)
 
         exoPlayer?.setMediaSource(mediaSource)
         exoPlayer?.prepare()
         exoPlayer?.play()
 
-        // Ensure resources are uncoupled when the user closes the video dialog
+        // Limpiar recursos al cerrar
         playerDialog?.setOnDismissListener {
             exoPlayer?.release()
             exoPlayer = null
@@ -161,40 +177,10 @@ class ExoPlayerPlugin : Plugin() {
         playerDialog?.show()
     }
 
-    /**
-     * Called by JS to deliver byte chunks back to the native custom DataSource.
-     * JS: Capacitor.Plugins.ExoPlayer.replyRange({ requestId, chunk: string })
-     */
-    @PluginMethod
-    fun replyRange(call: PluginCall) {
-        val requestId = call.getString("requestId") ?: run { call.reject("requestId required"); return }
-        val base64 = call.getString("chunk") ?: ""
-
-        val bytes = if (base64.isNotEmpty()) {
-            android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
-        } else {
-            ByteArray(0)
-        }
-
-        var delivered = false
-        for (list in activeDataSources.values) {
-            for (ds in list) {
-                if (ds.deliverChunk(requestId, bytes)) {
-                    delivered = true
-                    break
-                }
-            }
-            if (delivered) break
-        }
-        
-        call.resolve()
-    }
-
-    @PluginMethod
-    fun stopStream(call: PluginCall) {
-        val streamId = call.getString("streamId") ?: run { call.resolve(); return }
-        activeDataSources.remove(streamId)
-        streamSizes.remove(streamId)
-        call.resolve()
+    override fun handleOnDestroy() {
+        exoPlayer?.release()
+        playerDialog?.dismiss()
+        streamProxy?.stop()
+        super.handleOnDestroy()
     }
 }
