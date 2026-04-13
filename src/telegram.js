@@ -510,18 +510,17 @@ export async function streamVideoNative(media) {
     }
 
     const mimeType = doc.mimeType || 'video/mp4';
-    const CHUNK_SIZE = 512 * 1024; // 512KB per chunk
+    const CHUNK_SIZE = 512 * 1024;           // 512KB per Telegram request
+    const BUFFER_BEFORE_PLAY = 2 * 1024 * 1024; // 2MB antes de lanzar player
 
     console.log('[Native] Iniciando stream:', fileSize, 'bytes,', mimeType);
 
     // 1. Inicializar el proxy local (crea archivo temporal en disco)
     await ExoPlayer.initStream({ fileSize, mimeType });
 
-    // 2. Lanzar el reproductor INMEDIATAMENTE
-    ExoPlayer.play({});
-
-    // 3. Descargar y empujar chunks progresivamente al archivo temporal
+    // 2. Descargar y empujar chunks progresivamente
     let offset = 0;
+    let playerLaunched = false;
 
     while (offset < fileSize) {
         const size = Math.min(CHUNK_SIZE, fileSize - offset);
@@ -542,10 +541,18 @@ export async function streamVideoNative(media) {
         const base64 = uint8ToBase64(chunk);
         await ExoPlayer.pushChunk({ data: base64 });
         offset += size;
-        console.log(`[Native] ${Math.round(offset / fileSize * 100)}% (${(offset / 1048576).toFixed(1)}MB)`);
+
+        // 3. Lanzar ExoPlayer solo cuando haya suficiente buffer (evita ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+        if (!playerLaunched && (offset >= BUFFER_BEFORE_PLAY || offset >= fileSize)) {
+            playerLaunched = true;
+            console.log(`[Native] ▶️ Buffer listo (${(offset/1048576).toFixed(1)}MB), lanzando ExoPlayer...`);
+            ExoPlayer.play({}); // fire-and-forget
+        }
+
+        console.log(`[Native] ${Math.round(offset / fileSize * 100)}% (${(offset / 1048576).toFixed(1)}MB/${(fileSize/1048576).toFixed(1)}MB)`);
     }
 
-    // 4. Marcar descarga completa
+    // 4. Marcar descarga completa (desbloquea waitForData en StreamProxy)
     await ExoPlayer.downloadComplete({});
     console.log('[Native] ✅ Descarga completa:', offset, 'bytes');
 }
