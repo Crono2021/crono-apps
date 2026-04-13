@@ -51,6 +51,13 @@ class StreamProxyServer(
         val rangeHeader = session.headers["range"] ?: "bytes=0-"
         val (start, endRequested) = parseRange(rangeHeader)
         val end = if (endRequested < 0) fileSize - 1 else minOf(endRequested, fileSize - 1)
+        
+        if (start > end || start >= fileSize) {
+            val response = newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, NanoHTTPD.MIME_PLAINTEXT, "")
+            response.addHeader("Content-Range", "bytes */$fileSize")
+            return response
+        }
+        
         val chunkSize = (end - start + 1).toInt().coerceAtMost(64 * 1024) // 64KB per bridge call
 
         // Ask JS for the bytes
@@ -83,7 +90,6 @@ class StreamProxyServer(
         )
         response.addHeader("Content-Range", "bytes $start-$actualEnd/$fileSize")
         response.addHeader("Accept-Ranges", "bytes")
-        response.addHeader("Content-Length", bytes.size.toString())
         return response
     }
 
