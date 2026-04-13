@@ -18,6 +18,16 @@ class TelegramManager(private val context: Context, private val webView: WebView
     var authorizationState: TdApi.AuthorizationState? = null
     var streamProxy: LocalStreamProxy? = null
 
+    // Collector para esperar mensajes del bot (clave = queryId)
+    data class MsgCollector(
+        val chatId: Long,
+        val afterMsgId: Long,
+        val videos: org.json.JSONArray = org.json.JSONArray(),
+        @Volatile var lastReceived: Long = System.currentTimeMillis(),
+        @Volatile var done: Boolean = false
+    )
+    private val msgCollectors = java.util.concurrent.ConcurrentHashMap<String, MsgCollector>()
+
     init {
         initClient()
     }
@@ -40,6 +50,39 @@ class TelegramManager(private val context: Context, private val webView: WebView
             }
             is TdApi.UpdateFile -> {
                 streamProxy?.onUpdateFile(result)
+            }
+            is TdApi.UpdateNewMessage -> {
+                val msg = result.message
+                // Notificar a collectors que escuchan este chat
+                for ((queryId, collector) in msgCollectors) {
+                    if (msg.chatId == collector.chatId && msg.id > collector.afterMsgId) {
+                        val content = msg.content
+                        val isVideo = content is TdApi.MessageDocument || content is TdApi.MessageVideo
+                        if (isVideo) {
+                            try {
+                                val videoObj = org.json.JSONObject()
+                                videoObj.put("msgId", msg.id)
+                                videoObj.put("chatId", msg.chatId.toString())
+                                videoObj.put("date", msg.date)
+                                if (content is TdApi.MessageDocument) {
+                                    val doc = content.document
+                                    videoObj.put("fileName", doc.fileName)
+                                    videoObj.put("fileSize", doc.document.size)
+                                    videoObj.put("mimeType", doc.mimeType)
+                                    videoObj.put("caption", content.caption.text)
+                                } else if (content is TdApi.MessageVideo) {
+                                    val video = content.video
+                                    videoObj.put("fileName", video.fileName)
+                                    videoObj.put("fileSize", video.video.size)
+                                    videoObj.put("mimeType", video.mimeType)
+                                    videoObj.put("caption", content.caption.text)
+                                }
+                                synchronized(collector.videos) { collector.videos.put(videoObj) }
+                            } catch (_: Exception) {}
+                            collector.lastReceived = System.currentTimeMillis()
+                        }
+                    }
+                }
             }
             is TdApi.Error -> {
                 Log.e(TAG, "Receive error: ${result.code} - ${result.message}")
@@ -265,11 +308,33 @@ class TelegramManager(private val context: Context, private val webView: WebView
         val dataBytes = android.util.Base64.decode(dataBase64, android.util.Base64.DEFAULT)
         client?.send(TdApi.SearchPublicChat(botUsername)) { botChatResult ->
             if (botChatResult is TdApi.Chat) {
-                client?.send(TdApi.GetCallbackQueryAnswer(botChatResult.id, msgId, TdApi.CallbackQueryPayloadData(dataBytes))) { answerResult ->
+                val chatId = botChatResult.id
+
+                // Registrar collector ANTES de hacer click para no perder mensajes
+                val collector = MsgCollector(chatId = chatId, afterMsgId = msgId)
+                msgCollectors[queryId] = collector
+
+                client?.send(TdApi.GetCallbackQueryAnswer(chatId, msgId, TdApi.CallbackQueryPayloadData(dataBytes))) { answerResult ->
                     if (answerResult is TdApi.Error) {
+                        msgCollectors.remove(queryId)
                         notifyJSCallbackError(queryId, answerResult.message)
-                    } else {
-                        notifyJSCallbackSuccess(queryId, "{\"success\":true}")
+                        return@send
+                    }
+
+                    // Esperar a que el bot termine de enviar (silencio de 1.5s, máximo 10s)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val silenceMs = 1500L
+                        val maxWaitMs = 10_000L
+                        val start = System.currentTimeMillis()
+
+                        while (System.currentTimeMillis() - start < maxWaitMs) {
+                            kotlinx.coroutines.delay(250)
+                            val sinceLastMsg = System.currentTimeMillis() - collector.lastReceived
+                            if (sinceLastMsg >= silenceMs && collector.videos.length() > 0) break
+                        }
+
+                        msgCollectors.remove(queryId)
+                        notifyJSCallbackSuccess(queryId, collector.videos.toString())
                     }
                 }
             } else if (botChatResult is TdApi.Error) {
