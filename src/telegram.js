@@ -451,7 +451,7 @@ export async function streamVideo(media, videoElement, onProgress) {
  */
 export function isNativeApp() {
     try {
-        return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+        return !!(window.Capacitor && window.Capacitor.isNativePlatform());
     } catch {
         return false;
     }
@@ -469,8 +469,17 @@ function uint8ToBase64(bytes) {
     return btoa(binary);
 }
 
-import { registerPlugin } from '@capacitor/core';
-const ExoPlayer = registerPlugin('ExoPlayer');
+/**
+ * Obtiene el plugin ExoPlayer del bridge nativo de Capacitor.
+ * Solo funciona cuando la web se carga desde local (www/), NO desde URL remota.
+ */
+function getExoPlayer() {
+    const plugin = window.Capacitor?.Plugins?.ExoPlayer;
+    if (!plugin) {
+        throw new Error('ExoPlayer plugin no disponible. ¿Estás en la app Android?');
+    }
+    return plugin;
+}
 
 /**
  * Stream a video natively via ExoPlayer (Android only).
@@ -482,6 +491,7 @@ const ExoPlayer = registerPlugin('ExoPlayer');
  *   5. ExoPlayer reproduce desde http://127.0.0.1:<port>/stream
  */
 export async function streamVideoNative(media) {
+    const ExoPlayer = getExoPlayer();
     const c = await getClient();
     const doc = media.document;
 
@@ -500,21 +510,19 @@ export async function streamVideoNative(media) {
     }
 
     const mimeType = doc.mimeType || 'video/mp4';
-    const CHUNK_SIZE = 512 * 1024; // 512KB per chunk (safe for Binder IPC)
+    const CHUNK_SIZE = 512 * 1024; // 512KB per chunk
 
     console.log('[Native] Iniciando stream:', fileSize, 'bytes,', mimeType);
 
     // 1. Inicializar el proxy local (crea archivo temporal en disco)
     await ExoPlayer.initStream({ fileSize, mimeType });
 
-    // Lanzar el reproductor INMEDIATAMENTE para que el usuario no sienta que "no hace nada".
-    // El reproductor nativo mostrará su spinner de carga mientras llegan los chunks.
+    // 2. Lanzar el reproductor INMEDIATAMENTE
     ExoPlayer.play({});
 
-    // 2. Descargar y empujar chunks progresivamente al archivo temporal
+    // 3. Descargar y empujar chunks progresivamente al archivo temporal
     let offset = 0;
 
-    // TODO: Falta soporte para cancelar el bucle si el usuario cierra la pantalla
     while (offset < fileSize) {
         const size = Math.min(CHUNK_SIZE, fileSize - offset);
 
@@ -522,7 +530,6 @@ export async function streamVideoNative(media) {
         try {
             chunk = await fetchTelegramRange(c, doc, offset, size);
         } catch (err) {
-            // Reintentar una vez tras reconectar
             if (err.message && err.message.toLowerCase().includes('disconnect')) {
                 console.warn('[Native] Reconectando...');
                 await c.connect();
@@ -532,23 +539,14 @@ export async function streamVideoNative(media) {
             }
         }
 
-        // Convertir chunk a Base64
         const base64 = uint8ToBase64(chunk);
-        
-        // Empujar chunk al archivo temporal local
         await ExoPlayer.pushChunk({ data: base64 });
-
         offset += size;
+        console.log(`[Native] ${Math.round(offset / fileSize * 100)}% (${(offset / 1048576).toFixed(1)}MB)`);
     }
 
     // 4. Marcar descarga completa
     await ExoPlayer.downloadComplete({});
-
-    // Si el archivo era muy pequeño y nunca lanzamos el player
-    if (!playerLaunched) {
-        console.log('[Native] ▶️ Archivo pequeño, lanzando ExoPlayer...');
-        await ExoPlayer.play({});
-    }
-
     console.log('[Native] ✅ Descarga completa:', offset, 'bytes');
 }
+
