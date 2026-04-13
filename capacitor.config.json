@@ -3,14 +3,12 @@
   "appName": "Cineflix",
   "webDir": "www",
   "server": {
-    "url": "https://crono2021.github.io/crono-apps/",
-    "cleartext": true,
-    "allowNavigation": ["crono2021.github.io"]
+    "cleartext": true
   },
   "android": {
-    "allowMixedContent": false,
+    "allowMixedContent": true,
     "captureInput": true,
-    "webContentsDebuggingEnabled": false
+    "webContentsDebuggingEnabled": true
   },
   "plugins": {
     "SplashScreen": {
