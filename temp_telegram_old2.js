@@ -13,31 +13,6 @@ let phoneHash = null;
 let swPort = null;
 const streamRegistry = new Map(); // streamId -> { client, doc }
 
-// ===== NATIVE BRIDGE =====
-let nativeAuthResolver = null;
-window.onTelegramAuthStateChanged = (state) => {
-    console.log('[NativeBridge] Auth state:', state);
-    if (nativeAuthResolver) {
-        nativeAuthResolver(state);
-        nativeAuthResolver = null;
-    }
-};
-window.onTelegramError = (err) => {
-    console.error('[NativeBridge] Error:', err);
-    if (nativeAuthResolver) {
-        nativeAuthResolver('ERROR: ' + err);
-        nativeAuthResolver = null;
-    }
-};
-
-function callNativeAsync(method, param = null) {
-    return new Promise((resolve) => {
-        nativeAuthResolver = resolve;
-        if (param !== null) window.AndroidTelegram[method](param);
-        else window.AndroidTelegram[method]();
-    });
-}
-
 // ===== SESSION =====
 
 function getSavedSession() {
@@ -92,11 +67,6 @@ export async function getClient() {
 // ===== AUTH =====
 
 export async function isLoggedIn() {
-    if (isNativeApp() && window.AndroidTelegram) {
-        const state = await callNativeAsync('requestAuthState');
-        return state === 'READY';
-    }
-
     try {
         await getClient();
         const me = await client.getMe();
@@ -114,12 +84,6 @@ export async function isLoggedIn() {
 }
 
 export async function sendCode(phone) {
-    if (isNativeApp() && window.AndroidTelegram) {
-        const state = await callNativeAsync('loginWithPhone', phone);
-        if (state.startsWith('ERROR')) throw new Error(state);
-        return { success: true };
-    }
-
     await getClient();
     const result = await client.invoke(new Api.auth.SendCode({
         phoneNumber: phone,
@@ -132,13 +96,6 @@ export async function sendCode(phone) {
 }
 
 export async function verifyCode(phone, code) {
-    if (isNativeApp() && window.AndroidTelegram) {
-        const state = await callNativeAsync('signInWithCode', code);
-        if (state.startsWith('ERROR')) throw new Error(state);
-        if (state === 'WAIT_PASSWORD') return { success: false, needs2FA: true };
-        return { success: true, needs2FA: false };
-    }
-
     try {
         await client.invoke(new Api.auth.SignIn({
             phoneNumber: phone,
@@ -156,12 +113,6 @@ export async function verifyCode(phone, code) {
 }
 
 export async function verify2FA(password) {
-    if (isNativeApp() && window.AndroidTelegram) {
-        const state = await callNativeAsync('signInWithPassword', password);
-        if (state.startsWith('ERROR')) throw new Error(state);
-        return { success: true };
-    }
-
     const pwdInfo = await client.invoke(new Api.account.GetPassword());
     // In the browser production bundle, computeCheck needs an explicit Buffer
     const pwdBuffer = Buffer.from(password, 'utf-8');
@@ -172,11 +123,6 @@ export async function verify2FA(password) {
 }
 
 export async function logout() {
-    if (isNativeApp() && window.AndroidTelegram) {
-        await callNativeAsync('logOut');
-        return;
-    }
-
     try { await client.invoke(new Api.auth.LogOut()); } catch { }
     localStorage.removeItem(SESSION_KEY);
     // Also clear from native persistent storage
@@ -497,68 +443,76 @@ export async function streamVideo(media, videoElement, onProgress) {
 }
 
 // ===== NATIVE ANDROID STREAMING (Capacitor + ExoPlayer) =====
-// Arquitectura Tevegram: ServerSocket local en Kotlin sirve HTTP Range
-// mientras GramJS descarga chunks progresivamente desde Telegram.
 
 /**
  * Check if the app is running inside Capacitor (Android/iOS).
  */
 export function isNativeApp() {
-    try {
-        return !!(window.Capacitor && window.Capacitor.isNativePlatform());
-    } catch {
-        return false;
-    }
+    return !!(window.Capacitor && window.Capacitor.isNativePlatform);
 }
 
 /**
- * Convierte Uint8Array a Base64 de forma eficiente (sin overflow de stack).
+ * Stream a video natively via ExoPlayer (Android only).
+ * The Kotlin plugin starts a local NanoHTTPD server that proxies
+ * byte-range requests back to JS / GramJS.
  */
-function uint8ToBase64(bytes) {
-    const CHUNK = 0x8000; // 32KB por iteración
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
-    }
-    return btoa(binary);
-}
-
-/**
- * Obtiene el plugin ExoPlayer del bridge nativo de Capacitor.
- * Solo funciona cuando la web se carga desde local (www/), NO desde URL remota.
- */
-function getExoPlayer() {
-    const plugin = window.Capacitor?.Plugins?.ExoPlayer;
-    if (!plugin) {
-        throw new Error('ExoPlayer plugin no disponible. ¿Estás en la app Android?');
-    }
-    return plugin;
-}
-
 export async function streamVideoNative(media) {
-    const ExoPlayer = getExoPlayer();
-    
-    // Necesitamos chatId y msgId. Si media no los tiene, no podemos usar TDLib!
-    // Asumiremos que el frontend nos pasa el doc o el chat_id y msg_id.
-    let chatId = media.chatId || (media.message ? media.message.peerId?.channelId : null);
-    let msgId = media.msgId || (media.message ? media.message.id : null);
-    
-    // Convertir el channelId a Supergroup ID (-100...) si es GramJS ID
-    if (chatId && typeof chatId === 'object' && chatId.value) {
-        chatId = "-100" + chatId.value.toString();
-    } else if (chatId && !chatId.toString().startsWith('-100')) {
-        chatId = "-100" + chatId.toString();
+    const { ExoPlayer } = window.Capacitor.Plugins;
+    const c = await getClient();
+    const doc = media.document;
+    const streamId = `${doc.id.toString()}-${Date.now()}`;
+
+    // Safe fileSize: GramJS may return doc.size as BigInt or custom object
+    let fileSize;
+    try {
+        fileSize = typeof doc.size === 'bigint'
+            ? Number(doc.size)
+            : Number(String(doc.size)); // coerce GramJS custom numeric types
+    } catch { fileSize = 0; }
+
+    fileSize = Math.floor(fileSize); // MUST be strict integer without float residuals for Capacitor bridge
+
+    if (!fileSize || fileSize <= 0 || isNaN(fileSize)) {
+        console.warn('[Native] No fileSize available, cannot stream:', doc);
+        throw new Error('No se pudo obtener el tamaño del archivo');
     }
 
-    if (!chatId || !msgId) {
-        throw new Error("No se pudo obtener el chatId o msgId necesario para TDLib.");
-    }
+    const mimeType = doc.mimeType || 'video/mp4';
 
-    const proxyPort = window.CINEFLIX_PROXY_PORT || 0;
-    const url = `http://127.0.0.1:${proxyPort}/resolve?chat_id=${chatId}&msg_id=${msgId}`;
-    
-    console.log('[Native] 🎬 Iniciando ExoPlayer con TDLib. URL:', url);
+    // 1. Register stream with native proxy server
+    await ExoPlayer.registerStream({ streamId, fileSize, mimeType });
 
-    await ExoPlayer.play({ url });
+    // 2. Listen for byte-range requests — send bytes as Base64 (efficient over JSON bridge)
+    const listener = await ExoPlayer.addListener('fetchRange', async ({ requestId, start, size }) => {
+        try {
+            let chunk;
+            try {
+                chunk = await fetchTelegramRange(c, doc, start, size);
+            } catch (err) {
+                if (err.message && err.message.toLowerCase().includes('disconnected')) {
+                    console.warn('[Native Stream] Reparando socket cerrado de Telegram...');
+                    await c.connect();
+                    chunk = await fetchTelegramRange(c, doc, start, size);
+                } else {
+                    throw err;
+                }
+            }
+            
+            // Safe Native Polyfill Base64 encoding for Binary Array Buffers without CharCode mismatches
+            const base64 = Buffer.from(chunk).toString('base64');
+
+            await ExoPlayer.replyRange({ requestId, chunk: base64 });
+        } catch (err) {
+            console.error('[Native Stream] fetchRange error:', err.message);
+            alert(`Error de descarga nativa: ${err.message}`);
+            await ExoPlayer.replyRange({ requestId, chunk: '' });
+        }
+    });
+
+    // 3. Launch ExoPlayer fullscreen
+    await ExoPlayer.play({ streamId });
+
+    // Auto-cleanup listener after 2 hours max
+    setTimeout(() => listener?.remove?.(), 2 * 60 * 60 * 1000);
 }
 
