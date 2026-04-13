@@ -497,6 +497,7 @@ export async function streamVideoNative(media) {
             await ExoPlayer.replyRange({ requestId, chunk: base64 });
         } catch (err) {
             console.error('[Native Stream] fetchRange error:', err.message);
+            alert(`Error de descarga nativa: ${err.message}`);
             await ExoPlayer.replyRange({ requestId, chunk: '' });
         }
     });
