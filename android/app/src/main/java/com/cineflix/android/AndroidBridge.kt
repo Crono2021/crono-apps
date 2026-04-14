@@ -47,32 +47,64 @@ class AndroidBridge(
 
     @JavascriptInterface
     fun loginWithPhone(phone: String) {
-        engine.sendPhone(phone) { err ->
-            if (err != null) sendAuthError(err)
-            else sendAuthState("WAIT_CODE")
+        // Send the phone number to TDLib. TDLib's response comes asynchronously via
+        // UpdateAuthorizationState -> WaitCode. We observe the Flow and reply to JS
+        // as soon as we see WaitCode (or an Error state).
+        scope.launch {
+            engine.sendPhone(phone) { err -> sendAuthError(err) }
+            // Wait for TDLib to transition to WaitCode (up to 15 s)
+            val timeout = kotlinx.coroutines.withTimeoutOrNull(15_000) {
+                engine.authState.first {
+                    it is TelegramEngine.AuthState.WaitCode ||
+                    it is TelegramEngine.AuthState.Error
+                }
+            }
+            when (timeout) {
+                is TelegramEngine.AuthState.WaitCode -> sendAuthState("WAIT_CODE")
+                is TelegramEngine.AuthState.Error    -> sendAuthError((timeout as TelegramEngine.AuthState.Error).message)
+                null -> sendAuthError("Timeout: TDLib did not confirm phone")
+                else -> sendAuthError("Unexpected state: $timeout")
+            }
         }
     }
 
     @JavascriptInterface
     fun signInWithCode(code: String) {
-        engine.sendCode(code) { err ->
-            if (err != null) sendAuthError(err)
-            else {
-                val state = when (engine.authState.value) {
-                    is TelegramEngine.AuthState.WaitPassword -> "WAIT_PASSWORD"
-                    is TelegramEngine.AuthState.Ready        -> "READY"
-                    else                                     -> "READY"
+        scope.launch {
+            engine.sendCode(code) { err -> sendAuthError(err) }
+            val timeout = kotlinx.coroutines.withTimeoutOrNull(15_000) {
+                engine.authState.first {
+                    it is TelegramEngine.AuthState.Ready ||
+                    it is TelegramEngine.AuthState.WaitPassword ||
+                    it is TelegramEngine.AuthState.Error
                 }
-                sendAuthState(state)
+            }
+            when (timeout) {
+                is TelegramEngine.AuthState.Ready       -> sendAuthState("READY")
+                is TelegramEngine.AuthState.WaitPassword -> sendAuthState("WAIT_PASSWORD")
+                is TelegramEngine.AuthState.Error       -> sendAuthError((timeout as TelegramEngine.AuthState.Error).message)
+                null -> sendAuthError("Timeout: TDLib did not confirm code")
+                else -> sendAuthError("Unexpected state: $timeout")
             }
         }
     }
 
     @JavascriptInterface
     fun signInWithPassword(password: String) {
-        engine.sendPassword(password) { err ->
-            if (err != null) sendAuthError(err)
-            else sendAuthState("READY")
+        scope.launch {
+            engine.sendPassword(password) { err -> sendAuthError(err) }
+            val timeout = kotlinx.coroutines.withTimeoutOrNull(15_000) {
+                engine.authState.first {
+                    it is TelegramEngine.AuthState.Ready ||
+                    it is TelegramEngine.AuthState.Error
+                }
+            }
+            when (timeout) {
+                is TelegramEngine.AuthState.Ready -> sendAuthState("READY")
+                is TelegramEngine.AuthState.Error -> sendAuthError((timeout as TelegramEngine.AuthState.Error).message)
+                null -> sendAuthError("Timeout: TDLib did not confirm 2FA")
+                else -> sendAuthError("Unexpected state: $timeout")
+            }
         }
     }
 
