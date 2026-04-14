@@ -78,7 +78,11 @@ jobs:
           cd /tmp/openssl-1.1.1w
 
           # Put cross-compiler in PATH (required by OpenSSL's android-arm target)
-          export PATH="$TOOLCHAIN/bin:$PATH"
+          # OpenSSL 1.1.1 expects 'arm-linux-androideabi-gcc' but NDK 23+ is clang-only.
+          # Create a compatibility symlink in /tmp so OpenSSL finds it.
+          ln -sf "$TOOLCHAIN/bin/armv7a-linux-androideabi${API}-clang" \
+                 /tmp/arm-linux-androideabi-gcc
+          export PATH="/tmp:$TOOLCHAIN/bin:$PATH"
           export CC="armv7a-linux-androideabi${API}-clang"
           export AR="llvm-ar"
           export RANLIB="llvm-ranlib"
