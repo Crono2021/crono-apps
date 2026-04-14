@@ -119,9 +119,16 @@ class AndroidBridge(
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
+     * Native storage for the most recent sendBotCommand result.
+     * Buttons are indexed (0, 1, 2...) so JS only needs to pass an integer back
+     * for clickInlineButton, completely avoiding the base64 round-trip.
+     */
+    @Volatile private var lastBotResponse: TelegramEngine.SeasonResponse? = null
+    /**
      * sendBotCommand(queryId, payload)
      * Returns JSON: { messageId, chatId, buttons: [{text, data, msgId}], text }
-     * Equivalent to web's sendBotCommand(payload)
+     * button.data is the button INDEX ("0", "1", ...) — JS passes it back to
+     * clickInlineButton which looks up the native SeasonButton to get real TDLib bytes.
      */
     @JavascriptInterface
     fun sendBotCommand(queryId: String, payload: String) {
@@ -132,12 +139,14 @@ class AndroidBridge(
                     callback(queryId, false, "Bot no respondió")
                     return@launch
                 }
+                // Store entire response natively — buttons' raw TDLib bytes are never serialized to JS
+                lastBotResponse = response
                 val buttons = JSONArray()
-                for (btn in response.buttons) {
+                for ((index, btn) in response.buttons.withIndex()) {
                     buttons.put(JSONObject().apply {
-                        put("text",   btn.text)
-                        put("data",   btn.dataBase64)   // base64 — TdApi callback data
-                        put("msgId",  response.messageId)
+                        put("text",  btn.text)
+                        put("data",  index.toString())   // INDEX, not base64
+                        put("msgId", response.messageId)
                     })
                 }
                 val result = JSONObject().apply {
@@ -154,22 +163,34 @@ class AndroidBridge(
     }
 
     /**
-     * clickInlineButton(queryId, msgId, data)
-     * Returns JSON array of video objects.
-     * Equivalent to web's clickInlineButton(msgId, data) + getVideoMessages()
+     * clickInlineButton(queryId, msgId, buttonIndex)
      *
-     * NOTE: data here is base64 (TDLib bytes), same as what sendBotCommand returned.
+     * buttonIndex is the integer index returned by sendBotCommand ("0", "1", ...).
+     * The raw TDLib callback bytes come from the natively-stored lastBotResponse
+     * — they NEVER go through JavaScript, eliminating all base64 round-trip issues.
      */
     @JavascriptInterface
-    fun clickInlineButton(queryId: String, msgIdStr: String, dataBase64: String) {
+    fun clickInlineButton(queryId: String, msgIdStr: String, buttonIndex: String) {
         scope.launch {
             try {
+                val response = lastBotResponse ?: run {
+                    callback(queryId, false, "No hay respuesta del bot en memoria — reinicia la búsqueda")
+                    return@launch
+                }
+                val idx = buttonIndex.toIntOrNull() ?: run {
+                    callback(queryId, false, "Índice de botón inválido: $buttonIndex")
+                    return@launch
+                }
+                val button = response.buttons.getOrNull(idx) ?: run {
+                    callback(queryId, false, "Botón $idx no encontrado (total: ${response.buttons.size})")
+                    return@launch
+                }
                 val chatId = engine.getBotChatIdPublic() ?: run {
                     callback(queryId, false, "No se pudo obtener chatId del bot")
                     return@launch
                 }
-                val msgId = msgIdStr.toLongOrNull() ?: 0L
-                val videos = engine.clickInlineButton(chatId, msgId, dataBase64)
+                // Use stored native msgId and raw TDLib bytes directly — no JS serialization
+                val videos = engine.clickInlineButton(chatId, response.messageId, button.dataBase64)
                 callback(queryId, true, videosToJson(videos, chatId))
             } catch (e: Exception) {
                 callback(queryId, false, e.message ?: "Error desconocido")
@@ -198,37 +219,17 @@ class AndroidBridge(
     /**
      * getVideoMessages(queryId, limit, minId)
      * Fallback used by JS when clickInlineButton returns empty.
-     * Reads the last `limit` messages from the bot chat and returns video files after `minId`.
+     * Uses TDLib GetChatHistory to find video messages newer than minId.
      */
     @JavascriptInterface
     fun getVideoMessages(queryId: String, limitStr: String, minIdStr: String) {
         scope.launch {
             try {
-                val chatId = engine.getBotChatIdPublic() ?: run {
-                    callback(queryId, false, "No se pudo obtener chatId del bot")
-                    return@launch
-                }
+                val limit = limitStr.toIntOrNull() ?: 50
                 val minId = minIdStr.toLongOrNull() ?: 0L
-                // Re-use the fileIdCache populated by UpdateNewMessage handler
-                val cached = engine.fileIdCache.entries
-                    .filter { it.key.startsWith("${chatId}:") }
-                    .mapNotNull { (key, pair) ->
-                        val msgId = key.substringAfter(":").toLongOrNull() ?: return@mapNotNull null
-                        if (msgId <= minId) return@mapNotNull null
-                        // Build a minimal VideoInfo from cache
-                        TelegramEngine.VideoInfo(
-                            msgId    = msgId,
-                            chatId   = chatId,
-                            fileId   = pair.first,
-                            fileName = "video_${msgId}.mp4",
-                            fileSize = 0L,
-                            mimeType = pair.second,
-                            caption  = "",
-                            date     = 0,
-                        )
-                    }
-                    .sortedBy { it.msgId }
-                callback(queryId, true, videosToJson(cached, chatId))
+                val videos = engine.getVideoMessagesHistory(limit, minId)
+                val chatId = engine.getBotChatIdPublic() ?: 0L
+                callback(queryId, true, videosToJson(videos, chatId))
             } catch (e: Exception) {
                 callback(queryId, false, e.message ?: "Error desconocido")
             }

@@ -424,6 +424,29 @@ class TelegramEngine(private val context: Context) {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    /**
+     * Fetch up to [limit] video messages from the bot chat newer than [minId].
+     * Used by AndroidBridge.getVideoMessages as a reliable fallback via TDLib GetChatHistory.
+     */
+    suspend fun getVideoMessagesHistory(limit: Int = 50, minId: Long = 0L): List<VideoInfo> =
+        withContext(Dispatchers.IO) {
+            val chatId = getBotChatId() ?: return@withContext emptyList()
+            val collected = mutableListOf<VideoInfo>()
+            val deferred = CompletableDeferred<Unit>()
+            client?.send(TdApi.GetChatHistory(chatId, 0L, 0, limit.coerceAtLeast(10), false)) { result ->
+                if (result is TdApi.Messages) {
+                    for (msg in result.messages) {
+                        if (msg.id <= minId) continue
+                        val info = extractVideoInfo(msg) ?: continue
+                        collected.add(info)
+                    }
+                }
+                deferred.complete(Unit)
+            }
+            withTimeoutOrNull(10_000) { deferred.await() }
+            collected.sortedBy { it.msgId }
+        }
+
     private suspend fun getBotChatId(): Long? =
         suspendCancellableCoroutine { cont ->
             client?.send(TdApi.SearchPublicChat(BOT_USERNAME)) { result ->
