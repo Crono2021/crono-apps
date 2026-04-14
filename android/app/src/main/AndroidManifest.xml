@@ -9,7 +9,8 @@
         android:label="Cineflix"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Cineflix">
+        android:theme="@style/Theme.Cineflix"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <!-- Main Compose Activity -->
         <activity

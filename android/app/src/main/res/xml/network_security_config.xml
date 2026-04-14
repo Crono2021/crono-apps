@@ -1,15 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    Permite tráfico HTTP en claro SOLO para el proxy local (NanoHTTPD).
-    ExoPlayer necesita conectarse a http://127.0.0.1:PORT para el stream.
-    Android 9+ bloquea cleartext incluso con usesCleartextTraffic si no hay
-    este archivo explícito cuando la app carga contenido HTTPS.
--->
 <network-security-config>
-    <!-- GitHub Pages y Telegram — HTTPS siempre -->
-    <base-config cleartextTrafficPermitted="false" />
-
-    <!-- Proxy local de streaming — HTTP permitido solo en loopback -->
+    <!-- Allow cleartext HTTP to localhost only (NanoHTTPD streaming proxy) -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">127.0.0.1</domain>
         <domain includeSubdomains="false">localhost</domain>
