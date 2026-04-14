@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -15,18 +16,14 @@ import kotlinx.coroutines.*
 
 /**
  * Cineflix ExoPlayer fullscreen activity.
+ * Launched by AndroidBridge.playVideo with a local HTTP stream URL
+ * served by StreamProxyServer.
  *
- * SAME architecture as the original Cineflix Android (Capacitor) app:
- *   1. Start StreamProxyServer (NanoHTTPD) on a free port
- *   2. Start TDLib download in background → sets localPath on server
- *   3. ExoPlayer connects to http://127.0.0.1:{port}/stream
- *   4. Server reads from TDLib local file (waits for bytes if needed)
- *   5. Streaming starts immediately, no full download required
+ * COPIED from original Cineflix Android PlayerActivity.kt
  */
 class PlayerActivity : Activity() {
 
-    private lateinit var player: ExoPlayer
-    private lateinit var playerView: PlayerView
+    private var player: ExoPlayer? = null
     private var proxyServer: StreamProxyServer? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -35,7 +32,6 @@ class PlayerActivity : Activity() {
         const val EXTRA_FILE_SIZE = "file_size"
         const val EXTRA_MIME_TYPE = "mime_type"
         const val EXTRA_TITLE     = "title"
-        const val EXTRA_SUBTITLE  = "subtitle"
         const val EXTRA_CHAT_ID   = "chat_id"
         const val EXTRA_MSG_ID    = "msg_id"
 
@@ -49,7 +45,6 @@ class PlayerActivity : Activity() {
             fileSize: Long   = 0L,
             mimeType: String = "video/mp4",
             title: String,
-            subtitle: String = "",
         ) {
             context.startActivity(Intent(context, PlayerActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -59,7 +54,6 @@ class PlayerActivity : Activity() {
                 putExtra(EXTRA_FILE_SIZE, fileSize)
                 putExtra(EXTRA_MIME_TYPE, mimeType)
                 putExtra(EXTRA_TITLE,     title)
-                putExtra(EXTRA_SUBTITLE,  subtitle)
             })
         }
     }
@@ -67,7 +61,7 @@ class PlayerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Fullscreen immersive
+        // Fullscreen immersive (exact copy from original)
         window.decorView.systemUiVisibility = (
             android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
             or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
@@ -80,62 +74,82 @@ class PlayerActivity : Activity() {
         val title    = intent.getStringExtra(EXTRA_TITLE) ?: ""
         val engine   = TelegramEngine.getInstance(this)
 
-        if (fileId <= 0 || fileSize <= 0) {
-            Log.e(TAG, "Invalid fileId=$fileId or fileSize=$fileSize")
-            android.widget.Toast.makeText(this, "Error: fileId o fileSize inválidos", android.widget.Toast.LENGTH_LONG).show()
+        Log.i(TAG, "▶ onCreate — fileId=$fileId fileSize=$fileSize mimeType=$mimeType title=$title")
+
+        if (fileId <= 0) {
+            Log.e(TAG, "INVALID fileId=$fileId — aborting")
+            Toast.makeText(this, "Error: fileId inválido ($fileId)", Toast.LENGTH_LONG).show()
             finish()
             return
         }
 
-        // 1. Start StreamProxyServer (same as original app)
+        // If fileSize is 0, try to get it from TDLib cache
+        var effectiveFileSize = fileSize
+        if (effectiveFileSize <= 0) {
+            // Look up from fileIdCache
+            for ((_, pair) in engine.fileIdCache) {
+                if (pair.first == fileId) {
+                    Log.w(TAG, "fileSize was 0, found fileId=$fileId in cache but no size info available")
+                    break
+                }
+            }
+            // Use a large default so Range headers work
+            effectiveFileSize = 2_000_000_000L // 2 GB default
+            Log.w(TAG, "Using default fileSize=$effectiveFileSize")
+        }
+
+        // 1. Start StreamProxyServer (NanoHTTPD on free port — same as original)
         val proxy = StreamProxyServer(
             engine   = engine,
             fileId   = fileId,
-            fileSize = fileSize,
+            fileSize = effectiveFileSize,
             mimeType = mimeType,
         )
         proxy.start()
         proxyServer = proxy
         val port = proxy.listeningPort
-        Log.d(TAG, "StreamProxyServer started on port $port")
+        Log.i(TAG, "▶ StreamProxyServer started on port $port")
 
-        // 2. Start TDLib download in background — non-blocking
+        // 2. Start TDLib download in background
         scope.launch {
             try {
+                Log.i(TAG, "▶ Requesting TDLib download for fileId=$fileId...")
                 val path = engine.startDownloadReturnPath(fileId, priority = 32)
                 if (path != null) {
                     proxy.localPath = path
-                    Log.d(TAG, "TDLib local path assigned: $path")
+                    Log.i(TAG, "▶ TDLib local path SET: $path")
                 } else {
-                    Log.e(TAG, "TDLib did not return a local path")
+                    Log.e(TAG, "▶ TDLib returned NULL path for fileId=$fileId")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Download error: ${e.message}")
+                Log.e(TAG, "▶ TDLib download error: ${e.message}", e)
             }
         }
 
-        // 3. Setup ExoPlayer with the stream URL (same as original app)
+        // 3. Setup ExoPlayer (exact copy from original)
         val streamUrl = "http://127.0.0.1:$port/stream"
+        Log.i(TAG, "▶ ExoPlayer stream URL: $streamUrl")
 
-        playerView = PlayerView(this)
+        val playerView = PlayerView(this)
         playerView.useController = true
         setContentView(playerView)
 
-        player = ExoPlayer.Builder(this).build()
-        playerView.player = player
+        val exo = ExoPlayer.Builder(this).build()
+        playerView.player = exo
+        player = exo
 
         val mediaItem = MediaItem.fromUri(Uri.parse(streamUrl))
-        player.setMediaItem(mediaItem)
-        player.prepare()
-        player.playWhenReady = true
+        exo.setMediaItem(mediaItem)
+        exo.prepare()
+        exo.playWhenReady = true
 
-        player.addListener(object : Player.Listener {
+        exo.addListener(object : Player.Listener {
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                Log.e(TAG, "ExoPlayer error: ${error.message}", error)
-                android.widget.Toast.makeText(
+                Log.e(TAG, "ExoPlayer error: ${error.errorCodeName} — ${error.message}", error)
+                Toast.makeText(
                     this@PlayerActivity,
                     "Error de reproducción: ${error.message}",
-                    android.widget.Toast.LENGTH_LONG
+                    Toast.LENGTH_LONG
                 ).show()
                 finish()
             }
@@ -154,7 +168,7 @@ class PlayerActivity : Activity() {
     }
 
     private fun cleanup() {
-        try { player.release() } catch (_: Exception) {}
+        try { player?.release() } catch (_: Exception) {}
         try { proxyServer?.stop() } catch (_: Exception) {}
         scope.cancel()
     }

@@ -3,25 +3,21 @@ package com.cineflix.android.ui.player
 import android.util.Log
 import com.cineflix.android.TelegramEngine
 import fi.iki.elonen.NanoHTTPD
-import kotlinx.coroutines.*
 import java.io.File
-import java.io.RandomAccessFile
+import java.io.FileInputStream
+import java.io.InputStream
 
 /**
  * StreamProxyServer — NanoHTTPD-based local HTTP server that proxies
- * Telegram video bytes to ExoPlayer using Range requests.
+ * Telegram byte-range requests between ExoPlayer and TDLib.
  *
- * COPIED from the original Cineflix Android (Capacitor) app, but adapted
- * so that TDLib (native) supplies the bytes instead of JS/GramJS.
+ * COPIED from original Cineflix Android StreamProxyServer.kt
+ * Adapted: TDLib writes to a local file; this server reads from it.
  *
  * Flow:
  *   ExoPlayer → HTTP GET /stream (with Range header)
- *               → server reads bytes from TDLib's local file path
+ *               → server reads from TDLib local file
  *               → HTTP 206 response returned to ExoPlayer
- *
- * TDLib downloads the file progressively to local storage.
- * This server reads from that file using RandomAccessFile, waiting for
- * bytes to arrive if ExoPlayer requests a range that hasn't been downloaded yet.
  */
 class StreamProxyServer(
     private val engine: TelegramEngine,
@@ -32,86 +28,100 @@ class StreamProxyServer(
 
     companion object {
         private const val TAG = "StreamProxy"
+        private const val CHUNK_SIZE = 64 * 1024 // 64KB chunks, same as original
     }
 
-    /** Set by the caller once TDLib assigns a local file path */
+    /** Set by PlayerActivity once TDLib assigns a local file path */
     @Volatile var localPath: String? = null
 
     override fun serve(session: IHTTPSession): Response {
-        val filePath = localPath
-        if (filePath == null) {
-            // Wait up to 20s for TDLib to start downloading and assign a path
-            val deadline = System.currentTimeMillis() + 20_000L
-            var path: String? = null
-            while (System.currentTimeMillis() < deadline) {
-                path = localPath
-                if (path != null) break
-                Thread.sleep(100)
-            }
-            if (path == null) {
-                return newFixedLengthResponse(
-                    Response.Status.SERVICE_UNAVAILABLE, "text/plain",
-                    "TDLib hasn't started downloading yet"
-                )
-            }
-            return serveFile(session, path)
-        }
-        return serveFile(session, filePath)
-    }
+        Log.d(TAG, "serve() called, URI=${session.uri}, Range=${session.headers["range"]}")
 
-    private fun serveFile(session: IHTTPSession, filePath: String): Response {
+        // Wait for TDLib to assign a local path
+        val filePath = waitForPath()
+        if (filePath == null) {
+            Log.e(TAG, "Timeout waiting for TDLib local path")
+            return newFixedLengthResponse(
+                Response.Status.SERVICE_UNAVAILABLE, "text/plain",
+                "TDLib hasn't started downloading yet"
+            )
+        }
+
         val file = File(filePath)
 
-        // Parse Range header: "bytes=start-end"
+        // Parse the Range header: "bytes=start-end" (same as original)
         val rangeHeader = session.headers["range"] ?: "bytes=0-"
         val (start, endRequested) = parseRange(rangeHeader)
         val end = if (endRequested < 0) fileSize - 1 else minOf(endRequested, fileSize - 1)
-        val length = end - start + 1
+        val chunkSize = (end - start + 1).toInt().coerceAtMost(CHUNK_SIZE)
 
-        Log.d(TAG, "serve Range: $start-$end (length=$length, fileSize=$fileSize)")
+        Log.d(TAG, "Range: $start-$end, chunkSize=$chunkSize, fileSize=$fileSize")
 
-        // Hint TDLib to prioritise downloading from this offset
+        // Hint TDLib to prioritise this offset
         engine.hintDownloadOffset(fileId, start)
 
-        // Wait for the bytes to be available on disk
-        waitForBytes(file, end + 1)
+        // Wait for the needed bytes to be on disk
+        val neededBytes = start + chunkSize
+        waitForBytes(file, neededBytes)
 
-        // Read the bytes
-        val raf = RandomAccessFile(file, "r")
-        raf.seek(start)
-        val bytes = ByteArray(length.toInt().coerceAtMost(2 * 1024 * 1024)) // max 2MB per request
-        val actualRead = raf.read(bytes)
-        raf.close()
-
-        if (actualRead <= 0) {
+        // Read the chunk from the local file
+        val bytes = readChunk(file, start, chunkSize)
+        if (bytes == null || bytes.isEmpty()) {
+            Log.e(TAG, "Failed to read chunk at offset $start")
             return newFixedLengthResponse(
                 Response.Status.INTERNAL_ERROR, "text/plain", "Failed to read bytes"
             )
         }
 
-        val actualEnd = start + actualRead - 1
+        val actualEnd = start + bytes.size - 1
+        Log.d(TAG, "Serving ${bytes.size} bytes ($start-$actualEnd/$fileSize)")
+
         val response = newFixedLengthResponse(
             Response.Status.PARTIAL_CONTENT,
             mimeType,
             bytes.inputStream(),
-            actualRead.toLong()
+            bytes.size.toLong()
         )
         response.addHeader("Content-Range", "bytes $start-$actualEnd/$fileSize")
         response.addHeader("Accept-Ranges", "bytes")
-        response.addHeader("Content-Length", actualRead.toString())
+        response.addHeader("Content-Length", bytes.size.toString())
         return response
     }
 
-    /**
-     * Block until [file] has at least [neededBytes] on disk.
-     */
+    private fun readChunk(file: File, offset: Long, size: Int): ByteArray? {
+        return try {
+            val fis = FileInputStream(file)
+            fis.skip(offset)
+            val buf = ByteArray(size)
+            val read = fis.read(buf)
+            fis.close()
+            if (read <= 0) null
+            else if (read < size) buf.copyOf(read)
+            else buf
+        } catch (e: Exception) {
+            Log.e(TAG, "readChunk error: ${e.message}")
+            null
+        }
+    }
+
+    /** Block until TDLib assigns a local path (up to 25s) */
+    private fun waitForPath(): String? {
+        val deadline = System.currentTimeMillis() + 25_000L
+        while (System.currentTimeMillis() < deadline) {
+            localPath?.let { return it }
+            Thread.sleep(100)
+        }
+        return null
+    }
+
+    /** Block until [file] has at least [neededBytes] on disk */
     private fun waitForBytes(file: File, neededBytes: Long) {
         val deadline = System.currentTimeMillis() + 60_000L
         while (System.currentTimeMillis() < deadline) {
             if (file.exists() && file.length() >= neededBytes) return
             Thread.sleep(100)
         }
-        Log.w(TAG, "Timeout waiting for $neededBytes bytes (have ${file.length()})")
+        Log.w(TAG, "Timeout waiting for $neededBytes bytes (have ${if (file.exists()) file.length() else 0})")
     }
 
     private fun parseRange(rangeHeader: String): Pair<Long, Long> {

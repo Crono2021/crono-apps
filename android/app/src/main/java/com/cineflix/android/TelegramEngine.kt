@@ -402,21 +402,29 @@ class TelegramEngine(private val context: Context) {
      */
     suspend fun startDownloadReturnPath(fileId: Int, priority: Int = 32): String? =
         withContext(Dispatchers.IO) {
+            Log.d(TAG, "startDownloadReturnPath fileId=$fileId priority=$priority")
             val deferred = filePathEmitters.getOrPut(fileId) { CompletableDeferred() }
 
             client?.send(TdApi.DownloadFile(fileId, priority, 0, 0, false)) { result ->
+                Log.d(TAG, "DownloadFile callback: ${result.javaClass.simpleName}")
                 if (result is TdApi.File) {
                     val p = result.local?.path
-                    if (!p.isNullOrEmpty()) deferred.complete(p)
-                    // Also complete if download is already done
-                    if (result.local?.isDownloadingCompleted == true && !p.isNullOrEmpty()) {
+                    val downloading = result.local?.isDownloadingActive ?: false
+                    val completed = result.local?.isDownloadingCompleted ?: false
+                    val downloadedSize = result.local?.downloadedSize ?: 0
+                    Log.d(TAG, "TDLib File: id=${result.id} path=$p downloading=$downloading completed=$completed downloadedSize=$downloadedSize")
+                    if (!p.isNullOrEmpty()) {
                         deferred.complete(p)
                     }
+                } else if (result is TdApi.Error) {
+                    Log.e(TAG, "DownloadFile error: ${result.code} ${result.message}")
                 }
             }
 
-            // Wait up to 25 s for TDLib to at least start the download
-            withTimeoutOrNull(25_000) { deferred.await() }
+            // Wait up to 25 s for TDLib to at least assign a path
+            val path = withTimeoutOrNull(25_000) { deferred.await() }
+            Log.d(TAG, "startDownloadReturnPath result: $path")
+            path
         }
 
     /**
