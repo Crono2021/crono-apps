@@ -195,6 +195,46 @@ class AndroidBridge(
         }
     }
 
+    /**
+     * getVideoMessages(queryId, limit, minId)
+     * Fallback used by JS when clickInlineButton returns empty.
+     * Reads the last `limit` messages from the bot chat and returns video files after `minId`.
+     */
+    @JavascriptInterface
+    fun getVideoMessages(queryId: String, limitStr: String, minIdStr: String) {
+        scope.launch {
+            try {
+                val chatId = engine.getBotChatIdPublic() ?: run {
+                    callback(queryId, false, "No se pudo obtener chatId del bot")
+                    return@launch
+                }
+                val minId = minIdStr.toLongOrNull() ?: 0L
+                // Re-use the fileIdCache populated by UpdateNewMessage handler
+                val cached = engine.fileIdCache.entries
+                    .filter { it.key.startsWith("${chatId}:") }
+                    .mapNotNull { (key, pair) ->
+                        val msgId = key.substringAfter(":").toLongOrNull() ?: return@mapNotNull null
+                        if (msgId <= minId) return@mapNotNull null
+                        // Build a minimal VideoInfo from cache
+                        TelegramEngine.VideoInfo(
+                            msgId    = msgId,
+                            chatId   = chatId,
+                            fileId   = pair.first,
+                            fileName = "video_${msgId}.mp4",
+                            fileSize = 0L,
+                            mimeType = pair.second,
+                            caption  = "",
+                            date     = 0,
+                        )
+                    }
+                    .sortedBy { it.msgId }
+                callback(queryId, true, videosToJson(cached, chatId))
+            } catch (e: Exception) {
+                callback(queryId, false, e.message ?: "Error desconocido")
+            }
+        }
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Playback — launches PlayerActivity (TVGram approach)
     // ──────────────────────────────────────────────────────────────────────────
