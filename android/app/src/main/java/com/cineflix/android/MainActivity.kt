@@ -6,7 +6,6 @@ import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
@@ -66,8 +65,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Cargamos la app de manera segura vía el domain virtual
-            loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
+            // KEY FIX: Only load fresh URL if there is no saved state.
+            // If savedInstanceState exists, restoreState() below will bring back the exact
+            // page the user was on (catalog, episodes view, etc.) without re-running init().
+            if (savedInstanceState != null) {
+                restoreState(savedInstanceState)
+                android.util.Log.d("CineflixMain", "WebView state restored from savedInstanceState")
+            } else {
+                loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
+                android.util.Log.d("CineflixMain", "WebView loading fresh URL")
+            }
         }
 
         setContentView(webView)
@@ -75,13 +82,45 @@ class MainActivity : ComponentActivity() {
         // Manejar el botón de atrás del sistema
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (webView.canGoBack()) {
-                    webView.goBack()
-                } else {
-                    finish()
+                // Let JS handle back navigation first (modal → view transitions)
+                val jsHandled = runCatching {
+                    webView.evaluateJavascript("window.__cineflixBack ? window.__cineflixBack() : false") { result ->
+                        if (result != "true") {
+                            // JS didn't handle it — fall back to WebView history or finish
+                            if (webView.canGoBack()) {
+                                webView.goBack()
+                            } else {
+                                finish()
+                            }
+                        }
+                    }
+                }.isSuccess
+
+                if (!jsHandled) {
+                    if (webView.canGoBack()) webView.goBack() else finish()
                 }
             }
         })
+    }
+
+    /** Save WebView navigation state so it survives background/recreation */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        webView.saveState(outState)
+    }
+
+    /** Pause WebView timers + rendering when app goes to background */
+    override fun onPause() {
+        super.onPause()
+        webView.onPause()
+        webView.pauseTimers()
+    }
+
+    /** Resume WebView timers + rendering when app comes back to foreground */
+    override fun onResume() {
+        super.onResume()
+        webView.resumeTimers()
+        webView.onResume()
     }
 
     override fun onDestroy() {
@@ -89,3 +128,4 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 }
+
