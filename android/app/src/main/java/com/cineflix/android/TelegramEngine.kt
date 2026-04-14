@@ -88,6 +88,14 @@ class TelegramEngine(private val context: Context) {
 
     private val msgCollectors = ConcurrentHashMap<String, MsgCollector>()
 
+    // ── Inline Keyboard Reply Listener ───────────────────────────────────────
+    /** Used by sendBotCommand to detect the bot's keyboard reply via UpdateNewMessage */
+    data class InlineKeyboardListener(
+        val chatId: Long,
+        val deferred: CompletableDeferred<SeasonResponse?>,
+    )
+    private val inlineKeyboardListeners = ConcurrentHashMap<String, InlineKeyboardListener>()
+
     // ── Init ─────────────────────────────────────────────────────────────────
     init {
         initClient()
@@ -150,7 +158,33 @@ class TelegramEngine(private val context: Context) {
         val content = msg.content
         val isVideo = content is TdApi.MessageDocument || content is TdApi.MessageVideo
 
-        // Notify active collectors
+        // Check if this message is a bot keyboard reply we're waiting for
+        for ((key, listener) in inlineKeyboardListeners) {
+            if (msg.chatId == listener.chatId && !listener.deferred.isCompleted) {
+                val kb = msg.replyMarkup
+                if (kb is TdApi.ReplyMarkupInlineKeyboard) {
+                    val buttons = mutableListOf<SeasonButton>()
+                    for (row in kb.rows) {
+                        for (btn in row) {
+                            val t = btn.type
+                            if (t is TdApi.InlineKeyboardButtonTypeCallback) {
+                                buttons.add(SeasonButton(
+                                    text       = btn.text,
+                                    dataBase64 = android.util.Base64.encodeToString(t.data, android.util.Base64.NO_WRAP),
+                                    msgId      = msg.id,
+                                ))
+                            }
+                        }
+                    }
+                    val bodyText = (content as? TdApi.MessageText)?.text?.text ?: ""
+                    val response = SeasonResponse(msg.id, msg.chatId, bodyText, buttons)
+                    listener.deferred.complete(response)
+                    inlineKeyboardListeners.remove(key)
+                }
+            }
+        }
+
+        // Notify active video collectors
         for ((_, collector) in msgCollectors) {
             if (msg.chatId == collector.chatId && msg.id > collector.afterMsgId && isVideo) {
                 val info = extractVideoInfo(msg) ?: continue
@@ -245,41 +279,24 @@ class TelegramEngine(private val context: Context) {
         val chatId = getBotChatId() ?: return@withContext null
         val deferred = CompletableDeferred<SeasonResponse?>()
 
+        // Register a keyboard-reply listener BEFORE sending the command
+        val listenerKey = "kbd_${System.currentTimeMillis()}"
+        inlineKeyboardListeners[listenerKey] = InlineKeyboardListener(chatId, deferred)
+
         val text = TdApi.FormattedText("/start $payload", emptyArray())
         client?.send(TdApi.SendMessage(chatId, null, null, null, null,
             TdApi.InputMessageText(text, null, false)
         )) { sendResult ->
-            if (sendResult is TdApi.Error) { deferred.complete(null); return@send }
-            scope.launch {
-                delay(2500)
-                client?.send(TdApi.GetChatHistory(chatId, 0L, 0, 5, false)) { hist ->
-                    if (hist !is TdApi.Messages) { deferred.complete(null); return@send }
-                    for (msg in hist.messages) {
-                        val kb = msg.replyMarkup
-                        if (kb is TdApi.ReplyMarkupInlineKeyboard) {
-                            val buttons = mutableListOf<SeasonButton>()
-                            for (row in kb.rows) {
-                                for (btn in row) {
-                                    val t = btn.type
-                                    if (t is TdApi.InlineKeyboardButtonTypeCallback) {
-                                        buttons.add(SeasonButton(
-                                            text       = btn.text,
-                                            dataBase64 = android.util.Base64.encodeToString(t.data, android.util.Base64.NO_WRAP),
-                                            msgId      = msg.id,
-                                        ))
-                                    }
-                                }
-                            }
-                            val bodyText = (msg.content as? TdApi.MessageText)?.text?.text ?: ""
-                            deferred.complete(SeasonResponse(msg.id, chatId, bodyText, buttons))
-                            return@send
-                        }
-                    }
-                    deferred.complete(SeasonResponse(0L, chatId, "", emptyList()))
-                }
+            if (sendResult is TdApi.Error) {
+                inlineKeyboardListeners.remove(listenerKey)
+                deferred.complete(null)
             }
         }
-        deferred.await()
+
+        // Wait up to 15s for the bot to reply with the keyboard
+        val result = withTimeoutOrNull(15_000) { deferred.await() }
+        inlineKeyboardListeners.remove(listenerKey)
+        result
     }
 
     /**
