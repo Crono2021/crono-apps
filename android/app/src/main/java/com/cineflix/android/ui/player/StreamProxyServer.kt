@@ -114,14 +114,27 @@ class StreamProxyServer(
         return null
     }
 
-    /** Block until [file] has at least [neededBytes] on disk */
+    /** Block until TDLib guarantees the needed bytes are downloaded linearly from the start */
     private fun waitForBytes(file: File, neededBytes: Long) {
         val deadline = System.currentTimeMillis() + 60_000L
         while (System.currentTimeMillis() < deadline) {
-            if (file.exists() && file.length() >= neededBytes) return
+            val state = engine.getFileStateFlow(fileId).value
+            val isReady = state != null && (state.isCompleted || state.downloadedPrefixSize >= neededBytes)
+            
+            // If the chunk is fully linearly downloaded, or the file completed
+            if (isReady && file.exists()) {
+                return
+            }
+            
+            // Also accept if expected size is small and it's already fully downloaded via downloadedSize
+            if (state != null && state.expectedSize > 0 && state.downloadedSize >= state.expectedSize) {
+                return
+            }
+
             Thread.sleep(100)
         }
-        Log.w(TAG, "Timeout waiting for $neededBytes bytes (have ${if (file.exists()) file.length() else 0})")
+        val finalState = engine.getFileStateFlow(fileId).value
+        Log.w(TAG, "Timeout waiting for $neededBytes bytes. State: $finalState")
     }
 
     private fun parseRange(rangeHeader: String): Pair<Long, Long> {

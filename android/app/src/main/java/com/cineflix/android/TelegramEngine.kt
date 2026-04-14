@@ -147,11 +147,23 @@ class TelegramEngine(private val context: Context) {
     }
 
     private fun handleUpdateFile(file: TdApi.File) {
-        val local = file.local ?: return
-        val path = local.path ?: return
-        if (path.isNotEmpty()) {
-            filePathEmitters[file.id]?.complete(path)
+        val p = file.local?.path
+        if (!p.isNullOrEmpty()) {
+            val deferred = filePathEmitters[file.id]
+            if (deferred != null && !deferred.isCompleted) {
+                deferred.complete(p)
+            }
         }
+        
+        // Update FileState flow so StreamProxyServer can safely read bytes
+        val flow = fileStates.getOrPut(file.id) { kotlinx.coroutines.flow.MutableStateFlow(null) }
+        flow.value = FileState(
+            path = file.local?.path ?: "",
+            downloadedPrefixSize = file.local?.downloadedPrefixSize ?: 0L,
+            downloadedSize = file.local?.downloadedSize ?: 0L,
+            expectedSize = file.expectedSize.toLong(),
+            isCompleted = file.local?.isDownloadingCompleted == true
+        )
     }
 
     private fun handleNewMessage(msg: TdApi.Message) {
@@ -395,6 +407,20 @@ class TelegramEngine(private val context: Context) {
 
     // ── File / Streaming ──────────────────────────────────────────────────────
 
+    data class FileState(
+        val path: String,
+        val downloadedPrefixSize: Long,
+        val downloadedSize: Long,
+        val expectedSize: Long,
+        val isCompleted: Boolean
+    )
+
+    private val fileStates = ConcurrentHashMap<Int, kotlinx.coroutines.flow.MutableStateFlow<FileState?>>()
+
+    fun getFileStateFlow(fileId: Int): kotlinx.coroutines.flow.StateFlow<FileState?> {
+        return fileStates.getOrPut(fileId) { kotlinx.coroutines.flow.MutableStateFlow(null) }
+    }
+
     /**
      * Start a TDLib download and return the local file path as soon as TDLib
      * assigns it (i.e. when the download STARTS, not when it completes).
@@ -409,10 +435,6 @@ class TelegramEngine(private val context: Context) {
                 Log.d(TAG, "DownloadFile callback: ${result.javaClass.simpleName}")
                 if (result is TdApi.File) {
                     val p = result.local?.path
-                    val downloading = result.local?.isDownloadingActive ?: false
-                    val completed = result.local?.isDownloadingCompleted ?: false
-                    val downloadedSize = result.local?.downloadedSize ?: 0
-                    Log.d(TAG, "TDLib File: id=${result.id} path=$p downloading=$downloading completed=$completed downloadedSize=$downloadedSize")
                     if (!p.isNullOrEmpty()) {
                         deferred.complete(p)
                     }
@@ -426,6 +448,7 @@ class TelegramEngine(private val context: Context) {
             Log.d(TAG, "startDownloadReturnPath result: $path")
             path
         }
+
 
     /**
      * Download a file and return its local path ONLY when the download is complete.
