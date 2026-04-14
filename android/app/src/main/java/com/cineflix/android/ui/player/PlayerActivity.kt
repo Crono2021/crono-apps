@@ -154,9 +154,9 @@ class PlayerActivity : Activity() {
 
         val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
 
-        // TVGram RenderersFactory
+        // Use ON instead of PREFER to prioritize MediaCodec (Hardware) over software FFMpeg bindings
         val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(this)
-            .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+            .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
 
         val exo = ExoPlayer.Builder(this)
             .setRenderersFactory(renderersFactory)

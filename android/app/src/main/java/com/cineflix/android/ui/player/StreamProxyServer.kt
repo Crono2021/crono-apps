@@ -120,6 +120,10 @@ class StreamProxyServer(
         private var currentPosition = startOffset
         private val endPosition = startOffset + lengthRequested
 
+        private var prefetchBuffer: ByteArray? = null
+        private var prefetchOffset: Long = -1L
+        private var lastHintTime = 0L
+
         override fun read(): Int {
             val b = ByteArray(1)
             val actuallyRead = read(b, 0, 1)
@@ -130,20 +134,38 @@ class StreamProxyServer(
         override fun read(b: ByteArray, off: Int, len: Int): Int {
             if (currentPosition >= endPosition) return -1 // Reached the requested end
 
-            // Only request what we need within the boundary
-            val maxAvailableToReadRequest = minOf(len.toLong(), endPosition - currentPosition).toLong()
+            // Check if we hit prefetch buffer
+            if (prefetchBuffer != null && currentPosition >= prefetchOffset && currentPosition < prefetchOffset + prefetchBuffer!!.size) {
+                val offsetInBuffer = (currentPosition - prefetchOffset).toInt()
+                val bytesAvailable = prefetchBuffer!!.size - offsetInBuffer
+                val toRead = minOf(len, bytesAvailable)
+                System.arraycopy(prefetchBuffer!!, offsetInBuffer, b, off, toRead)
+                currentPosition += toRead
+                return toRead
+            }
+
+            // We need to fetch from TDLib. Fetch a larger chunk to reduce IPC latency (256KB).
+            val maxAvailableToReadRequest = minOf(maxOf(len.toLong(), 256L * 1024L), endPosition - currentPosition)
 
             while (true) {
-                // Ensure TDLib actively downloads this specific offset instead of purely sequential
-                engine.hintDownloadOffset(fileId, currentPosition)
+                // Throttle hintDownloadOffset to once every 500ms to avoid overloading TDLib JNI
+                val now = System.currentTimeMillis()
+                if (now - lastHintTime > 500L) {
+                    engine.hintDownloadOffset(fileId, currentPosition)
+                    lastHintTime = now
+                }
 
                 // Try to extract the chunk cleanly from TDLib's internal memory/cache
                 val chunk = engine.readFilePartSync(fileId, currentPosition, maxAvailableToReadRequest)
 
                 if (chunk != null && chunk.isNotEmpty()) {
-                    System.arraycopy(chunk, 0, b, off, chunk.size)
-                    currentPosition += chunk.size
-                    return chunk.size
+                    prefetchBuffer = chunk
+                    prefetchOffset = currentPosition
+                    
+                    val toRead = minOf(len, chunk.size)
+                    System.arraycopy(chunk, 0, b, off, toRead)
+                    currentPosition += toRead
+                    return toRead
                 }
 
                 // If chunk is null or empty, it means the bytes at currentPosition are not yet downloaded.
@@ -153,8 +175,8 @@ class StreamProxyServer(
                     return -1 // Properly EOS
                 }
 
-                // Not downloaded yet, sleep and block the HTTP thread so ExoPlayer waits normally
-                Thread.sleep(150)
+                // Not downloaded yet, sleep briefly and block the HTTP thread so ExoPlayer waits normally
+                Thread.sleep(50)
             }
         }
     }
