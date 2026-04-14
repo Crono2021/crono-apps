@@ -71,27 +71,22 @@ jobs:
           # ── 3. Clone TDLib (latest HEAD, depth=1 for speed) ───────────────
           git clone --depth=1 https://github.com/tdlib/td.git /tmp/td
 
-          # ── 4. Build OpenSSL 1.1.1w for armeabi-v7a ───────────────────────
-          curl -sSL "https://www.openssl.org/source/openssl-1.1.1w.tar.gz" \
+          # ── 4. Build OpenSSL 3.0 for armeabi-v7a ──────────────────────────
+          # OpenSSL 3.0+ properly supports NDK 23+ (Clang-only, no arm-linux-androideabi-gcc needed)
+          curl -sSL "https://www.openssl.org/source/openssl-3.0.15.tar.gz" \
                -o /tmp/openssl.tar.gz
           tar -xzf /tmp/openssl.tar.gz -C /tmp
-          cd /tmp/openssl-1.1.1w
+          cd /tmp/openssl-3.0.15
 
-          # Put cross-compiler in PATH (required by OpenSSL's android-arm target)
-          # OpenSSL 1.1.1 expects 'arm-linux-androideabi-gcc' but NDK 23+ is clang-only.
-          # Create a compatibility symlink in /tmp so OpenSSL finds it.
-          ln -sf "$TOOLCHAIN/bin/armv7a-linux-androideabi${API}-clang" \
-                 /tmp/arm-linux-androideabi-gcc
-          export PATH="/tmp:$TOOLCHAIN/bin:$PATH"
-          export CC="armv7a-linux-androideabi${API}-clang"
-          export AR="llvm-ar"
-          export RANLIB="llvm-ranlib"
+          # OpenSSL 3 reads ANDROID_NDK_HOME and auto-detects the Clang toolchain
+          export ANDROID_NDK_HOME="$NDK"
+          export PATH="$TOOLCHAIN/bin:$PATH"
 
           ./Configure android-arm -D__ANDROID_API__=$API no-shared no-tests \
             --prefix=/tmp/openssl-armeabi
           make -j$(nproc) > /dev/null 2>&1
           make install_sw > /dev/null 2>&1
-          echo "✅ OpenSSL 1.1.1w built for armeabi-v7a"
+          echo "✅ OpenSSL 3.0.15 built for armeabi-v7a"
 
           # ── 5. Build TDLib (JNI) for armeabi-v7a ──────────────────────────
           mkdir /tmp/td/build-armeabi && cd /tmp/td/build-armeabi
