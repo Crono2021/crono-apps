@@ -1,6 +1,9 @@
 package com.cineflix.android
 
 import android.annotation.SuppressLint
+import android.content.res.Configuration
+import android.app.UiModeManager
+import android.content.Context
 import android.os.Bundle
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
@@ -17,10 +20,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private lateinit var bridge: AndroidBridge
     private lateinit var engine: TelegramEngine
+    private var isAndroidTV = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Detect if running on Android TV
+        val uiModeManager = getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
+        isAndroidTV = uiModeManager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+        android.util.Log.i("CineflixMain", "Android TV mode: $isAndroidTV")
 
         engine = TelegramEngine.getInstance(this)
 
@@ -53,6 +62,18 @@ class MainActivity : ComponentActivity() {
                     request: WebResourceRequest
                 ): WebResourceResponse? {
                     return assetLoader.shouldInterceptRequest(request.url)
+                }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    super.onPageFinished(view, url)
+                    // Inject TV flag so tv-nav.js can activate D-pad navigation
+                    val tvFlag = if (isAndroidTV) "true" else "false"
+                    view.evaluateJavascript(
+                        "window._cineflixIsTV = $tvFlag; " +
+                        "document.documentElement.classList.toggle('android-tv', $tvFlag);",
+                        null
+                    )
+                    android.util.Log.d("CineflixMain", "Injected _cineflixIsTV=$tvFlag")
                 }
             }
 

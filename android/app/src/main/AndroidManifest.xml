@@ -3,11 +3,17 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Android TV: touchscreen is not available on TV, mark as not required -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <!-- Android TV: declare Leanback support (required=false = runs on both TV and phone) -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="Cineflix"
         android:roundIcon="@mipmap/ic_launcher_round"
+        android:banner="@drawable/tv_banner"
         android:supportsRtl="true"
         android:theme="@style/Theme.Cineflix"
         android:networkSecurityConfig="@xml/network_security_config">
@@ -20,9 +26,15 @@
             android:exported="true"
             android:alwaysRetainTaskState="true"
             android:windowSoftInputMode="adjustResize">
+            <!-- Standard phone/tablet launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Android TV launcher -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
 
