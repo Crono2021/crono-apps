@@ -144,8 +144,9 @@ class StreamProxyServer(
                 return toRead
             }
 
-            // We need to fetch from TDLib. Fetch a larger chunk to reduce IPC latency (256KB).
-            val maxAvailableToReadRequest = minOf(maxOf(len.toLong(), 256L * 1024L), endPosition - currentPosition)
+            // We need to fetch from TDLib. Fetch a larger chunk to reduce IPC latency (2MB, helps massive >1GB files MOOV atom seek).
+            val prefetchTargetSize = 2L * 1024L * 1024L
+            val maxAvailableToReadRequest = minOf(maxOf(len.toLong(), prefetchTargetSize), endPosition - currentPosition)
 
             while (true) {
                 // Throttle hintDownloadOffset to once every 500ms to avoid overloading TDLib JNI
