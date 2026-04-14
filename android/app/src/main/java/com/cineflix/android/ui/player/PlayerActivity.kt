@@ -126,7 +126,7 @@ class PlayerActivity : Activity() {
             }
         }
 
-        // 3. Setup ExoPlayer with larger timeouts for TDLib buffering
+        // 3. Setup ExoPlayer (COPIED EXACTLY FROM TVGRAM PlayerManager.java)
         val streamUrl = "http://127.0.0.1:$port/stream"
         Log.i(TAG, "▶ ExoPlayer stream URL: $streamUrl")
 
@@ -134,15 +134,34 @@ class PlayerActivity : Activity() {
         playerView.useController = true
         setContentView(playerView)
 
+        // TVGram load control logic (min 15s, max 50s, playback start 5s)
+        val minBufferMs = 15000
+        val maxBufferMs = 50000
+        val bufferForPlaybackMs = 5000
+        val bufferForPlaybackAfterRebufferMs = 10000
+        
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setAllocator(androidx.media3.exoplayer.upstream.DefaultAllocator(true, androidx.media3.common.C.DEFAULT_BUFFER_SEGMENT_SIZE))
+            .setBufferDurationsMs(minBufferMs, maxBufferMs, bufferForPlaybackMs, bufferForPlaybackAfterRebufferMs)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
+        // TVGram timeouts (60 seconds)
         val dataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(15000)
-            .setReadTimeoutMs(15000)
+            .setConnectTimeoutMs(60000)
+            .setReadTimeoutMs(60000)
             .setAllowCrossProtocolRedirects(true)
 
         val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
 
+        // TVGram RenderersFactory
+        val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(this)
+            .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+
         val exo = ExoPlayer.Builder(this)
+            .setRenderersFactory(renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
             .build()
             
         playerView.player = exo
