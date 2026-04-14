@@ -108,87 +108,54 @@ class StreamProxyServer(
     /**
      * InputStream that blocks when TDLib hasn't downloaded the requested bytes yet.
      * Prevents NanoHTTPD from closing the connection prematurely, keeping ExoPlayer's buffer fed.
+     * Uses TdApi.ReadFilePart to support out-of-order jumps.
      */
     private class BlockingProxyInputStream(
         private val engine: TelegramEngine,
         private val fileId: Int,
-        private val file: File,
+        file: File, // unused now, but kept for compatibility
         private val startOffset: Long,
         private val lengthRequested: Long,
     ) : InputStream() {
         private var currentPosition = startOffset
         private val endPosition = startOffset + lengthRequested
-        private var fis: FileInputStream? = null
-
-        init {
-            openStream()
-        }
-
-        private fun openStream() {
-            fis = FileInputStream(file)
-            fis?.skip(currentPosition)
-        }
 
         override fun read(): Int {
             val b = ByteArray(1)
-            val read = read(b, 0, 1)
-            if (read == -1) return -1
+            val actuallyRead = read(b, 0, 1)
+            if (actuallyRead == -1) return -1
             return b[0].toInt() and 0xFF
         }
 
         override fun read(b: ByteArray, off: Int, len: Int): Int {
             if (currentPosition >= endPosition) return -1 // Reached the requested end
 
-            val maxAvailableToReadRequest = minOf(len.toLong(), endPosition - currentPosition).toInt()
+            // Only request what we need within the boundary
+            val maxAvailableToReadRequest = minOf(len.toLong(), endPosition - currentPosition).toLong()
 
-            // Wait until at least 1 byte is available
             while (true) {
-                val state = engine.getFileStateFlow(fileId).value
-                if (state == null) {
-                    Thread.sleep(100)
-                    continue
-                }
-                
-                val availableOnDisk = state.downloadedPrefixSize - currentPosition
-                if (availableOnDisk > 0 || state.isCompleted) {
-                    break
-                }
-                
-                Thread.sleep(100)
-                // Persistently hint TDLib to continue downloading this chunk
+                // Ensure TDLib actively downloads this specific offset instead of purely sequential
                 engine.hintDownloadOffset(fileId, currentPosition)
-            }
 
-            val state = engine.getFileStateFlow(fileId).value ?: return -1
-            val availableOnDisk = state.downloadedPrefixSize - currentPosition
-            val toRead = if (state.isCompleted) {
-                maxAvailableToReadRequest
-            } else {
-                minOf(maxAvailableToReadRequest.toLong(), availableOnDisk).toInt()
-            }
+                // Try to extract the chunk cleanly from TDLib's internal memory/cache
+                val chunk = engine.readFilePartSync(fileId, currentPosition, maxAvailableToReadRequest)
 
-            if (toRead <= 0) {
-                return -1
-            }
+                if (chunk != null && chunk.isNotEmpty()) {
+                    System.arraycopy(chunk, 0, b, off, chunk.size)
+                    currentPosition += chunk.size
+                    return chunk.size
+                }
 
-            var actuallyRead = fis?.read(b, off, toRead) ?: -1
-            if (actuallyRead == -1) {
-                // If stream was closed or EOF prematurely, reopen and try again
-                fis?.close()
-                openStream()
-                actuallyRead = fis?.read(b, off, toRead) ?: -1
-            }
-            
-            if (actuallyRead != -1) {
-                currentPosition += actuallyRead
-            }
-            
-            return actuallyRead
-        }
+                // If chunk is null or empty, it means the bytes at currentPosition are not yet downloaded.
+                // We check if the file is natively marked as completely downloaded to avoid infinite loops
+                val state = engine.getFileStateFlow(fileId).value
+                if (state != null && state.isCompleted && currentPosition >= state.expectedSize) {
+                    return -1 // Properly EOS
+                }
 
-        override fun close() {
-            super.close()
-            fis?.close()
+                // Not downloaded yet, sleep and block the HTTP thread so ExoPlayer waits normally
+                Thread.sleep(150)
+            }
         }
     }
 }

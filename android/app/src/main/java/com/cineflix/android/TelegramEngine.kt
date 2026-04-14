@@ -472,6 +472,24 @@ class TelegramEngine(private val context: Context) {
         client?.send(TdApi.DownloadFile(fileId, 32, offset, 0, false)) {}
     }
 
+    /** Synchronously fetch a file chunk directly from TDLib's internal manager. Returns null if not downloaded yet. */
+    fun readFilePartSync(fileId: Int, offset: Long, count: Long): ByteArray? {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var chunk: ByteArray? = null
+
+        client?.send(TdApi.ReadFilePart(fileId, offset, count)) { result ->
+            if (result is TdApi.FilePart) {
+                if (result.data.isNotEmpty()) {
+                    chunk = result.data
+                }
+            }
+            latch.countDown()
+        } ?: return null
+
+        latch.await(2000, java.util.concurrent.TimeUnit.MILLISECONDS)
+        return chunk
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /**
