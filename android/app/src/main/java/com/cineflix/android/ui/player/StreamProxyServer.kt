@@ -51,59 +51,28 @@ class StreamProxyServer(
 
         val file = File(filePath)
 
-        // Parse the Range header: "bytes=start-end" (same as original)
+        // Parse the Range header: "bytes=start-end"
         val rangeHeader = session.headers["range"] ?: "bytes=0-"
         val (start, endRequested) = parseRange(rangeHeader)
-        val end = if (endRequested < 0) actualFileSize - 1 else minOf(endRequested, actualFileSize - 1)
-        val chunkSize = (end - start + 1).toInt().coerceAtMost(CHUNK_SIZE)
+        val end = if (endRequested < 0 || endRequested >= actualFileSize) actualFileSize - 1 else endRequested
+        val length = end - start + 1
 
-        Log.d(TAG, "Range: $start-$end, chunkSize=$chunkSize, actualFileSize=$actualFileSize")
+        Log.d(TAG, "Range: $start-$end, length=$length, actualFileSize=$actualFileSize")
 
         // Hint TDLib to prioritise this offset
         engine.hintDownloadOffset(fileId, start)
 
-        // Wait for the needed bytes to be on disk
-        val neededBytes = start + chunkSize
-        waitForBytes(file, neededBytes)
-
-        // Read the chunk from the local file
-        val bytes = readChunk(file, start, chunkSize)
-        if (bytes == null || bytes.isEmpty()) {
-            Log.e(TAG, "Failed to read chunk at offset $start")
-            return newFixedLengthResponse(
-                Response.Status.INTERNAL_ERROR, "text/plain", "Failed to read bytes"
-            )
-        }
-
-        val actualEnd = start + bytes.size - 1
-        Log.d(TAG, "Serving ${bytes.size} bytes ($start-$actualEnd/$actualFileSize)")
+        val inputStream = BlockingProxyInputStream(engine, fileId, file, start, length)
 
         val response = newFixedLengthResponse(
             Response.Status.PARTIAL_CONTENT,
             mimeType,
-            bytes.inputStream(),
-            bytes.size.toLong()
+            inputStream,
+            length
         )
-        response.addHeader("Content-Range", "bytes $start-$actualEnd/$actualFileSize")
+        response.addHeader("Content-Range", "bytes $start-$end/$actualFileSize")
         response.addHeader("Accept-Ranges", "bytes")
-        response.addHeader("Content-Length", bytes.size.toString())
         return response
-    }
-
-    private fun readChunk(file: File, offset: Long, size: Int): ByteArray? {
-        return try {
-            val fis = FileInputStream(file)
-            fis.skip(offset)
-            val buf = ByteArray(size)
-            val read = fis.read(buf)
-            fis.close()
-            if (read <= 0) null
-            else if (read < size) buf.copyOf(read)
-            else buf
-        } catch (e: Exception) {
-            Log.e(TAG, "readChunk error: ${e.message}")
-            null
-        }
     }
 
     /** Block until TDLib assigns a local path (up to 25s) */
@@ -129,33 +98,97 @@ class StreamProxyServer(
         return 0L
     }
 
-    /** Block until TDLib guarantees the needed bytes are downloaded linearly from the start */
-    private fun waitForBytes(file: File, neededBytes: Long) {
-        val deadline = System.currentTimeMillis() + 60_000L
-        while (System.currentTimeMillis() < deadline) {
-            val state = engine.getFileStateFlow(fileId).value
-            val isReady = state != null && (state.isCompleted || state.downloadedPrefixSize >= neededBytes)
-            
-            // If the chunk is fully linearly downloaded, or the file completed
-            if (isReady && file.exists()) {
-                return
-            }
-            
-            // Also accept if expected size is small and it's already fully downloaded via downloadedSize
-            if (state != null && state.expectedSize > 0 && state.downloadedSize >= state.expectedSize) {
-                return
-            }
-
-            Thread.sleep(100)
-        }
-        val finalState = engine.getFileStateFlow(fileId).value
-        Log.w(TAG, "Timeout waiting for $neededBytes bytes. State: $finalState")
-    }
-
     private fun parseRange(rangeHeader: String): Pair<Long, Long> {
         val match = Regex("bytes=(\\d+)-(\\d*)").find(rangeHeader)
         val start = match?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val end = match?.groupValues?.get(2)?.toLongOrNull() ?: -1L
         return Pair(start, end)
+    }
+
+    /**
+     * InputStream that blocks when TDLib hasn't downloaded the requested bytes yet.
+     * Prevents NanoHTTPD from closing the connection prematurely, keeping ExoPlayer's buffer fed.
+     */
+    private class BlockingProxyInputStream(
+        private val engine: TelegramEngine,
+        private val fileId: Int,
+        private val file: File,
+        private val startOffset: Long,
+        private val lengthRequested: Long,
+    ) : InputStream() {
+        private var currentPosition = startOffset
+        private val endPosition = startOffset + lengthRequested
+        private var fis: FileInputStream? = null
+
+        init {
+            openStream()
+        }
+
+        private fun openStream() {
+            fis = FileInputStream(file)
+            fis?.skip(currentPosition)
+        }
+
+        override fun read(): Int {
+            val b = ByteArray(1)
+            val read = read(b, 0, 1)
+            if (read == -1) return -1
+            return b[0].toInt() and 0xFF
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (currentPosition >= endPosition) return -1 // Reached the requested end
+
+            val maxAvailableToReadRequest = minOf(len.toLong(), endPosition - currentPosition).toInt()
+
+            // Wait until at least 1 byte is available
+            while (true) {
+                val state = engine.getFileStateFlow(fileId).value
+                if (state == null) {
+                    Thread.sleep(100)
+                    continue
+                }
+                
+                val availableOnDisk = state.downloadedPrefixSize - currentPosition
+                if (availableOnDisk > 0 || state.isCompleted) {
+                    break
+                }
+                
+                Thread.sleep(100)
+                // Persistently hint TDLib to continue downloading this chunk
+                engine.hintDownloadOffset(fileId, currentPosition)
+            }
+
+            val state = engine.getFileStateFlow(fileId).value ?: return -1
+            val availableOnDisk = state.downloadedPrefixSize - currentPosition
+            val toRead = if (state.isCompleted) {
+                maxAvailableToReadRequest
+            } else {
+                minOf(maxAvailableToReadRequest.toLong(), availableOnDisk).toInt()
+            }
+
+            if (toRead <= 0) {
+                return -1
+            }
+
+            var actuallyRead = fis?.read(b, off, toRead) ?: -1
+            if (actuallyRead == -1) {
+                // If stream was closed or EOF prematurely, reopen and try again
+                fis?.close()
+                openStream()
+                actuallyRead = fis?.read(b, off, toRead) ?: -1
+            }
+            
+            if (actuallyRead != -1) {
+                currentPosition += actuallyRead
+            }
+            
+            return actuallyRead
+        }
+
+        override fun close() {
+            super.close()
+            fis?.close()
+        }
     }
 }
