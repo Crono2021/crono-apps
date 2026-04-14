@@ -294,15 +294,22 @@ class TelegramEngine(private val context: Context) {
             val collector = MsgCollector(chatId = chatId, afterMsgId = msgId)
             msgCollectors[collectorKey] = collector
 
-            val callbackDeferred = CompletableDeferred<Boolean>()
+            // Send callback query — we don't require TDLib to confirm it with a bot answer.
+            // videoclubpacobot often returns BOT_RESPONSE_TIMEOUT but still sends episode files.
+            val callbackDeferred = CompletableDeferred<Unit>()
             client?.send(TdApi.GetCallbackQueryAnswer(
                 chatId, msgId, TdApi.CallbackQueryPayloadData(dataBytes)
             )) { result ->
-                callbackDeferred.complete(result !is TdApi.Error)
+                if (result is TdApi.Error) {
+                    Log.w(TAG, "GetCallbackQueryAnswer error (${result.code}): ${result.message} — still waiting for bot messages")
+                } else {
+                    Log.d(TAG, "GetCallbackQueryAnswer OK")
+                }
+                callbackDeferred.complete(Unit)
             }
 
-            val ok = callbackDeferred.await()
-            if (!ok) { msgCollectors.remove(collectorKey); return@withContext emptyList() }
+            // Wait for TDLib to process the send (or time out after 8s) before starting collector loop
+            withTimeoutOrNull(8_000) { callbackDeferred.await() }
 
             // Smart wait: stop 1.5s after last video OR after 12s total (web uses 3s fixed)
             val silenceMs = 1500L
