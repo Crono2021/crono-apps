@@ -478,7 +478,7 @@ class TelegramEngine(private val context: Context) {
         var chunk: ByteArray? = null
 
         client?.send(TdApi.ReadFilePart(fileId, offset, count)) { result ->
-            if (result is TdApi.FilePart) {
+            if (result is TdApi.Data) {
                 if (result.data.isNotEmpty()) {
                     chunk = result.data
                 }
