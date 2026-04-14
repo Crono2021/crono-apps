@@ -40,6 +40,70 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      # ── TDLib armeabi-v7a (32-bit Android TV support) ─────────────────────
+      # Cache key = hash of the arm64 .so so we rebuild only if TDLib version changes
+      - name: Cache TDLib armeabi-v7a libtdjni.so
+        id: cache-tdlib-armeabi
+        uses: actions/cache@v4
+        with:
+          path: android/app/src/main/jniLibs/armeabi-v7a/libtdjni.so
+          key: tdlib-armeabi-v7a-${{ hashFiles('android/app/src/main/jniLibs/arm64-v8a/libtdjni.so') }}
+
+      - name: Build TDLib for armeabi-v7a (first-time only, ~30 min)
+        if: steps.cache-tdlib-armeabi.outputs.cache-hit != 'true'
+        run: |
+          set -e
+
+          # Install build dependencies
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential git cmake ninja-build gperf \
+            python3 zlib1g-dev libssl-dev ca-certificates
+
+          # Clone TDLib — use the commit matching our arm64 build (stable recent version)
+          git clone --depth=1 https://github.com/tdlib/td.git /tmp/td
+          cd /tmp/td
+
+          # Android NDK path (provided by android-actions/setup-android)
+          NDK=$ANDROID_NDK_HOME
+          API=21   # minSdkVersion 21 for armeabi-v7a
+
+          # Build OpenSSL for armeabi-v7a (TDLib requires it)
+          mkdir /tmp/openssl-build-armeabi
+          cd /tmp/openssl-build-armeabi
+          OPENSSL_VERSION=1.1.1w
+          curl -L "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz" | tar xz
+          cd openssl-${OPENSSL_VERSION}
+
+          export ANDROID_NDK_HOME=$NDK
+          export PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          ./Configure android-arm -D__ANDROID_API__=$API no-shared no-tests \
+            --prefix=/tmp/openssl-armeabi
+          make -j$(nproc) > /dev/null 2>&1
+          make install_sw > /dev/null 2>&1
+
+          # Build TDLib for armeabi-v7a
+          mkdir /tmp/td/build-armeabi && cd /tmp/td/build-armeabi
+          cmake \
+            -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=armeabi-v7a \
+            -DANDROID_NATIVE_API_LEVEL=$API \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DTD_ENABLE_JNI=ON \
+            -DOPENSSL_ROOT_DIR=/tmp/openssl-armeabi \
+            -DOPENSSL_INCLUDE_DIR=/tmp/openssl-armeabi/include \
+            -DOPENSSL_CRYPTO_LIBRARY=/tmp/openssl-armeabi/lib/libcrypto.a \
+            -DOPENSSL_SSL_LIBRARY=/tmp/openssl-armeabi/lib/libssl.a \
+            -GNinja \
+            ..
+          ninja tdjni
+
+          # Copy result
+          mkdir -p $GITHUB_WORKSPACE/android/app/src/main/jniLibs/armeabi-v7a
+          cp libn/libtdjni.so $GITHUB_WORKSPACE/android/app/src/main/jniLibs/armeabi-v7a/libtdjni.so || \
+          find . -name "libtdjni.so" -exec cp {} $GITHUB_WORKSPACE/android/app/src/main/jniLibs/armeabi-v7a/libtdjni.so \;
+          echo "✅ libtdjni.so (armeabi-v7a) ready"
+          ls -lh $GITHUB_WORKSPACE/android/app/src/main/jniLibs/armeabi-v7a/
+
       - name: Build Debug APK
         run: |
           cd android
@@ -59,3 +123,4 @@ jobs:
         with:
           files: android/app/build/outputs/apk/debug/app-debug.apk
           name: "Cineflix Android ${{ github.ref_name }}"
+
