@@ -468,8 +468,10 @@ class TelegramEngine(private val context: Context) {
         }
 
     /** Hint TDLib to prioritize bytes starting at offset (for seek support) */
-    fun hintDownloadOffset(fileId: Int, offset: Long) {
-        client?.send(TdApi.DownloadFile(fileId, 32, offset, 0, false)) {}
+    fun hintDownloadOffset(fileId: Int, offset: Long, limit: Long = 2L * 1024 * 1024) {
+        // Specify a concrete limit so TDLib knows exactly which range to prioritize
+        // instead of "everything from offset to end" (limit=0) which is too vague for large files
+        client?.send(TdApi.DownloadFile(fileId, 32, offset, limit, false)) {}
     }
 
     /** Synchronously fetch a file chunk directly from TDLib's internal manager. Returns null if not downloaded yet. */
@@ -486,7 +488,9 @@ class TelegramEngine(private val context: Context) {
             latch.countDown()
         } ?: return null
 
-        latch.await(2000, java.util.concurrent.TimeUnit.MILLISECONDS)
+        // 10s timeout: TDLib needs time to seek to arbitrary offsets on Telegram's CDN
+        // for large files (>1GB), especially the first request to the MOOV atom at EOF
+        latch.await(10_000, java.util.concurrent.TimeUnit.MILLISECONDS)
         return chunk
     }
 

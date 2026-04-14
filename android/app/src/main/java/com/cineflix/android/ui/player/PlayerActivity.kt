@@ -126,6 +126,16 @@ class PlayerActivity : Activity() {
             }
         }
 
+        // 2b. MOOV atom pre-fetch: immediately tell TDLib to also download the LAST 5MB
+        // of the file. MP4/MKV files store their index (moov atom) at the end.
+        // Without this, ExoPlayer waits ages for TDLib to seek from byte 0 to the end of a 2GB file.
+        if (effectiveFileSize > 5L * 1024 * 1024) {
+            val moovOffset = effectiveFileSize - (5L * 1024 * 1024)
+            val moovLimit = 5L * 1024 * 1024
+            Log.i(TAG, "▶ MOOV pre-fetch: hinting TDLib to download bytes $moovOffset-$effectiveFileSize")
+            engine.hintDownloadOffset(fileId, moovOffset, moovLimit)
+        }
+
         // 3. Setup ExoPlayer (COPIED EXACTLY FROM TVGRAM PlayerManager.java)
         val streamUrl = "http://127.0.0.1:$port/stream"
         Log.i(TAG, "▶ ExoPlayer stream URL: $streamUrl")
