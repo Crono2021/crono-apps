@@ -407,5 +407,8 @@ class TelegramEngine(private val context: Context) {
             }
         }
 
+    /** Public version for AndroidBridge (same logic, exposed outside package) */
+    suspend fun getBotChatIdPublic(): Long? = getBotChatId()
+
     fun getClient(): Client? = client
 }
