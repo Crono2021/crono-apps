@@ -106,14 +106,16 @@ class StreamProxyServer(
     }
 
     /**
-     * InputStream that blocks when TDLib hasn't downloaded the requested bytes yet.
-     * Prevents NanoHTTPD from closing the connection prematurely, keeping ExoPlayer's buffer fed.
-     * Uses TdApi.ReadFilePart to support out-of-order jumps.
+     * InputStream that serves bytes to ExoPlayer from TDLib.
+     * Uses a 2MB prefetch buffer to minimize IPC calls.
+     * For un-cached data, uses downloadRangeAndRead (synchronous DownloadFile)
+     * which blocks until TDLib has actually fetched the bytes from Telegram CDN,
+     * eliminating the wasteful poll-sleep-retry loop.
      */
     private class BlockingProxyInputStream(
         private val engine: TelegramEngine,
         private val fileId: Int,
-        file: File, // unused now, but kept for compatibility
+        file: File,
         private val startOffset: Long,
         private val lengthRequested: Long,
     ) : InputStream() {
@@ -122,7 +124,6 @@ class StreamProxyServer(
 
         private var prefetchBuffer: ByteArray? = null
         private var prefetchOffset: Long = -1L
-        private var lastHintTime = 0L
 
         override fun read(): Int {
             val b = ByteArray(1)
@@ -132,9 +133,9 @@ class StreamProxyServer(
         }
 
         override fun read(b: ByteArray, off: Int, len: Int): Int {
-            if (currentPosition >= endPosition) return -1 // Reached the requested end
+            if (currentPosition >= endPosition) return -1
 
-            // Check if we hit prefetch buffer
+            // Fast path: serve from prefetch buffer if data is already there
             if (prefetchBuffer != null && currentPosition >= prefetchOffset && currentPosition < prefetchOffset + prefetchBuffer!!.size) {
                 val offsetInBuffer = (currentPosition - prefetchOffset).toInt()
                 val bytesAvailable = prefetchBuffer!!.size - offsetInBuffer
@@ -144,41 +145,41 @@ class StreamProxyServer(
                 return toRead
             }
 
-            // We need to fetch from TDLib. Fetch a larger chunk to reduce IPC latency (2MB, helps massive >1GB files MOOV atom seek).
+            // Need to fetch from TDLib. Request 2MB chunks to minimize round-trips.
             val prefetchTargetSize = 2L * 1024L * 1024L
-            val maxAvailableToReadRequest = minOf(maxOf(len.toLong(), prefetchTargetSize), endPosition - currentPosition)
+            val toFetch = minOf(maxOf(len.toLong(), prefetchTargetSize), endPosition - currentPosition)
 
-            while (true) {
-                // Throttle hintDownloadOffset to once every 500ms to avoid overloading TDLib JNI
-                val now = System.currentTimeMillis()
-                if (now - lastHintTime > 500L) {
-                    engine.hintDownloadOffset(fileId, currentPosition)
-                    lastHintTime = now
-                }
-
-                // Try to extract the chunk cleanly from TDLib's internal memory/cache
-                val chunk = engine.readFilePartSync(fileId, currentPosition, maxAvailableToReadRequest)
-
-                if (chunk != null && chunk.isNotEmpty()) {
-                    prefetchBuffer = chunk
-                    prefetchOffset = currentPosition
-                    
-                    val toRead = minOf(len, chunk.size)
-                    System.arraycopy(chunk, 0, b, off, toRead)
-                    currentPosition += toRead
-                    return toRead
-                }
-
-                // If chunk is null or empty, it means the bytes at currentPosition are not yet downloaded.
-                // We check if the file is natively marked as completely downloaded to avoid infinite loops
-                val state = engine.getFileStateFlow(fileId).value
-                if (state != null && state.isCompleted && currentPosition >= state.expectedSize) {
-                    return -1 // Properly EOS
-                }
-
-                // Not downloaded yet, sleep briefly and block the HTTP thread so ExoPlayer waits normally
-                Thread.sleep(50)
+            // Try 1: Fast-path ReadFilePart (data already downloaded/cached by TDLib)
+            val fastChunk = engine.readFilePartSync(fileId, currentPosition, toFetch)
+            if (fastChunk != null && fastChunk.isNotEmpty()) {
+                return servePrefetch(fastChunk, b, off, len)
             }
+
+            // Try 2: Data not cached — use synchronous download (blocks until TDLib downloads from CDN)
+            // This is the key optimization: instead of poll+sleep+retry thousands of times,
+            // we make ONE blocking call that returns when the data is ready.
+            val syncChunk = engine.downloadRangeAndRead(fileId, currentPosition, toFetch)
+            if (syncChunk != null && syncChunk.isNotEmpty()) {
+                return servePrefetch(syncChunk, b, off, len)
+            }
+
+            // Check if we've reached EOF
+            val state = engine.getFileStateFlow(fileId).value
+            if (state != null && state.isCompleted && currentPosition >= state.expectedSize) {
+                return -1
+            }
+
+            // Last resort: data still unavailable after 30s sync wait. Return 0 to let ExoPlayer retry.
+            return 0
+        }
+
+        private fun servePrefetch(chunk: ByteArray, b: ByteArray, off: Int, len: Int): Int {
+            prefetchBuffer = chunk
+            prefetchOffset = currentPosition
+            val toRead = minOf(len, chunk.size)
+            System.arraycopy(chunk, 0, b, off, toRead)
+            currentPosition += toRead
+            return toRead
         }
     }
 }

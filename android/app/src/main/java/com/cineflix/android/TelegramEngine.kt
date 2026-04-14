@@ -431,7 +431,10 @@ class TelegramEngine(private val context: Context) {
             Log.d(TAG, "startDownloadReturnPath fileId=$fileId priority=$priority")
             val deferred = filePathEmitters.getOrPut(fileId) { CompletableDeferred() }
 
-            client?.send(TdApi.DownloadFile(fileId, priority, 0, 0, false)) { result ->
+            // Only download the first 1MB to get the path assigned quickly.
+            // DO NOT use limit=0 (entire file) — it steals bandwidth from MOOV pre-fetch.
+            // All subsequent data fetching happens on-demand via downloadRangeAndRead.
+            client?.send(TdApi.DownloadFile(fileId, priority, 0, 1024L * 1024, false)) { result ->
                 Log.d(TAG, "DownloadFile callback: ${result.javaClass.simpleName}")
                 if (result is TdApi.File) {
                     val p = result.local?.path
@@ -488,10 +491,31 @@ class TelegramEngine(private val context: Context) {
             latch.countDown()
         } ?: return null
 
-        // 10s timeout: TDLib needs time to seek to arbitrary offsets on Telegram's CDN
-        // for large files (>1GB), especially the first request to the MOOV atom at EOF
-        latch.await(10_000, java.util.concurrent.TimeUnit.MILLISECONDS)
+        latch.await(3_000, java.util.concurrent.TimeUnit.MILLISECONDS)
         return chunk
+    }
+
+    /**
+     * Download a specific range from Telegram's CDN and read it. Uses DownloadFile(synchronous=true)
+     * which means TDLib won't invoke the callback until the bytes are fully downloaded.
+     * This eliminates the poll-sleep-retry loop for un-downloaded bytes.
+     * Returns the bytes, or null on timeout (30s).
+     */
+    fun downloadRangeAndRead(fileId: Int, offset: Long, count: Long): ByteArray? {
+        // Step 1: Tell TDLib to download this exact range. synchronous=true blocks until ready.
+        val downloadLatch = java.util.concurrent.CountDownLatch(1)
+        client?.send(TdApi.DownloadFile(fileId, 32, offset, count, true)) { result ->
+            downloadLatch.countDown()
+        } ?: return null
+
+        // Wait up to 30s for TDLib to fetch from Telegram CDN (large file seek can be slow)
+        if (!downloadLatch.await(30_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+            Log.w(TAG, "downloadRangeAndRead TIMEOUT offset=$offset count=$count")
+            return null
+        }
+
+        // Step 2: Bytes are guaranteed available. Read them.
+        return readFilePartSync(fileId, offset, count)
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
