@@ -48,14 +48,16 @@ class StreamProxyServer(
         }
 
         val file = File(filePath)
+        val state = engine.getFileStateFlow(fileId).value
+        val actualFileSize = if (state != null && state.expectedSize > 0) state.expectedSize else fileSize
 
         // Parse the Range header: "bytes=start-end" (same as original)
         val rangeHeader = session.headers["range"] ?: "bytes=0-"
         val (start, endRequested) = parseRange(rangeHeader)
-        val end = if (endRequested < 0) fileSize - 1 else minOf(endRequested, fileSize - 1)
+        val end = if (endRequested < 0) actualFileSize - 1 else minOf(endRequested, actualFileSize - 1)
         val chunkSize = (end - start + 1).toInt().coerceAtMost(CHUNK_SIZE)
 
-        Log.d(TAG, "Range: $start-$end, chunkSize=$chunkSize, fileSize=$fileSize")
+        Log.d(TAG, "Range: $start-$end, chunkSize=$chunkSize, actualFileSize=$actualFileSize")
 
         // Hint TDLib to prioritise this offset
         engine.hintDownloadOffset(fileId, start)
@@ -74,7 +76,7 @@ class StreamProxyServer(
         }
 
         val actualEnd = start + bytes.size - 1
-        Log.d(TAG, "Serving ${bytes.size} bytes ($start-$actualEnd/$fileSize)")
+        Log.d(TAG, "Serving ${bytes.size} bytes ($start-$actualEnd/$actualFileSize)")
 
         val response = newFixedLengthResponse(
             Response.Status.PARTIAL_CONTENT,
@@ -82,7 +84,7 @@ class StreamProxyServer(
             bytes.inputStream(),
             bytes.size.toLong()
         )
-        response.addHeader("Content-Range", "bytes $start-$actualEnd/$fileSize")
+        response.addHeader("Content-Range", "bytes $start-$actualEnd/$actualFileSize")
         response.addHeader("Accept-Ranges", "bytes")
         response.addHeader("Content-Length", bytes.size.toString())
         return response

@@ -126,7 +126,7 @@ class PlayerActivity : Activity() {
             }
         }
 
-        // 3. Setup ExoPlayer (exact copy from original)
+        // 3. Setup ExoPlayer with larger timeouts for TDLib buffering
         val streamUrl = "http://127.0.0.1:$port/stream"
         Log.i(TAG, "▶ ExoPlayer stream URL: $streamUrl")
 
@@ -134,7 +134,17 @@ class PlayerActivity : Activity() {
         playerView.useController = true
         setContentView(playerView)
 
-        val exo = ExoPlayer.Builder(this).build()
+        val dataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(15000)
+            .setAllowCrossProtocolRedirects(true)
+
+        val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
+
+        val exo = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build()
+            
         playerView.player = exo
         player = exo
 
