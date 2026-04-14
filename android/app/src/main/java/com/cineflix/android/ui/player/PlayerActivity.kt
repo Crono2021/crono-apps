@@ -3,6 +3,7 @@ package com.cineflix.android.ui.player
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -29,23 +30,23 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import com.cineflix.android.TelegramEngine
-import com.cineflix.android.ui.theme.AppBg
 import com.cineflix.android.ui.theme.NetflixRed
 import com.cineflix.android.ui.theme.CineflixTheme
 import kotlinx.coroutines.*
 
 /**
- * Streaming player using a local NanoHTTPD proxy.
+ * Streaming player using a custom TdLibDataSource.
  *
- * Flow:
- *  1. Start TelegramStreamServer on 127.0.0.1:8765
- *  2. Tell TDLib to start downloading (non-blocking)
- *  3. As soon as TDLib assigns a local path, set it on the server
- *  4. ExoPlayer connects to http://127.0.0.1:8765/video immediately
- *  5. Server streams bytes from the TDLib local file as they download
- *  6. On seek: NanoHTTPD sends a new Range request → server hints TDLib
+ * Approach (same as Telegram-FOSS / Nekogram / TVGram):
+ *  1. TDLib downloads the video file progressively to local storage
+ *  2. TdLibDataSource reads from the local file using RandomAccessFile
+ *  3. ExoPlayer reads via TdLibDataSource — starts playing immediately
+ *  4. On seek: DataSource waits for bytes + hints TDLib to prioritise offset
+ *
+ * No HTTP proxy. No NanoHTTPD. No cleartext HTTP issues.
  */
 class PlayerActivity : ComponentActivity() {
 
@@ -127,29 +128,25 @@ private fun PlayerScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
-    val scope   = rememberCoroutineScope()
 
-    var streamUrl    by remember { mutableStateOf<String?>(null) }
-    var statusText   by remember { mutableStateOf("Iniciando streaming…") }
-    var errorMsg     by remember { mutableStateOf<String?>(null) }
     var preparing    by remember { mutableStateOf(true) }
+    var errorMsg     by remember { mutableStateOf<String?>(null) }
     var showControls by remember { mutableStateOf(true) }
     var isPlaying    by remember { mutableStateOf(false) }
     var buffering    by remember { mutableStateOf(false) }
+    var playerReady  by remember { mutableStateOf(false) }
 
-    // Streaming server — created once
-    val streamServer = remember {
-        TelegramStreamServer(
+    // ExoPlayer with TdLibDataSource — starts immediately, no download wait
+    val exoPlayer = remember {
+        val dataSourceFactory = TdLibDataSource.Factory(
             engine    = engine,
             fileId    = fileId,
             totalSize = fileSize,
-            mimeType  = mimeType.ifEmpty { "video/mp4" },
-            port      = TelegramStreamServer.PORT,
         )
-    }
 
-    // ExoPlayer instance
-    val exoPlayer = remember {
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+            .createMediaSource(MediaItem.fromUri(Uri.parse("tdlib://file/$fileId")))
+
         ExoPlayer.Builder(context).build().apply {
             playWhenReady = true
             addListener(object : Player.Listener {
@@ -157,6 +154,10 @@ private fun PlayerScreen(
                     buffering = state == Player.STATE_BUFFERING
                     if (state == Player.STATE_READY) {
                         preparing = false
+                        playerReady = true
+                    }
+                    if (state == Player.STATE_ENDED) {
+                        // Auto-back when video ends
                     }
                 }
                 override fun onIsPlayingChanged(playing: Boolean) {
@@ -168,58 +169,24 @@ private fun PlayerScreen(
                     preparing = false
                 }
             })
-        }
-    }
-
-    // ── Streaming setup ────────────────────────────────────────────────────────
-    LaunchedEffect(fileId) {
-        try {
-            // 1. Start the HTTP proxy server
-            streamServer.start()
-
-            // 2. Start TDLib download in the background — non-blocking
-            statusText = "Conectando con Telegram…"
-            scope.launch(Dispatchers.IO) {
-                try {
-                    val path = engine.startDownloadReturnPath(fileId)
-                    if (path != null) {
-                        streamServer.localPath = path  // server can now serve bytes
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.e("PlayerActivity", "Download error: ${e.message}")
-                }
-            }
-
-            // 3. Give ExoPlayer the local streaming URL immediately
-            val url = "http://127.0.0.1:${TelegramStreamServer.PORT}/video"
-            streamUrl = url
-            statusText = "Bufferizando…"
-
-            exoPlayer.setMediaItem(MediaItem.fromUri(url))
-            exoPlayer.prepare()
-
-        } catch (e: Exception) {
-            errorMsg  = "Error al iniciar: ${e.message}"
-            preparing = false
+            setMediaSource(mediaSource)
+            prepare()
         }
     }
 
     // Auto-hide controls
     LaunchedEffect(showControls) {
         if (showControls) {
-            delay(3500)
+            delay(4000)
             showControls = false
         }
     }
 
     DisposableEffect(Unit) {
-        onDispose {
-            exoPlayer.release()
-            try { streamServer.stop() } catch (_: Exception) {}
-        }
+        onDispose { exoPlayer.release() }
     }
 
-    // ── UI ────────────────────────────────────────────────────────────────────
+    // ── UI ───────────────────────────────────────────────────────────────────
     Box(
         Modifier
             .fillMaxSize()
@@ -230,31 +197,25 @@ private fun PlayerScreen(
                     onDoubleTap = { offset ->
                         val w      = size.width
                         val seekMs = if (offset.x < w / 2) -10_000L else 10_000L
-                        val newPos = (exoPlayer.currentPosition + seekMs).coerceAtLeast(0)
-                        exoPlayer.seekTo(newPos)
-                        // Hint TDLib to prioritise the new offset (byte estimate)
-                        val dur = exoPlayer.contentDuration.coerceAtLeast(1)
-                        if (fileSize > 0 && dur > 0) {
-                            engine.hintDownloadOffset(fileId, (fileSize * newPos / dur).coerceAtLeast(0))
-                        }
+                        exoPlayer.seekTo(
+                            (exoPlayer.currentPosition + seekMs).coerceAtLeast(0)
+                        )
                     }
                 )
             }
     ) {
-        // Video surface
-        if (streamUrl != null) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        player       = exoPlayer
-                        useController = false
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+        // Video surface — always present
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    player        = exoPlayer
+                    useController = false
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
 
-        // Preparing / buffering overlay
+        // Preparing / buffering
         if (preparing || buffering) {
             Column(
                 Modifier.align(Alignment.Center),
@@ -263,7 +224,7 @@ private fun PlayerScreen(
                 CircularProgressIndicator(color = NetflixRed, modifier = Modifier.size(56.dp))
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    if (preparing) statusText else "Bufferizando…",
+                    if (preparing) "Conectando con Telegram…" else "Bufferizando…",
                     color = Color.White, fontSize = 14.sp,
                 )
             }
@@ -295,9 +256,6 @@ private fun PlayerScreen(
                 title     = title,
                 subtitle  = subtitle,
                 isPlaying = isPlaying,
-                fileSize  = fileSize,
-                fileId    = fileId,
-                engine    = engine,
                 exoPlayer = exoPlayer,
                 onBack    = onBack,
             )
@@ -312,9 +270,6 @@ private fun PlayerControls(
     title: String,
     subtitle: String,
     isPlaying: Boolean,
-    fileSize: Long,
-    fileId: Int,
-    engine: TelegramEngine,
     exoPlayer: ExoPlayer,
     onBack: () -> Unit,
 ) {
@@ -365,13 +320,7 @@ private fun PlayerControls(
                 )
             }
             IconButton(
-                onClick = {
-                    val newPos = exoPlayer.currentPosition + 10_000
-                    exoPlayer.seekTo(newPos)
-                    val dur = exoPlayer.contentDuration.coerceAtLeast(1)
-                    if (fileSize > 0 && dur > 0)
-                        engine.hintDownloadOffset(fileId, (fileSize * newPos / dur).coerceAtLeast(0))
-                },
+                onClick = { exoPlayer.seekTo(exoPlayer.currentPosition + 10_000) },
                 modifier = Modifier.size(52.dp),
             ) {
                 Icon(Icons.Default.Forward10, "+10s", tint = Color.White, modifier = Modifier.size(36.dp))
@@ -397,13 +346,7 @@ private fun PlayerControls(
         ) {
             Slider(
                 value = if (duration > 0) position.toFloat() / duration else 0f,
-                onValueChange = { v ->
-                    val seekTo = (v * duration).toLong()
-                    exoPlayer.seekTo(seekTo)
-                    val dur = exoPlayer.contentDuration.coerceAtLeast(1)
-                    if (fileSize > 0 && dur > 0)
-                        engine.hintDownloadOffset(fileId, (fileSize * seekTo / dur).coerceAtLeast(0))
-                },
+                onValueChange = { v -> exoPlayer.seekTo((v * duration).toLong()) },
                 colors = SliderDefaults.colors(
                     thumbColor        = NetflixRed,
                     activeTrackColor  = NetflixRed,
