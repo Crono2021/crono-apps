@@ -37,19 +37,19 @@ class StreamProxyServer(
     override fun serve(session: IHTTPSession): Response {
         Log.d(TAG, "serve() called, URI=${session.uri}, Range=${session.headers["range"]}")
 
-        // Wait for TDLib to assign a local path
+        // Wait for TDLib to assign a local path and know the file size
         val filePath = waitForPath()
         if (filePath == null) {
-            Log.e(TAG, "Timeout waiting for TDLib local path")
-            return newFixedLengthResponse(
-                Response.Status.SERVICE_UNAVAILABLE, "text/plain",
-                "TDLib hasn't started downloading yet"
-            )
+            return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "Timeout waiting for path")
+        }
+
+        // Wait to know the ACTUAL file size, otherwise ExoPlayer seeks into the void!
+        var actualFileSize = waitForFileSize()
+        if (actualFileSize <= 0) {
+            actualFileSize = fileSize // fallback to Intent extra if it really failed
         }
 
         val file = File(filePath)
-        val state = engine.getFileStateFlow(fileId).value
-        val actualFileSize = if (state != null && state.expectedSize > 0) state.expectedSize else fileSize
 
         // Parse the Range header: "bytes=start-end" (same as original)
         val rangeHeader = session.headers["range"] ?: "bytes=0-"
@@ -114,6 +114,19 @@ class StreamProxyServer(
             Thread.sleep(100)
         }
         return null
+    }
+
+    /** Block until TDLib tells us the actual expected file size */
+    private fun waitForFileSize(): Long {
+        val deadline = System.currentTimeMillis() + 10_000L
+        while (System.currentTimeMillis() < deadline) {
+            val state = engine.getFileStateFlow(fileId).value
+            if (state != null && state.expectedSize > 0) {
+                return state.expectedSize
+            }
+            Thread.sleep(100)
+        }
+        return 0L
     }
 
     /** Block until TDLib guarantees the needed bytes are downloaded linearly from the start */
