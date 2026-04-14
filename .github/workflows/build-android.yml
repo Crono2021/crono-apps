@@ -96,6 +96,8 @@ jobs:
           echo "✅ OpenSSL 3.0.15 built for armeabi-v7a (linux-generic32)"
 
           # ── 5. Build TDLib (JNI) for armeabi-v7a ──────────────────────────
+          # When cross-compiling, cmake can't find host JNI headers automatically.
+          # Pass them explicitly from JAVA_HOME (set by setup-java action).
           mkdir /tmp/td/build-armeabi && cd /tmp/td/build-armeabi
           cmake \
             -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
@@ -106,8 +108,15 @@ jobs:
             -DOPENSSL_INCLUDE_DIR=/tmp/openssl-armeabi/include \
             -DOPENSSL_CRYPTO_LIBRARY=/tmp/openssl-armeabi/lib/libcrypto.a \
             -DOPENSSL_SSL_LIBRARY=/tmp/openssl-armeabi/lib/libssl.a \
+            -DJNI_INCLUDE_DIRS="$JAVA_HOME/include;$JAVA_HOME/include/linux" \
+            -DJAVA_INCLUDE_PATH="$JAVA_HOME/include" \
+            -DJAVA_INCLUDE_PATH2="$JAVA_HOME/include/linux" \
+            -DJAVA_AWT_INCLUDE_PATH="$JAVA_HOME/include" \
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
             -GNinja \
             ..
+          echo "Available ninja targets with 'jni' or 'td':"
+          ninja -t targets all 2>/dev/null | grep -iE "jni|tdjni|tdlib" || true
           ninja tdjni -j$(nproc)
 
           # ── 6. Copy result to jniLibs ──────────────────────────────────────
