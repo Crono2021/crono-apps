@@ -241,18 +241,20 @@ class AndroidBridge(
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * playVideo(chatId, msgId, title)
+     * playVideo(chatId, msgId, fileId, fileSize, mimeType, title)
      * Called by streamVideoNative() in telegram.js.
-     * Launches PlayerActivity which uses TDLib downloadAndGetPath + ExoPlayer.
+     * Launches PlayerActivity with the streaming HTTP proxy (NanoHTTPD).
      */
     @JavascriptInterface
-    fun playVideo(chatId: String, msgId: String, title: String) {
+    fun playVideo(chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String) {
         val intent = Intent(context, PlayerActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            putExtra(PlayerActivity.EXTRA_CHAT_ID, chatId.toLongOrNull() ?: 0L)
-            putExtra(PlayerActivity.EXTRA_MSG_ID,  msgId.toLongOrNull()  ?: 0L)
-            putExtra(PlayerActivity.EXTRA_TITLE,   title)
-            putExtra(PlayerActivity.EXTRA_FILE_ID, 0)   // resolved by PlayerActivity via msgId
+            putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
+            putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
+            putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId.toIntOrNull()    ?: 0)
+            putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
+            putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
+            putExtra(PlayerActivity.EXTRA_TITLE,     title)
         }
         context.startActivity(intent)
     }

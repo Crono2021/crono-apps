@@ -92,4 +92,11 @@ dependencies {
 
     // DataStore (for persistent auth state)
     implementation "androidx.datastore:datastore-preferences:1.0.0"
+
+    // NanoHTTPD — lightweight HTTP server for local video streaming proxy
+    implementation "org.nanohttpd:nanohttpd:2.3.1"
+
+    // Media3 HLS + DASH (optional, included for robust range-request support)
+    implementation "androidx.media3:media3-exoplayer-hls:1.3.1"
+    implementation "androidx.media3:media3-datasource:1.3.1"
 }

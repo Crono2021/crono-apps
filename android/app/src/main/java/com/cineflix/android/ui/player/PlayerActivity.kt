@@ -1,6 +1,5 @@
 package com.cineflix.android.ui.player
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -36,19 +35,24 @@ import com.cineflix.android.ui.theme.AppBg
 import com.cineflix.android.ui.theme.NetflixRed
 import com.cineflix.android.ui.theme.CineflixTheme
 import kotlinx.coroutines.*
-import java.io.File
 
 /**
- * TVGram-style player:
- *  1. TelegramEngine.downloadAndGetPath(fileId) → waits for file.local.path from TDLib
- *  2. ExoPlayer.setMediaItem(Uri.fromFile(File(localPath))) — reads file:// directly
+ * Streaming player using a local NanoHTTPD proxy.
  *
- * No HTTP proxy. No NanoHTTPD. No race conditions.
+ * Flow:
+ *  1. Start TelegramStreamServer on 127.0.0.1:8765
+ *  2. Tell TDLib to start downloading (non-blocking)
+ *  3. As soon as TDLib assigns a local path, set it on the server
+ *  4. ExoPlayer connects to http://127.0.0.1:8765/video immediately
+ *  5. Server streams bytes from the TDLib local file as they download
+ *  6. On seek: NanoHTTPD sends a new Range request → server hints TDLib
  */
 class PlayerActivity : ComponentActivity() {
 
     companion object {
         internal const val EXTRA_FILE_ID   = "file_id"
+        internal const val EXTRA_FILE_SIZE = "file_size"
+        internal const val EXTRA_MIME_TYPE = "mime_type"
         internal const val EXTRA_TITLE     = "title"
         internal const val EXTRA_SUBTITLE  = "subtitle"
         internal const val EXTRA_CHAT_ID   = "chat_id"
@@ -59,29 +63,35 @@ class PlayerActivity : ComponentActivity() {
             fileId: Int,
             chatId: Long,
             msgId: Long,
+            fileSize: Long  = 0L,
+            mimeType: String = "video/mp4",
             title: String,
             subtitle: String = "",
         ) {
             context.startActivity(Intent(context, PlayerActivity::class.java).apply {
-                putExtra(EXTRA_FILE_ID,  fileId)
-                putExtra(EXTRA_CHAT_ID,  chatId)
-                putExtra(EXTRA_MSG_ID,   msgId)
-                putExtra(EXTRA_TITLE,    title)
-                putExtra(EXTRA_SUBTITLE, subtitle)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                putExtra(EXTRA_FILE_ID,   fileId)
+                putExtra(EXTRA_CHAT_ID,   chatId)
+                putExtra(EXTRA_MSG_ID,    msgId)
+                putExtra(EXTRA_FILE_SIZE, fileSize)
+                putExtra(EXTRA_MIME_TYPE, mimeType)
+                putExtra(EXTRA_TITLE,     title)
+                putExtra(EXTRA_SUBTITLE,  subtitle)
             })
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Force landscape + fullscreen
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val fileId   = intent.getIntExtra(EXTRA_FILE_ID, -1)
         val chatId   = intent.getLongExtra(EXTRA_CHAT_ID, 0L)
         val msgId    = intent.getLongExtra(EXTRA_MSG_ID, 0L)
-        val title    = intent.getStringExtra(EXTRA_TITLE) ?: ""
+        val fileSize = intent.getLongExtra(EXTRA_FILE_SIZE, 0L)
+        val mimeType = intent.getStringExtra(EXTRA_MIME_TYPE) ?: "video/mp4"
+        val title    = intent.getStringExtra(EXTRA_TITLE)    ?: ""
         val subtitle = intent.getStringExtra(EXTRA_SUBTITLE) ?: ""
         val engine   = TelegramEngine.getInstance(this)
 
@@ -92,6 +102,8 @@ class PlayerActivity : ComponentActivity() {
                     fileId   = fileId,
                     chatId   = chatId,
                     msgId    = msgId,
+                    fileSize = fileSize,
+                    mimeType = mimeType,
                     title    = title,
                     subtitle = subtitle,
                     onBack   = { finish() },
@@ -108,6 +120,8 @@ private fun PlayerScreen(
     fileId: Int,
     chatId: Long,
     msgId: Long,
+    fileSize: Long,
+    mimeType: String,
     title: String,
     subtitle: String,
     onBack: () -> Unit,
@@ -115,12 +129,24 @@ private fun PlayerScreen(
     val context = LocalContext.current
     val scope   = rememberCoroutineScope()
 
-    var localPath   by remember { mutableStateOf<String?>(null) }
-    var errorMsg    by remember { mutableStateOf<String?>(null) }
-    var preparing   by remember { mutableStateOf(true) }
+    var streamUrl    by remember { mutableStateOf<String?>(null) }
+    var statusText   by remember { mutableStateOf("Iniciando streaming…") }
+    var errorMsg     by remember { mutableStateOf<String?>(null) }
+    var preparing    by remember { mutableStateOf(true) }
     var showControls by remember { mutableStateOf(true) }
-    var isPlaying   by remember { mutableStateOf(false) }
-    var buffering   by remember { mutableStateOf(false) }
+    var isPlaying    by remember { mutableStateOf(false) }
+    var buffering    by remember { mutableStateOf(false) }
+
+    // Streaming server — created once
+    val streamServer = remember {
+        TelegramStreamServer(
+            engine    = engine,
+            fileId    = fileId,
+            totalSize = fileSize,
+            mimeType  = mimeType.ifEmpty { "video/mp4" },
+            port      = TelegramStreamServer.PORT,
+        )
+    }
 
     // ExoPlayer instance
     val exoPlayer = remember {
@@ -129,28 +155,51 @@ private fun PlayerScreen(
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
                     buffering = state == Player.STATE_BUFFERING
-                    isPlaying = playWhenReady && state == Player.STATE_READY
+                    if (state == Player.STATE_READY) {
+                        preparing = false
+                    }
                 }
-                override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
+                override fun onIsPlayingChanged(playing: Boolean) {
+                    isPlaying = playing
+                    if (playing) preparing = false
+                }
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    errorMsg = "Error de reproducción: ${error.message}"
+                    preparing = false
+                }
             })
         }
     }
 
-    // Load file via TVGram approach
+    // ── Streaming setup ────────────────────────────────────────────────────────
     LaunchedEffect(fileId) {
         try {
-            preparing = true
-            // If there's a cached path from the pre-warm, we get it immediately
-            val path = engine.downloadAndGetPath(fileId, priority = 32)
-            localPath = path
-            preparing = false
-            // Tell TDLib we're reading from the beginning with high priority
-            exoPlayer.setMediaItem(MediaItem.fromUri(
-                android.net.Uri.fromFile(File(path))
-            ))
+            // 1. Start the HTTP proxy server
+            streamServer.start()
+
+            // 2. Start TDLib download in the background — non-blocking
+            statusText = "Conectando con Telegram…"
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val path = engine.startDownloadReturnPath(fileId)
+                    if (path != null) {
+                        streamServer.localPath = path  // server can now serve bytes
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("PlayerActivity", "Download error: ${e.message}")
+                }
+            }
+
+            // 3. Give ExoPlayer the local streaming URL immediately
+            val url = "http://127.0.0.1:${TelegramStreamServer.PORT}/video"
+            streamUrl = url
+            statusText = "Bufferizando…"
+
+            exoPlayer.setMediaItem(MediaItem.fromUri(url))
             exoPlayer.prepare()
+
         } catch (e: Exception) {
-            errorMsg  = "Error al iniciar la reproducción: ${e.message}"
+            errorMsg  = "Error al iniciar: ${e.message}"
             preparing = false
         }
     }
@@ -164,9 +213,13 @@ private fun PlayerScreen(
     }
 
     DisposableEffect(Unit) {
-        onDispose { exoPlayer.release() }
+        onDispose {
+            exoPlayer.release()
+            try { streamServer.stop() } catch (_: Exception) {}
+        }
     }
 
+    // ── UI ────────────────────────────────────────────────────────────────────
     Box(
         Modifier
             .fillMaxSize()
@@ -175,55 +228,45 @@ private fun PlayerScreen(
                 detectTapGestures(
                     onTap = { showControls = !showControls },
                     onDoubleTap = { offset ->
-                        // Double-tap left/right to seek ±10s
-                        val w = size.width
+                        val w      = size.width
                         val seekMs = if (offset.x < w / 2) -10_000L else 10_000L
-                        exoPlayer.seekTo(
-                            (exoPlayer.currentPosition + seekMs).coerceAtLeast(0)
-                        )
-                        // Hint TDLib on seek forward
-                        if (seekMs > 0) {
-                            val newPosBytes = (exoPlayer.currentPosition / 1000.0 *
-                                    (exoPlayer.contentDuration.coerceAtLeast(1)) *
-                                    exoPlayer.duration.coerceAtLeast(1) / 1000).toLong()
-                            engine.hintDownloadOffset(fileId, newPosBytes.coerceAtLeast(0))
+                        val newPos = (exoPlayer.currentPosition + seekMs).coerceAtLeast(0)
+                        exoPlayer.seekTo(newPos)
+                        // Hint TDLib to prioritise the new offset (byte estimate)
+                        val dur = exoPlayer.contentDuration.coerceAtLeast(1)
+                        if (fileSize > 0 && dur > 0) {
+                            engine.hintDownloadOffset(fileId, (fileSize * newPos / dur).coerceAtLeast(0))
                         }
                     }
                 )
             }
     ) {
         // Video surface
-        if (!localPath.isNullOrEmpty()) {
+        if (streamUrl != null) {
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
-                        player = exoPlayer
-                        useController = false  // We draw our own controls
+                        player       = exoPlayer
+                        useController = false
                     }
                 },
                 modifier = Modifier.fillMaxSize(),
             )
         }
 
-        // Preparing spinner
-        if (preparing) {
+        // Preparing / buffering overlay
+        if (preparing || buffering) {
             Column(
                 Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 CircularProgressIndicator(color = NetflixRed, modifier = Modifier.size(56.dp))
                 Spacer(Modifier.height(16.dp))
-                Text("Iniciando reproducción...", color = Color.White, fontSize = 14.sp)
-                Text("TDLib descargando...", color = Color(0xFF999999), fontSize = 12.sp)
+                Text(
+                    if (preparing) statusText else "Bufferizando…",
+                    color = Color.White, fontSize = 14.sp,
+                )
             }
-        }
-
-        // Buffering (after file ready but ExoPlayer is buffering)
-        if (!preparing && buffering) {
-            CircularProgressIndicator(
-                color = NetflixRed,
-                modifier = Modifier.align(Alignment.Center).size(48.dp),
-            )
         }
 
         // Error
@@ -232,7 +275,7 @@ private fun PlayerScreen(
                 Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Icon(Icons.Default.Warning, contentDescription = null, tint = NetflixRed, modifier = Modifier.size(48.dp))
+                Icon(Icons.Default.Warning, null, tint = NetflixRed, modifier = Modifier.size(48.dp))
                 Spacer(Modifier.height(8.dp))
                 Text(err, color = Color.White, fontSize = 14.sp)
                 Spacer(Modifier.height(16.dp))
@@ -249,21 +292,29 @@ private fun PlayerScreen(
             exit    = fadeOut(),
         ) {
             PlayerControls(
-                title      = title,
-                subtitle   = subtitle,
-                isPlaying  = isPlaying,
-                exoPlayer  = exoPlayer,
-                onBack     = onBack,
+                title     = title,
+                subtitle  = subtitle,
+                isPlaying = isPlaying,
+                fileSize  = fileSize,
+                fileId    = fileId,
+                engine    = engine,
+                exoPlayer = exoPlayer,
+                onBack    = onBack,
             )
         }
     }
 }
+
+// ── Controls ──────────────────────────────────────────────────────────────────
 
 @Composable
 private fun PlayerControls(
     title: String,
     subtitle: String,
     isPlaying: Boolean,
+    fileSize: Long,
+    fileId: Int,
+    engine: TelegramEngine,
     exoPlayer: ExoPlayer,
     onBack: () -> Unit,
 ) {
@@ -281,18 +332,17 @@ private fun PlayerControls(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Volver", tint = Color.White)
+                Icon(Icons.Default.ArrowBack, "Volver", tint = Color.White)
             }
             Spacer(Modifier.width(8.dp))
             Column {
                 Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                if (subtitle.isNotEmpty()) {
+                if (subtitle.isNotEmpty())
                     Text(subtitle, color = Color(0xFFCCCCCC), fontSize = 12.sp)
-                }
             }
         }
 
-        // Center play/pause
+        // Center controls
         Row(
             Modifier.align(Alignment.Center),
             horizontalArrangement = Arrangement.spacedBy(32.dp),
@@ -302,7 +352,7 @@ private fun PlayerControls(
                 onClick = { exoPlayer.seekTo((exoPlayer.currentPosition - 10_000).coerceAtLeast(0)) },
                 modifier = Modifier.size(52.dp),
             ) {
-                Icon(Icons.Default.Replay10, contentDescription = "-10s", tint = Color.White, modifier = Modifier.size(36.dp))
+                Icon(Icons.Default.Replay10, "-10s", tint = Color.White, modifier = Modifier.size(36.dp))
             }
             IconButton(
                 onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() },
@@ -310,20 +360,25 @@ private fun PlayerControls(
             ) {
                 Icon(
                     if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (isPlaying) "Pausar" else "Reproducir",
-                    tint = Color.White,
-                    modifier = Modifier.size(48.dp),
+                    if (isPlaying) "Pausar" else "Reproducir",
+                    tint = Color.White, modifier = Modifier.size(48.dp),
                 )
             }
             IconButton(
-                onClick = { exoPlayer.seekTo(exoPlayer.currentPosition + 10_000) },
+                onClick = {
+                    val newPos = exoPlayer.currentPosition + 10_000
+                    exoPlayer.seekTo(newPos)
+                    val dur = exoPlayer.contentDuration.coerceAtLeast(1)
+                    if (fileSize > 0 && dur > 0)
+                        engine.hintDownloadOffset(fileId, (fileSize * newPos / dur).coerceAtLeast(0))
+                },
                 modifier = Modifier.size(52.dp),
             ) {
-                Icon(Icons.Default.Forward10, contentDescription = "+10s", tint = Color.White, modifier = Modifier.size(36.dp))
+                Icon(Icons.Default.Forward10, "+10s", tint = Color.White, modifier = Modifier.size(36.dp))
             }
         }
 
-        // Bottom progress bar
+        // Progress bar
         var position by remember { mutableStateOf(0L) }
         var duration by remember { mutableStateOf(0L) }
         LaunchedEffect(isPlaying) {
@@ -342,10 +397,16 @@ private fun PlayerControls(
         ) {
             Slider(
                 value = if (duration > 0) position.toFloat() / duration else 0f,
-                onValueChange = { v -> exoPlayer.seekTo((v * duration).toLong()) },
+                onValueChange = { v ->
+                    val seekTo = (v * duration).toLong()
+                    exoPlayer.seekTo(seekTo)
+                    val dur = exoPlayer.contentDuration.coerceAtLeast(1)
+                    if (fileSize > 0 && dur > 0)
+                        engine.hintDownloadOffset(fileId, (fileSize * seekTo / dur).coerceAtLeast(0))
+                },
                 colors = SliderDefaults.colors(
-                    thumbColor = NetflixRed,
-                    activeTrackColor = NetflixRed,
+                    thumbColor        = NetflixRed,
+                    activeTrackColor  = NetflixRed,
                     inactiveTrackColor = Color(0xFF555555),
                 ),
             )
@@ -359,8 +420,5 @@ private fun PlayerControls(
 }
 
 private fun formatMs(ms: Long): String {
-    val totalSec = ms / 1000
-    val m = totalSec / 60
-    val s = totalSec % 60
-    return "%d:%02d".format(m, s)
+    val s = ms / 1000; return "%d:%02d".format(s / 60, s % 60)
 }

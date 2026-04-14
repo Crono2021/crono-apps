@@ -396,23 +396,42 @@ class TelegramEngine(private val context: Context) {
     // ── File / Streaming ──────────────────────────────────────────────────────
 
     /**
-     * Download a file and return its local path when ready.
-     * Uses TVGram approach: TDLib writes to disk, ExoPlayer reads file:// directly.
+     * Start a TDLib download and return the local file path as soon as TDLib
+     * assigns it (i.e. when the download STARTS, not when it completes).
+     * Used by the streaming player — ExoPlayer can start reading while TDLib writes.
+     */
+    suspend fun startDownloadReturnPath(fileId: Int, priority: Int = 32): String? =
+        withContext(Dispatchers.IO) {
+            val deferred = filePathEmitters.getOrPut(fileId) { CompletableDeferred() }
+
+            client?.send(TdApi.DownloadFile(fileId, priority, 0, 0, false)) { result ->
+                if (result is TdApi.File) {
+                    val p = result.local?.path
+                    if (!p.isNullOrEmpty()) deferred.complete(p)
+                    // Also complete if download is already done
+                    if (result.local?.isDownloadingCompleted == true && !p.isNullOrEmpty()) {
+                        deferred.complete(p)
+                    }
+                }
+            }
+
+            // Wait up to 25 s for TDLib to at least start the download
+            withTimeoutOrNull(25_000) { deferred.await() }
+        }
+
+    /**
+     * Download a file and return its local path ONLY when the download is complete.
+     * Legacy / fallback; prefer startDownloadReturnPath for streaming.
      */
     suspend fun downloadAndGetPath(fileId: Int, priority: Int = 32): String =
         withContext(Dispatchers.IO) {
-            // Register deferred BEFORE calling DownloadFile to avoid race
             val deferred = filePathEmitters.getOrPut(fileId) { CompletableDeferred() }
-
-            // Request full file download (limit=0 = no limit)
             client?.send(TdApi.DownloadFile(fileId, priority, 0, 0, false)) { result ->
-                // If already downloaded, the result IS the file with local path
                 if (result is TdApi.File) {
                     val p = result.local?.path
                     if (!p.isNullOrEmpty()) deferred.complete(p)
                 }
             }
-
             withTimeoutOrNull(120_000) { deferred.await() }
                 ?: throw Exception("TDLib download timeout for fileId=$fileId")
         }
