@@ -4,11 +4,14 @@ import android.annotation.SuppressLint
 import android.os.Bundle
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.webkit.WebViewAssetLoader
 
 class MainActivity : ComponentActivity() {
 
@@ -30,14 +33,29 @@ class MainActivity : ComponentActivity() {
                 allowContentAccess = true
                 databaseEnabled = true
                 mediaPlaybackRequiresUserGesture = false
+                @Suppress("DEPRECATION")
+                allowFileAccessFromFileURLs = true
+                @Suppress("DEPRECATION")
+                allowUniversalAccessFromFileURLs = true
             }
 
             // Mapeamos AndroidBridge.kt a window.AndroidBridge en Javascript
             bridge = AndroidBridge(this@MainActivity, this, engine)
             addJavascriptInterface(bridge, "AndroidBridge")
 
-            // Evitar que abra el navegador externo
-            webViewClient = WebViewClient()
+            // Usar WebViewAssetLoader crea un servidor HTTP interno virtual para evadir CORS/ES Modules
+            val assetLoader = WebViewAssetLoader.Builder()
+                .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this@MainActivity))
+                .build()
+
+            webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): WebResourceResponse? {
+                    return assetLoader.shouldInterceptRequest(request.url)
+                }
+            }
 
             // Utilizado para logs de console.log() de JS en el logcat de Android
             webChromeClient = object : WebChromeClient() {
@@ -48,8 +66,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Cargamos la app web empaquetada localmente (generada por Vite)
-            loadUrl("file:///android_asset/www/index.html")
+            // Cargamos la app de manera segura vía el domain virtual
+            loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
         }
 
         setContentView(webView)
