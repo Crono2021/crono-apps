@@ -7,6 +7,9 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <!-- Android TV: declare Leanback support (required=false = runs on both TV and phone) -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
+    <!-- Android TV: TVs don't support portrait. Without this, aapt implicitly marks portrait
+         as required (because MainActivity has no fixed screenOrientation), causing install failure. -->
+    <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
 
     <application
         android:allowBackup="true"
