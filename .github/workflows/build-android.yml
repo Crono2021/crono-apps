@@ -41,7 +41,6 @@ jobs:
         uses: android-actions/setup-android@v3
 
       # ── TDLib armeabi-v7a (32-bit Android TV support) ──────────────────────
-      # Needed for Philips/MediaTek TVs running Android in 32-bit mode.
       # Cache key = hash of arm64 .so → only rebuilds if TDLib version changes.
       - name: Cache TDLib armeabi-v7a libtdjni.so
         id: cache-tdlib-armeabi
@@ -50,88 +49,79 @@ jobs:
           path: android/app/src/main/jniLibs/armeabi-v7a/libtdjni.so
           key: tdlib-armeabi-v7a-${{ hashFiles('android/app/src/main/jniLibs/arm64-v8a/libtdjni.so') }}
 
-      - name: Build TDLib for armeabi-v7a (first-time only, ~35 min)
+      - name: Build TDLib for armeabi-v7a (first-time only, ~40 min)
         if: steps.cache-tdlib-armeabi.outputs.cache-hit != 'true'
         run: |
           set -e
 
-          # ── 1. Install NDK 25 explicitly (known stable version) ────────────
-          sdkmanager --install "ndk;25.2.9519653" > /dev/null 2>&1
-          NDK="$ANDROID_SDK_ROOT/ndk/25.2.9519653"
+          # ── 1. NDK (same version used by TDLib's official build scripts) ───
+          sdkmanager --install "ndk;23.2.8568313" > /dev/null 2>&1
+          NDK="$ANDROID_SDK_ROOT/ndk/23.2.8568313"
           TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
           API=21
-          echo "NDK:       $NDK"
-          echo "Toolchain: $TOOLCHAIN"
+          echo "NDK: $NDK"
           ls "$TOOLCHAIN/bin/armv7a-linux-androideabi${API}-clang"
 
-          # ── 2. Build tools (php is required for TDLib's code generator) ────
+          # ── 2. Build tools ─────────────────────────────────────────────────
           sudo apt-get update -qq
           sudo apt-get install -y build-essential cmake ninja-build gperf php
 
-          # ── 3. Clone TDLib (latest HEAD, depth=1 for speed) ───────────────
+          # ── 3. Clone TDLib ─────────────────────────────────────────────────
           git clone --depth=1 https://github.com/tdlib/td.git /tmp/td
 
-          # ── 4. Build OpenSSL 3.0 for armeabi-v7a ──────────────────────────
-          # OpenSSL's "android-arm" target requires arm-linux-androideabi-gcc
-          # which was removed in NDK 23+. Use "linux-generic32" with explicit
-          # cross-compiler instead — works with any NDK version.
-          curl -sSL "https://github.com/openssl/openssl/releases/download/openssl-3.0.15/openssl-3.0.15.tar.gz" \
+          # ── 4. Build OpenSSL 1.1.1w for armeabi-v7a ───────────────────────
+          # Following TDLib's official build-openssl.sh exactly.
+          # Create arm-linux-androideabi-gcc symlink inside NDK toolchain/bin
+          # so OpenSSL 1.1.1's android-arm Configure can find it via PATH scan.
+          ln -sf "$TOOLCHAIN/bin/armv7a-linux-androideabi${API}-clang" \
+                 "$TOOLCHAIN/bin/arm-linux-androideabi-gcc"
+
+          export ANDROID_NDK_HOME="$NDK"
+          export ANDROID_NDK_ROOT="$NDK"
+          export PATH="$TOOLCHAIN/bin:$PATH"
+
+          curl -sSL "https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1w.tar.gz" \
                -o /tmp/openssl.tar.gz
           tar -xzf /tmp/openssl.tar.gz -C /tmp
-          cd /tmp/openssl-3.0.15
+          cd /tmp/openssl-OpenSSL_1_1_1w
 
-          export CC="$TOOLCHAIN/bin/armv7a-linux-androideabi${API}-clang"
-          export CXX="$TOOLCHAIN/bin/armv7a-linux-androideabi${API}-clang++"
-          export AR="$TOOLCHAIN/bin/llvm-ar"
-          export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
-          export STRIP="$TOOLCHAIN/bin/llvm-strip"
+          ./Configure android-arm no-shared \
+            -U__ANDROID_API__ -D__ANDROID_API__=$API -D__ARM_MAX_ARCH__=8
+          make depend -s
+          make -j$(nproc) -s
 
-          ./Configure linux-generic32 \
-            -D__ANDROID_API__=$API \
-            -march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3-d16 \
-            --prefix=/tmp/openssl-armeabi \
-            no-shared no-tests
-          make -j$(nproc) > /dev/null 2>&1
-          make install_sw > /dev/null 2>&1
-          echo "✅ OpenSSL 3.0.15 built for armeabi-v7a (linux-generic32)"
+          mkdir -p /tmp/openssl/armeabi-v7a/lib
+          cp libcrypto.a libssl.a /tmp/openssl/armeabi-v7a/lib/
+          cp -r include /tmp/openssl/armeabi-v7a/
+          echo "✅ OpenSSL 1.1.1w built for armeabi-v7a"
 
-          # ── 5. Build TDLib for armeabi-v7a (two-phase cross-compile) ──────
-          # TDLib requires native host tools first (code generation), then cross-compile.
-          # Phase A: build native prepare_cross_compiling on the host
-          unset CC CXX AR RANLIB STRIP   # reset from OpenSSL step — use host compiler
-          mkdir /tmp/td/build-native && cd /tmp/td/build-native
+          # ── 5. Phase A: generate TDLib source files (native host build) ────
+          # MUST be run from example/android/ — uses that CMakeLists.txt
+          cd /tmp/td/example/android
+          mkdir build-native && cd build-native
+          cmake -DTD_GENERATE_SOURCE_FILES=ON ..
+          cmake --build .
+          echo "✅ Phase A: TDLib source files generated"
+
+          # ── 6. Phase B: cross-compile libtdjni.so for armeabi-v7a ─────────
+          # example/android/CMakeLists.txt defines the 'tdjni' target.
+          cd /tmp/td/example/android
+          mkdir build-armeabi && cd build-armeabi
           cmake \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DOPENSSL_ROOT_DIR="/tmp/openssl/armeabi-v7a" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -GNinja \
-            ..
-          ninja prepare_cross_compiling -j$(nproc)
-          echo "✅ Phase A: native code generation tools built"
-
-          # Phase B: cross-compile TDLib JNI for armeabi-v7a
-          mkdir /tmp/td/build-armeabi && cd /tmp/td/build-armeabi
-          cmake \
-            -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=armeabi-v7a \
-            -DANDROID_NATIVE_API_LEVEL=$API \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DTD_ENABLE_JNI=ON \
-            -DOPENSSL_INCLUDE_DIR=/tmp/openssl-armeabi/include \
-            -DOPENSSL_CRYPTO_LIBRARY=/tmp/openssl-armeabi/lib/libcrypto.a \
-            -DOPENSSL_SSL_LIBRARY=/tmp/openssl-armeabi/lib/libssl.a \
-            -DJAVA_INCLUDE_PATH="$JAVA_HOME/include" \
-            -DJAVA_INCLUDE_PATH2="$JAVA_HOME/include/linux" \
-            -DJAVA_AWT_INCLUDE_PATH="$JAVA_HOME/include" \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
-            -GNinja \
+            -DANDROID_STL=c++_static \
+            -DANDROID_PLATFORM=android-21 \
             ..
-          echo "Available ninja targets:"
-          ninja -t targets all 2>/dev/null | grep -iE "jni|td" | head -20 || true
-          ninja tdjni -j$(nproc)
+          cmake --build . --target tdjni
           echo "✅ Phase B: libtdjni.so cross-compiled for armeabi-v7a"
 
-          # ── 6. Copy result to jniLibs ──────────────────────────────────────
+          # ── 7. Copy result to jniLibs ──────────────────────────────────────
           mkdir -p $GITHUB_WORKSPACE/android/app/src/main/jniLibs/armeabi-v7a
-          find /tmp/td/build-armeabi -name "libtdjni.so" \
+          find /tmp/td/example/android/build-armeabi -name "libtdjni.so" \
             -exec cp {} $GITHUB_WORKSPACE/android/app/src/main/jniLibs/armeabi-v7a/libtdjni.so \;
           echo "✅ libtdjni.so (armeabi-v7a) ready:"
           ls -lh $GITHUB_WORKSPACE/android/app/src/main/jniLibs/armeabi-v7a/
