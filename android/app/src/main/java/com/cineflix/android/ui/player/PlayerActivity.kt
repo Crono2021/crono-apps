@@ -24,6 +24,7 @@ import kotlinx.coroutines.*
 class PlayerActivity : Activity() {
 
     private var player: ExoPlayer? = null
+    private var playerView: PlayerView? = null
     private var proxyServer: StreamProxyServer? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -140,8 +141,8 @@ class PlayerActivity : Activity() {
         val streamUrl = "http://127.0.0.1:$port/stream"
         Log.i(TAG, "▶ ExoPlayer stream URL: $streamUrl")
 
-        val playerView = PlayerView(this)
-        playerView.useController = true
+        playerView = PlayerView(this)
+        playerView?.useController = true
         setContentView(playerView)
 
         // TVGram load control logic (min 15s, max 50s, playback start 5s)
@@ -174,7 +175,7 @@ class PlayerActivity : Activity() {
             .setLoadControl(loadControl)
             .build()
             
-        playerView.player = exo
+        playerView?.player = exo
         player = exo
 
         val mediaItem = MediaItem.fromUri(Uri.parse(streamUrl))
@@ -206,9 +207,28 @@ class PlayerActivity : Activity() {
         finish()
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // Intercept BACK button to hide controls instead of closing the player immediately
+        if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK && event.action == android.view.KeyEvent.ACTION_UP) {
+            if (playerView?.isControllerFullyVisible == true) {
+                playerView?.hideController()
+                return true // Event handled safely
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     private fun cleanup() {
         try { player?.release() } catch (_: Exception) {}
         try { proxyServer?.stop() } catch (_: Exception) {}
         scope.cancel()
+
+        // Eagerly delete TDLib downloaded video chunks so memory/storage is freed 
+        // to address TV infinite storage bloat issue reported by the USER
+        val fileId = intent.getIntExtra(EXTRA_FILE_ID, -1)
+        if (fileId > 0) {
+            val engine = TelegramEngine.getInstance(this)
+            engine.cancelAndDeleteVideo(fileId)
+        }
     }
 }

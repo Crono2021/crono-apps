@@ -554,4 +554,13 @@ class TelegramEngine(private val context: Context) {
     suspend fun getBotChatIdPublic(): Long? = getBotChatId()
 
     fun getClient(): Client? = client
+
+    /**
+     * Stop downloading and forcefully delete the file chunk from TDLib cache to free TV storage.
+     */
+    fun cancelAndDeleteVideo(fileId: Int) {
+        Log.i(TAG, "🧹 Cleaning up TDLib cache for fileId: $fileId")
+        client?.send(TdApi.CancelDownloadFile(fileId, false)) {}
+        client?.send(TdApi.DeleteFile(fileId)) {}
+    }
 }
