@@ -106,7 +106,7 @@ body {
     overflow-x: auto; flex-shrink: 0;
     background: rgba(10,10,18,0.95); backdrop-filter: blur(10px);
     border-bottom: 1px solid rgba(255,255,255,0.05);
-    position: sticky; top: 65px; z-index: 99;
+    position: sticky; top: 108px; z-index: 99;
     scrollbar-width: none;
 }
 .genre-tabs::-webkit-scrollbar { display: none; }
@@ -341,7 +341,7 @@ body {
     border-bottom: 1px solid rgba(255,255,255,0.07);
     background: #0f0f1a;
     position: sticky;
-    top: 56px; /* below topbar */
+    top: 66px; /* below topbar */
     z-index: 90;
 }
 .main-nav-btn {
@@ -516,3 +516,38 @@ body {
     text-align: center;
 }
 .modal-error.hidden { display: none; }
+
+/* ===== ANDROID TV TV/LOW-END OPTIMIZATIONS ===== */
+.android-tv * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+}
+
+.android-tv .topbar { background: #0a0a12 !important; border-bottom: 2px solid #1a1a2e !important; }
+.android-tv .genre-tabs { background: #0a0a12 !important; }
+.android-tv .login-container { background: #1a1a2e !important; }
+.android-tv .main-nav { background: #0a0a12 !important; }
+.android-tv .hero-overlay { background: rgba(10, 10, 18, 0.8) !important; }
+
+/* D-PAD focus rings for Android TV WebView */
+.android-tv *:focus, 
+.android-tv .series-card:focus, 
+.android-tv .episode-card:focus,
+.android-tv .movie-file-item:focus {
+    outline: 4px solid #8b5cf6 !important;
+    outline-offset: -2px !important;
+    transform: scale(1.04) !important;
+    transition: transform 0.1s ease !important;
+    z-index: 100 !important;
+    background-color: rgba(139,92,246, 0.15) !important;
+}
+
+/* Remove CSS transition lag on hover/focus states */
+.android-tv .series-card,
+.android-tv .episode-card,
+.android-tv .btn-primary,
+.android-tv .movie-file-item,
+.android-tv .genre-tab {
+    transition: transform 0.1s ease, color 0.1s, background-color 0.1s !important;
+}

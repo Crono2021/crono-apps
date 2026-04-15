@@ -77,6 +77,16 @@ import {
 } from './tmdb.js';
 
 
+function makeFocusable(el) {
+    el.tabIndex = 0;
+    el.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.keyCode === 13 || e.key === 'DPadCenter') {
+            e.preventDefault();
+            el.click();
+        }
+    });
+}
+
 // ===== STATE =====
 let currentPhone = '';
 let currentSeries = null;
@@ -556,6 +566,7 @@ function createCard(series) {
     card.addEventListener('click', () => openSeries(series));
     // Schedule poster load only when card enters viewport
     schedulePosterLoad(card, () => loadCardPoster(card, series));
+    makeFocusable(card);
     return card;
 }
 
@@ -1148,6 +1159,7 @@ function createMovieCard(movie) {
     card.addEventListener('click', () => openMovie(movie));
     // Defer poster load until card is near the viewport
     schedulePosterLoad(card, () => loadMovieCardPoster(card, movie));
+    makeFocusable(card);
     return card;
 }
 
@@ -1274,6 +1286,7 @@ function populateMovieFilesList(movie, videos) {
             playerOrigin = 'movie';
             playVideo(video, displayTitle);
         });
+        makeFocusable(item);
         list.appendChild(item);
     }
     list.classList.remove('hidden');
@@ -1292,20 +1305,25 @@ async function openSeason(button, series) {
     showView('view-episodes');
 
     try {
+        let videos = null;
+
         if (button.data && currentBotMsgId) {
             try {
-                await clickInlineButton(currentBotMsgId, button.data);
+                const clickResult = await clickInlineButton(currentBotMsgId, button.data);
+                // On Android native, Kotlin returns the video array directly (smart wait)
+                if (isNativeApp() && Array.isArray(clickResult) && clickResult.length > 0) {
+                    videos = clickResult;
+                }
             } catch (btnErr) {
-                // MESSAGE_ID_INVALID → bot invalidated the old message.
-                // Re-send the series command to get a fresh inline keyboard.
+                // MESSAGE_ID_INVALID → bot invalidated the old message. Refresh.
                 if (btnErr.message?.includes('MESSAGE_ID_INVALID') && currentSeries) {
                     console.warn('MESSAGE_ID_INVALID — refreshing bot message...');
                     const fresh = await sendBotCommand(currentSeries.payload);
                     currentBotMsgId = fresh.messageId;
-                    // Find the matching season button in the fresh response
                     const freshBtn = fresh.buttons.find(b => b.text === button.text);
                     if (freshBtn?.data) {
-                        await clickInlineButton(currentBotMsgId, freshBtn.data);
+                        const r2 = await clickInlineButton(currentBotMsgId, freshBtn.data);
+                        if (isNativeApp() && Array.isArray(r2) && r2.length > 0) videos = r2;
                     }
                 } else {
                     throw btnErr;
@@ -1313,14 +1331,18 @@ async function openSeason(button, series) {
             }
         }
 
-        const videos = await getVideoMessages(100, currentBotMsgId || 0);
+        // Fallback: GramJS (desktop) or native with no messages yet
+        if (!videos) {
+            videos = await getVideoMessages(100, currentBotMsgId || 0);
+        }
 
         $('episodes-loading').classList.add('hidden');
 
-        if (videos.length === 0) {
+        if (!videos || videos.length === 0) {
             $('episodes-list').innerHTML = '<div class="center-message"><p>No se encontraron episodios</p></div>';
             return;
         }
+
 
         // Don't sort alphabetically. The bot provides them in reverse chronological order
         // (newest message first). Reverse it to show oldest (Episode 1) first.
@@ -1369,6 +1391,7 @@ async function openSeason(button, series) {
                 </div>
             `;
             card.addEventListener('click', () => { playerOrigin = 'episodes'; playVideo(video, series.title); });
+            makeFocusable(card);
             $('episodes-list').appendChild(card);
         }
     } catch (err) {
