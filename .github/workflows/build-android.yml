@@ -67,7 +67,12 @@ jobs:
           sudo apt-get install -y build-essential cmake ninja-build gperf php
 
           # ── 3. Clone TDLib ─────────────────────────────────────────────────
-          git clone --depth=1 https://github.com/tdlib/td.git /tmp/td
+          # Clone the EXACT commit used to originally build TVGram's TDLib
+          # (Hash found in TdApi.java: dd1b761fda7e47f4e0275c4d319f80a04db1997f)
+          # This ensures libtdjni.so matches the Java layer and avoids JNI FatalError
+          git clone https://github.com/tdlib/td.git /tmp/td
+          cd /tmp/td
+          git checkout dd1b761fda7e47f4e0275c4d319f80a04db1997f
 
           # ── 4. Build OpenSSL 1.1.1w for armeabi-v7a ───────────────────────
           # Following TDLib's official build-openssl.sh exactly.
