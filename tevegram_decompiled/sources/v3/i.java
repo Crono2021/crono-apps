@@ -1,0 +1,23 @@
+package v3;
+
+import android.view.View;
+
+/* compiled from: r8-map-id-3ecb04adb5372cce41086c50685c8d30debac27da0c76b9a483628b9c6707d44 */
+/* loaded from: C:\Users\crono\Documents\PROYECTOS ANTIGRAVITY\Reproductor telegram\tevegram_extracted\classes.dex */
+public final class i {
+
+    /* renamed from: a, reason: collision with root package name */
+    public View f9517a;
+
+    /* renamed from: b, reason: collision with root package name */
+    public String f9518b;
+
+    /* renamed from: c, reason: collision with root package name */
+    public q f9519c;
+
+    /* renamed from: d, reason: collision with root package name */
+    public a0 f9520d;
+
+    /* renamed from: e, reason: collision with root package name */
+    public k f9521e;
+}

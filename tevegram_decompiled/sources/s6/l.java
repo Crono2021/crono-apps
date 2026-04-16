@@ -1,0 +1,17 @@
+package s6;
+
+import java.security.SecureRandom;
+
+/* compiled from: r8-map-id-3ecb04adb5372cce41086c50685c8d30debac27da0c76b9a483628b9c6707d44 */
+/* loaded from: C:\Users\crono\Documents\PROYECTOS ANTIGRAVITY\Reproductor telegram\tevegram_extracted\classes.dex */
+public abstract class l {
+
+    /* renamed from: a, reason: collision with root package name */
+    public static final c8.b f8890a = new c8.b(6);
+
+    public static byte[] a(int i9) {
+        byte[] bArr = new byte[i9];
+        ((SecureRandom) f8890a.get()).nextBytes(bArr);
+        return bArr;
+    }
+}

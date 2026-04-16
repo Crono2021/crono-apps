@@ -1,0 +1,24 @@
+package g0;
+
+import android.graphics.drawable.Icon;
+import android.net.Uri;
+
+/* compiled from: r8-map-id-3ecb04adb5372cce41086c50685c8d30debac27da0c76b9a483628b9c6707d44 */
+/* loaded from: C:\Users\crono\Documents\PROYECTOS ANTIGRAVITY\Reproductor telegram\tevegram_extracted\classes.dex */
+public abstract class d {
+    public static int a(Object obj) {
+        return ((Icon) obj).getResId();
+    }
+
+    public static String b(Object obj) {
+        return ((Icon) obj).getResPackage();
+    }
+
+    public static int c(Object obj) {
+        return ((Icon) obj).getType();
+    }
+
+    public static Uri d(Object obj) {
+        return ((Icon) obj).getUri();
+    }
+}

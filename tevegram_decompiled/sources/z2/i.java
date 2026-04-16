@@ -1,0 +1,13 @@
+package z2;
+
+/* compiled from: r8-map-id-3ecb04adb5372cce41086c50685c8d30debac27da0c76b9a483628b9c6707d44 */
+/* loaded from: C:\Users\crono\Documents\PROYECTOS ANTIGRAVITY\Reproductor telegram\tevegram_extracted\classes.dex */
+public class i extends j1.e {
+
+    /* renamed from: s, reason: collision with root package name */
+    public long f10617s;
+
+    public i() {
+        super(1, 0);
+    }
+}

@@ -179,7 +179,7 @@
     <button class="btn btn-secondary btn-sm" id="logout-btn">Salir</button>
   </div>
 
-  <div class="content">
+    <div class="content">
     <!-- Add Form -->
     <div class="add-form">
       <h2>➕ Añadir nueva serie</h2>
@@ -200,6 +200,21 @@
           <label>&nbsp;</label>
           <button class="btn btn-primary" id="add-btn">Añadir serie</button>
         </div>
+      </div>
+    </div>
+
+    <!-- TMDB Resolver -->
+    <div class="add-form" id="tmdb-card">
+      <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+        <span style="font-size:1.1rem">🎬</span>
+        <h2 style="flex:1;margin:0">Resolver TMDB — Caché de miniaturas y sinopsis</h2>
+        <button class="btn btn-secondary" id="tmdb-resolve-btn">▶ Resolver ahora</button>
+      </div>
+      <div id="tmdb-progress-wrap" style="margin-top:1rem;display:none">
+        <div style="background:var(--surface2);border-radius:6px;overflow:hidden;height:8px;margin-bottom:.6rem">
+          <div id="tmdb-bar" style="height:100%;background:var(--accent);width:0%;transition:width .5s"></div>
+        </div>
+        <p id="tmdb-status-text" style="font-size:.85rem;color:var(--muted)"></p>
       </div>
     </div>
 
@@ -418,7 +433,64 @@ function toast(msg, type = 'success') {
 
 function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// ── AUTO LOGIN ────────────────────────────────────────────────────────────────
+// ── TMDB RESOLVER ───────────────────────────────────────────────────────────────────────
+let _tmdbPoller = null;
+
+document.getElementById('tmdb-resolve-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('tmdb-resolve-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Iniciando...';
+  try {
+    const res = await fetch('/api/admin/resolve-tmdb', { method: 'POST', headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al iniciar');
+    document.getElementById('tmdb-progress-wrap').style.display = 'block';
+    startTmdbPoller();
+  } catch (e) {
+    toast(e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = '▶ Resolver ahora';
+  }
+});
+
+function startTmdbPoller() {
+  if (_tmdbPoller) clearInterval(_tmdbPoller);
+  _tmdbPoller = setInterval(async () => {
+    try {
+      const res = await fetch('/api/admin/resolve-tmdb/status', { headers: authHeaders() });
+      const job = await res.json();
+      const pct = job.total > 0 ? Math.round(((job.resolved + job.skipped + job.failed) / job.total) * 100) : 0;
+      document.getElementById('tmdb-bar').style.width = pct + '%';
+      document.getElementById('tmdb-status-text').textContent =
+        job.done
+          ? `✅ Completado — Resueltos: ${job.resolved} | Sin resultado: ${job.skipped} | Errores: ${job.failed}`
+          : `⏳ Procesando... ${job.resolved + job.skipped + job.failed} / ${job.total} (${pct}%) — ✔️ ${job.resolved} resueltos`;
+      if (job.done || !job.running) {
+        clearInterval(_tmdbPoller);
+        _tmdbPoller = null;
+        const btn = document.getElementById('tmdb-resolve-btn');
+        btn.disabled = false;
+        btn.textContent = '▶ Resolver ahora';
+        if (job.done) toast(`TMDB resuelto: ${job.resolved} entradas ✔`, 'success');
+      }
+    } catch { /* ignore polling errors */ }
+  }, 2000);
+}
+
+// Check if a job is already running on page load
+window.addEventListener('load', async () => {
+  if (!token) return;
+  try {
+    const res = await fetch('/api/admin/resolve-tmdb/status', { headers: authHeaders() });
+    const job = await res.json();
+    if (job.running) {
+      document.getElementById('tmdb-progress-wrap').style.display = 'block';
+      startTmdbPoller();
+    }
+  } catch { /* ignore */ }
+});
+
+// ── AUTO LOGIN ───────────────────────────────────────────────────────────────────────
 if (token) showPanel();
 </script>
 </body>

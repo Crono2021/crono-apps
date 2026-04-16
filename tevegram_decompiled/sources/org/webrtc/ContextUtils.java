@@ -1,0 +1,23 @@
+package org.webrtc;
+
+import android.content.Context;
+
+/* compiled from: r8-map-id-3ecb04adb5372cce41086c50685c8d30debac27da0c76b9a483628b9c6707d44 */
+/* loaded from: C:\Users\crono\Documents\PROYECTOS ANTIGRAVITY\Reproductor telegram\tevegram_extracted\classes.dex */
+public class ContextUtils {
+    private static final String TAG = "ContextUtils";
+    private static Context applicationContext;
+
+    @Deprecated
+    public static Context getApplicationContext() {
+        return applicationContext;
+    }
+
+    public static void initialize(Context context) {
+        if (context != null) {
+            applicationContext = context;
+        } else {
+            m7.c.n("Application context cannot be null for ContextUtils.initialize.");
+        }
+    }
+}

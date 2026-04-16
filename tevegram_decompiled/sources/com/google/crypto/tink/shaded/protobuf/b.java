@@ -1,0 +1,105 @@
+package com.google.crypto.tink.shaded.protobuf;
+
+import java.util.AbstractList;
+import java.util.Collection;
+import java.util.List;
+import java.util.RandomAccess;
+
+/* compiled from: r8-map-id-3ecb04adb5372cce41086c50685c8d30debac27da0c76b9a483628b9c6707d44 */
+/* loaded from: C:\Users\crono\Documents\PROYECTOS ANTIGRAVITY\Reproductor telegram\tevegram_extracted\classes.dex */
+public abstract class b extends AbstractList implements b0 {
+
+    /* renamed from: i, reason: collision with root package name */
+    public boolean f2201i = true;
+
+    @Override // java.util.AbstractList, java.util.AbstractCollection, java.util.Collection, java.util.List
+    public boolean add(Object obj) {
+        f();
+        return super.add(obj);
+    }
+
+    @Override // java.util.AbstractCollection, java.util.Collection, java.util.List
+    public boolean addAll(Collection collection) {
+        f();
+        return super.addAll(collection);
+    }
+
+    @Override // java.util.AbstractList, java.util.AbstractCollection, java.util.Collection, java.util.List
+    public void clear() {
+        f();
+        super.clear();
+    }
+
+    @Override // java.util.AbstractList, java.util.Collection, java.util.List
+    public boolean equals(Object obj) {
+        if (obj == this) {
+            return true;
+        }
+        if (!(obj instanceof List)) {
+            return false;
+        }
+        if (!(obj instanceof RandomAccess)) {
+            return super.equals(obj);
+        }
+        List list = (List) obj;
+        int size = size();
+        if (size != list.size()) {
+            return false;
+        }
+        for (int i9 = 0; i9 < size; i9++) {
+            if (!get(i9).equals(list.get(i9))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public final void f() {
+        if (this.f2201i) {
+            return;
+        }
+        androidx.fragment.app.a.p();
+    }
+
+    @Override // java.util.AbstractList, java.util.Collection, java.util.List
+    public int hashCode() {
+        int size = size();
+        int i9 = 1;
+        for (int i10 = 0; i10 < size; i10++) {
+            i9 = (i9 * 31) + get(i10).hashCode();
+        }
+        return i9;
+    }
+
+    @Override // java.util.AbstractList, java.util.List
+    public abstract Object remove(int i9);
+
+    @Override // java.util.AbstractCollection, java.util.Collection, java.util.List
+    public final boolean remove(Object obj) {
+        f();
+        int indexOf = indexOf(obj);
+        if (indexOf == -1) {
+            return false;
+        }
+        remove(indexOf);
+        return true;
+    }
+
+    @Override // java.util.AbstractCollection, java.util.Collection, java.util.List
+    public final boolean removeAll(Collection collection) {
+        f();
+        return super.removeAll(collection);
+    }
+
+    @Override // java.util.AbstractCollection, java.util.Collection, java.util.List
+    public final boolean retainAll(Collection collection) {
+        f();
+        return super.retainAll(collection);
+    }
+
+    @Override // java.util.AbstractList, java.util.List
+    public boolean addAll(int i9, Collection collection) {
+        f();
+        return super.addAll(i9, collection);
+    }
+}

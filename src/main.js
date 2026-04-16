@@ -581,8 +581,26 @@ function createCard(series) {
     return card;
 }
 
+// ── TMDB: prefer server-cached data, fall back to live TMDB search ──────────────
+function tmdbFromEntry(entry) {
+    if (!entry?.tmdb_id) return null;
+    return {
+        id:           entry.tmdb_id,
+        name:         entry.tmdb_name || entry.title,
+        overview:     entry.tmdb_overview || '',
+        posterPath:   entry.tmdb_poster || null,
+        backdropPath: entry.tmdb_backdrop || null,
+        rating:       entry.tmdb_rating ? parseFloat(entry.tmdb_rating) : null,
+        genreIds:     entry.tmdb_genre_ids ? JSON.parse(entry.tmdb_genre_ids) : [],
+        year:         entry.year || null,
+    };
+}
+
 async function loadCardPoster(card, series) {
-    const tmdb = await searchSeries(series.title, series.year);
+    // Fast path: use pre-resolved data from Railway DB
+    let tmdb = tmdbFromEntry(series);
+    // Slow path: live TMDB lookup
+    if (!tmdb) tmdb = await searchSeries(series.title, series.year);
     if (tmdb) catalogTmdbCache.set(series.title, tmdb);
     if (!tmdb?.posterPath || !card.isConnected) return;
     applyPosterImage(card.querySelector('.series-card-poster-placeholder'), posterUrl(tmdb.posterPath));
@@ -598,7 +616,10 @@ async function loadGenresBackground() {
     for (let i = 0; i < catalog.length; i += BATCH) {
         const batch = catalog.slice(i, i + BATCH);
         await Promise.all(batch.map(async s => {
-            const tmdb = await searchSeries(s.title, s.year);
+            // Fast path: use pre-resolved data — zero TMDB API calls
+            let tmdb = tmdbFromEntry(s);
+            // Slow path only if server hasn't resolved this entry yet
+            if (!tmdb) tmdb = await searchSeries(s.title, s.year);
             if (!tmdb) return;
             catalogTmdbCache.set(s.title, tmdb);
             for (const [, bucket] of buckets) {

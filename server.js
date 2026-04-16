@@ -12,6 +12,8 @@ const PORT            = process.env.PORT || 3001;
 const ADMIN_PASSWORD  = process.env.ADMIN_PASSWORD || 'admin';
 const JWT_SECRET      = process.env.JWT_SECRET || 'cineflix-jwt-secret';
 const DATABASE_URL    = process.env.DATABASE_URL;
+const TMDB_KEY        = process.env.TMDB_KEY || '1f8cdf0007b2df2c1e11920cb50cfccf';
+const TMDB_BASE       = 'https://api.themoviedb.org/3';
 
 // ── Database ──────────────────────────────────────────────────────────────────
 let db = null;
@@ -92,6 +94,23 @@ async function initDB() {
             created_at TIMESTAMPTZ DEFAULT NOW()
         )
     `);
+
+    // ── TMDB columns (non-destructive — safe to run on existing DB) ───────────
+    for (const col of [
+        'tmdb_id          INT',
+        'tmdb_name        TEXT',
+        'tmdb_overview    TEXT',
+        'tmdb_poster      TEXT',
+        'tmdb_backdrop    TEXT',
+        'tmdb_rating      NUMERIC(3,1)',
+        'tmdb_genre_ids   TEXT',
+        'tmdb_resolved_at TIMESTAMPTZ',
+    ]) {
+        const colName = col.trim().split(/\s+/)[0];
+        await db.query(`ALTER TABLE series ADD COLUMN IF NOT EXISTS ${col}`).catch(() => {});
+        await db.query(`ALTER TABLE movies ADD COLUMN IF NOT EXISTS ${col}`).catch(() => {});
+    }
+
     const { rows: sRows } = await db.query('SELECT COUNT(*)::int AS n FROM series');
     if (sRows[0].n === 0) {
         const jsonPath = path.join(__dirname, 'src', 'catalog.json');
@@ -125,12 +144,12 @@ async function initDB() {
         const txtPath = path.join(__dirname, 'lista_peliculas.txt');
         if (existsSync(txtPath)) {
             const lines = readFileSync(txtPath, 'utf-8').split('\n');
-            const seen = new Map(); // dedupKey → position
+            const seen = new Map();
             let pos = 0;
             for (const raw of lines) {
                 const parsed = parseTxtLine(raw);
                 if (!parsed) continue;
-                if (seen.has(parsed.dedupKey)) continue; // skip duplicates
+                if (seen.has(parsed.dedupKey)) continue;
                 seen.set(parsed.dedupKey, pos);
                 await db.query(
                     'INSERT INTO movies (title, search_title, year, position) VALUES ($1,$2,$3,$4)',
@@ -143,6 +162,142 @@ async function initDB() {
     }
 
     console.log('[DB] Ready ✓');
+}
+
+// ── TMDB Server-Side Resolution ───────────────────────────────────────────────
+
+// Global progress tracker (single-run at a time)
+let _resolveJob = null;
+
+async function tmdbFetch(url) {
+    const res = await fetch(url);
+    if (res.status === 429) {
+        // Rate limited — wait 10s and retry once
+        await new Promise(r => setTimeout(r, 10000));
+        return fetch(url);
+    }
+    return res;
+}
+
+async function resolveTmdbForRow(title, year, type) {
+    // type: 'tv' | 'movie'
+    const cleanTitle = title.replace(/\s*\(\d{4}\)\s*$/, '').trim()
+        .split(/\s*[|·]\s*/)[0]
+        .replace(/\s*\(\s*(Castellano|Cast\.|Latino|Audio|Español|Doblado|Subtitulado)[^)]*\)/gi, '')
+        .replace(/\s*\([^)]*\)\s*$/, '')
+        .trim();
+
+    const endpoint = type === 'tv' ? 'search/tv' : 'search/movie';
+    const yearParam = type === 'tv' ? 'first_air_date_year' : 'primary_release_year';
+
+    async function search(q, withYear) {
+        const params = new URLSearchParams({ api_key: TMDB_KEY, query: q, language: 'es-ES', include_adult: false });
+        if (withYear && year) params.set(yearParam, year);
+        const res = await tmdbFetch(`${TMDB_BASE}/${endpoint}?${params}`);
+        const json = await res.json();
+        return json.results?.[0] || null;
+    }
+
+    let r = await search(cleanTitle, true);
+    if (!r && year) r = await search(cleanTitle, false);
+    if (!r) {
+        // Last resort: strip special chars
+        const stripped = cleanTitle.replace(/[:''""\-]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (stripped !== cleanTitle) r = await search(stripped, false);
+    }
+    if (!r) return null;
+
+    return {
+        tmdb_id:          r.id,
+        tmdb_name:        r.name || r.title || null,
+        tmdb_overview:    r.overview || null,
+        tmdb_poster:      r.poster_path || null,
+        tmdb_backdrop:    r.backdrop_path || null,
+        tmdb_rating:      r.vote_average ? Math.round(r.vote_average * 10) / 10 : null,
+        tmdb_genre_ids:   r.genre_ids ? JSON.stringify(r.genre_ids) : null,
+    };
+}
+
+async function runResolveJob() {
+    if (!db) return { error: 'No database' };
+    if (_resolveJob?.running) return { error: 'Ya hay una resolución en curso' };
+
+    _resolveJob = { running: true, resolved: 0, skipped: 0, failed: 0, total: 0, done: false, startedAt: Date.now() };
+
+    (async () => {
+        try {
+            // Fetch all unresolved series
+            const { rows: series } = await db.query(
+                `SELECT id, title, year FROM series WHERE tmdb_resolved_at IS NULL AND active = true ORDER BY position ASC`
+            );
+            // Fetch all unresolved movies (limit to avoid overloading TMDB on first run)
+            const { rows: movies } = await db.query(
+                `SELECT id, title, search_title, year FROM movies WHERE tmdb_resolved_at IS NULL AND active = true ORDER BY position ASC LIMIT 2000`
+            );
+
+            _resolveJob.total = series.length + movies.length;
+            console.log(`[TMDB] Starting resolution: ${series.length} series + ${movies.length} movies`);
+
+            // ── Resolve series ────────────────────────────────────────────────
+            for (const s of series) {
+                try {
+                    // Throttle: 40 req/10s = 250ms between requests
+                    await new Promise(r => setTimeout(r, 260));
+                    const data = await resolveTmdbForRow(s.title, s.year, 'tv');
+                    if (data) {
+                        await db.query(
+                            `UPDATE series SET tmdb_id=$1, tmdb_name=$2, tmdb_overview=$3,
+                             tmdb_poster=$4, tmdb_backdrop=$5, tmdb_rating=$6,
+                             tmdb_genre_ids=$7, tmdb_resolved_at=NOW() WHERE id=$8`,
+                            [data.tmdb_id, data.tmdb_name, data.tmdb_overview, data.tmdb_poster,
+                             data.tmdb_backdrop, data.tmdb_rating, data.tmdb_genre_ids, s.id]
+                        );
+                        _resolveJob.resolved++;
+                    } else {
+                        // Mark as attempted (null tmdb_id, but resolved_at set) to skip on next run
+                        await db.query(`UPDATE series SET tmdb_resolved_at=NOW() WHERE id=$1`, [s.id]);
+                        _resolveJob.skipped++;
+                    }
+                } catch (e) {
+                    console.warn(`[TMDB] Series failed: ${s.title}`, e.message);
+                    _resolveJob.failed++;
+                }
+            }
+
+            // ── Resolve movies ────────────────────────────────────────────────
+            for (const m of movies) {
+                try {
+                    await new Promise(r => setTimeout(r, 260));
+                    const titleToSearch = m.search_title || m.title;
+                    const data = await resolveTmdbForRow(titleToSearch, m.year, 'movie');
+                    if (data) {
+                        await db.query(
+                            `UPDATE movies SET tmdb_id=$1, tmdb_name=$2, tmdb_overview=$3,
+                             tmdb_poster=$4, tmdb_backdrop=$5, tmdb_rating=$6,
+                             tmdb_genre_ids=$7, tmdb_resolved_at=NOW() WHERE id=$8`,
+                            [data.tmdb_id, data.tmdb_name, data.tmdb_overview, data.tmdb_poster,
+                             data.tmdb_backdrop, data.tmdb_rating, data.tmdb_genre_ids, m.id]
+                        );
+                        _resolveJob.resolved++;
+                    } else {
+                        await db.query(`UPDATE movies SET tmdb_resolved_at=NOW() WHERE id=$1`, [m.id]);
+                        _resolveJob.skipped++;
+                    }
+                } catch (e) {
+                    console.warn(`[TMDB] Movie failed: ${m.title}`, e.message);
+                    _resolveJob.failed++;
+                }
+            }
+        } catch (e) {
+            console.error('[TMDB] Resolve job crashed:', e.message);
+        } finally {
+            _resolveJob.running = false;
+            _resolveJob.done = true;
+            console.log(`[TMDB] Done — resolved:${_resolveJob.resolved} skipped:${_resolveJob.skipped} failed:${_resolveJob.failed}`);
+        }
+    })();
+
+    return { started: true };
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -308,6 +463,27 @@ app.put('/api/movies/:id', requireAuth, async (req, res) => {
 app.delete('/api/movies/:id', requireAuth, async (req, res) => {
     if (!db) return res.status(503).json({ error: 'No database configured' });
     await db.query('DELETE FROM movies WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+});
+
+// ── TMDB Resolve endpoints ────────────────────────────────────────────────────
+app.post('/api/admin/resolve-tmdb', requireAuth, async (req, res) => {
+    if (!db) return res.status(503).json({ error: 'No database configured' });
+    if (_resolveJob?.running) return res.status(409).json({ error: 'Ya hay una resolución en curso', job: _resolveJob });
+    const result = await runResolveJob();
+    res.json(result);
+});
+
+app.get('/api/admin/resolve-tmdb/status', requireAuth, (req, res) => {
+    if (!_resolveJob) return res.json({ running: false, done: false, resolved: 0, skipped: 0, failed: 0, total: 0 });
+    res.json(_resolveJob);
+});
+
+// Reset tmdb_resolved_at for a single series (force re-resolve)
+app.post('/api/admin/resolve-tmdb/reset/:table/:id', requireAuth, async (req, res) => {
+    if (!db) return res.status(503).json({ error: 'No database' });
+    const table = req.params.table === 'movies' ? 'movies' : 'series';
+    await db.query(`UPDATE ${table} SET tmdb_resolved_at=NULL, tmdb_id=NULL WHERE id=$1`, [req.params.id]);
     res.json({ success: true });
 });
 
