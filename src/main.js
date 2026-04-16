@@ -83,6 +83,17 @@ function makeFocusable(el) {
         if (e.key === 'Enter' || e.keyCode === 13 || e.key === 'DPadCenter') {
             e.preventDefault();
             el.click();
+        } else if (e.key === 'ArrowDown' || e.keyCode === 40) {
+            // Force strict vertical DOM navigation for lists, bypassing broken WebView flex math
+            if (el.parentElement && (el.parentElement.id === 'seasons-list' || el.parentElement.id === 'episodes-list' || el.parentElement.id === 'modal-files-list')) {
+                const next = el.nextElementSibling;
+                if (next) { e.preventDefault(); next.focus(); }
+            }
+        } else if (e.key === 'ArrowUp' || e.keyCode === 38) {
+            if (el.parentElement && (el.parentElement.id === 'seasons-list' || el.parentElement.id === 'episodes-list' || el.parentElement.id === 'modal-files-list')) {
+                const prev = el.previousElementSibling;
+                if (prev) { e.preventDefault(); prev.focus(); }
+            }
         }
     });
 }
@@ -657,6 +668,7 @@ async function openSeries(series) {
             el.className = 'season-btn';
             el.innerHTML = `<span class="season-icon">${icon}</span> ${escapeHtml(btn.text)}`;
             el.addEventListener('click', () => openSeason(btn, series));
+            makeFocusable(el);
             $('seasons-list').appendChild(el);
         }
     } catch (err) {
