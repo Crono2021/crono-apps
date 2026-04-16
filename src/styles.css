@@ -529,25 +529,3 @@ body {
 .android-tv .login-container { background: #1a1a2e !important; }
 .android-tv .main-nav { background: #0a0a12 !important; }
 .android-tv .hero-overlay { background: rgba(10, 10, 18, 0.8) !important; }
-
-/* D-PAD focus rings for Android TV WebView */
-.android-tv *:focus, 
-.android-tv .series-card:focus, 
-.android-tv .episode-card:focus,
-.android-tv .movie-file-item:focus {
-    outline: 4px solid #8b5cf6 !important;
-    outline-offset: -2px !important;
-    transform: scale(1.04) !important;
-    transition: transform 0.1s ease !important;
-    z-index: 100 !important;
-    background-color: rgba(139,92,246, 0.15) !important;
-}
-
-/* Remove CSS transition lag on hover/focus states */
-.android-tv .series-card,
-.android-tv .episode-card,
-.android-tv .btn-primary,
-.android-tv .movie-file-item,
-.android-tv .genre-tab {
-    transition: transform 0.1s ease, color 0.1s, background-color 0.1s !important;
-}
