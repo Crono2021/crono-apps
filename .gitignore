@@ -6,3 +6,7 @@ tvgram_extracted/
 *.apk
 .env
 .env.local
+
+jadx/
+jadx.zip
+*.jar
