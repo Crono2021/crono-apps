@@ -1,6 +1,8 @@
 node_modules/
 dist/
 tvgram-extracted/
+tevegram_extracted/
+tvgram_extracted/
 *.apk
 .env
 .env.local
