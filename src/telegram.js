@@ -13,7 +13,10 @@ let phoneHash = null;
 let swPort = null;
 const streamRegistry = new Map(); // streamId -> { client, doc }
 
-// ===== NATIVE BRIDGE =====
+// ===== NATIVE BRIDGE (AndroidBridge JavascriptInterface) =====
+// On Android the Kotlin class AndroidBridge is injected as window.AndroidBridge.
+// Auth callbacks come back via window.onTelegramAuthStateChanged / window.onTelegramCallback.
+
 let nativeAuthResolver = null;
 window.onTelegramAuthStateChanged = (state) => {
     console.log('[NativeBridge] Auth state:', state);
@@ -33,23 +36,21 @@ window.onTelegramError = (err) => {
 function callNativeAsync(method, param = null) {
     return new Promise((resolve) => {
         nativeAuthResolver = resolve;
-        if (param !== null) window.AndroidTelegram[method](param);
-        else window.AndroidTelegram[method]();
+        const bridge = window.AndroidBridge;
+        if (param !== null) bridge[method](param);
+        else bridge[method]();
     });
 }
 
-// ===== DATA NATIVE BRIDGE (TDLib Fallback) =====
+// ===== DATA NATIVE BRIDGE =====
 const nativeDataResolvers = new Map();
 
+// Kotlin calls this when an async result is ready
 window.onTelegramCallback = (queryId, success, payload) => {
     if (nativeDataResolvers.has(queryId)) {
         const { resolve, reject } = nativeDataResolvers.get(queryId);
         nativeDataResolvers.delete(queryId);
-        if (success) {
-            resolve(payload);
-        } else {
-            reject(new Error(payload));
-        }
+        success ? resolve(payload) : reject(new Error(payload));
     }
 };
 
@@ -57,10 +58,11 @@ function callNativeDataAsync(methodName, ...args) {
     return new Promise((resolve, reject) => {
         const queryId = Date.now().toString() + Math.random().toString().slice(2);
         nativeDataResolvers.set(queryId, { resolve, reject });
-        if (window.AndroidTelegram && window.AndroidTelegram[methodName]) {
-             window.AndroidTelegram[methodName](queryId, ...args);
+        const bridge = window.AndroidBridge;
+        if (bridge && bridge[methodName]) {
+            bridge[methodName](queryId, ...args);
         } else {
-            reject(new Error('Native method missing: ' + methodName));
+            reject(new Error('AndroidBridge method missing: ' + methodName));
         }
     });
 }
@@ -211,7 +213,9 @@ export async function logout() {
 
 export async function sendBotCommand(payload) {
     if (isNativeApp()) {
-        return await callNativeDataAsync('sendBotCommand', payload);
+        const raw = await callNativeDataAsync('sendBotCommand', payload);
+        // Kotlin delivers a JSON string; parse it into a plain object
+        return typeof raw === 'string' ? JSON.parse(raw) : raw;
     }
     const c = await getClient();
     const bot = await c.getEntity(BOT_USERNAME);
@@ -237,11 +241,9 @@ export async function sendBotCommand(payload) {
 
 export async function clickInlineButton(msgId, data) {
     if (isNativeApp()) {
-        // En Android Native TDLib toma el data en base64 desde strings.
-        // GramJS nos devuelve el string que descodificamos. Pero en el Native hemos hecho
-        // que el string `data` que pasa el framework sea base64? No, la vista espera que no haya lios.
-        // Para simplificar, en Android el `data` que recibimos es base64 tal cual desde TDLib.
-        return await callNativeDataAsync('clickInlineButton', msgId, data);
+        // Kotlin returns the video list as a JSON string; parse to array
+        const raw = await callNativeDataAsync('clickInlineButton', msgId, data);
+        return typeof raw === 'string' ? JSON.parse(raw) : raw;
     }
     const c = await getClient();
     const bot = await c.getEntity(BOT_USERNAME);
@@ -276,7 +278,8 @@ export async function clickInlineButton(msgId, data) {
  */
 export async function searchMovieByPayload(searchTitle) {
     if (isNativeApp()) {
-        return await callNativeDataAsync('searchMovieByPayload', searchTitle);
+        const raw = await callNativeDataAsync('searchMovieByPayload', searchTitle);
+        return typeof raw === 'string' ? JSON.parse(raw) : raw;
     }
     const c = await getClient();
     const bot = await c.getEntity(BOT_USERNAME);
@@ -290,7 +293,8 @@ export async function searchMovieByPayload(searchTitle) {
 
 export async function getVideoMessages(limit = 50, minId = 0) {
     if (isNativeApp()) {
-        return await callNativeDataAsync('getVideoMessages', limit, minId);
+        const raw = await callNativeDataAsync('getVideoMessages', limit, minId);
+        return typeof raw === 'string' ? JSON.parse(raw) : raw;
     }
     const c = await getClient();
     const bot = await c.getEntity(BOT_USERNAME);
@@ -540,11 +544,8 @@ export async function streamVideo(media, videoElement, onProgress) {
  * Check if the app is running inside Capacitor (Android/iOS).
  */
 export function isNativeApp() {
-    try {
-        return !!(window.Capacitor && window.Capacitor.isNativePlatform());
-    } catch {
-        return false;
-    }
+    // On Android: Kotlin injects window.AndroidBridge via addJavascriptInterface
+    return !!(window.AndroidBridge);
 }
 
 /**
@@ -572,13 +573,10 @@ function getExoPlayer() {
 }
 
 export async function streamVideoNative(videoObj) {
-    const ExoPlayer = getExoPlayer();
-    
-    // Extraemos chatId y msgId del objeto video
+    // Extract chatId and msgId — normalize to string
     let chatId = videoObj.chatId;
-    let msgId = videoObj.msgId;
-    
-    // Si chatId es un usuario y estamos usando API Hash de GramJS
+    let msgId  = videoObj.msgId;
+
     if (chatId && typeof chatId === 'object' && chatId.value) {
         chatId = chatId.value.toString();
     } else if (chatId) {
@@ -586,14 +584,24 @@ export async function streamVideoNative(videoObj) {
     }
 
     if (!chatId || !msgId) {
-        throw new Error("No se pudo obtener el chatId o msgId necesario para TDLib.");
+        throw new Error('No se pudo obtener chatId/msgId para reproducción nativa.');
     }
 
-    const proxyPort = window.CINEFLIX_PROXY_PORT || 0;
-    const url = `http://127.0.0.1:${proxyPort}/resolve?chat_id=${chatId}&msg_id=${msgId}`;
-    
-    console.log('[Native] 🎬 Iniciando ExoPlayer con TDLib. URL:', url);
+    const fileId   = (videoObj.fileId   ?? 0).toString();
+    const fileSize = (videoObj.fileSize  ?? 0).toString();
+    const mimeType = (videoObj.mimeType  ?? 'video/mp4');
+    const title    = videoObj.caption || videoObj.fileName || 'Episodio';
 
-    await ExoPlayer.play({ url });
+    console.log('[Native] 🎬 Streaming — chatId:', chatId, 'msgId:', msgId, 'fileId:', fileId, 'size:', fileSize);
+
+    // AndroidBridge.playVideo(chatId, msgId, fileId, fileSize, mimeType, title)
+    window.AndroidBridge.playVideo(
+        chatId,
+        msgId.toString(),
+        fileId,
+        fileSize,
+        mimeType,
+        title
+    );
 }
 

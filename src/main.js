@@ -77,6 +77,16 @@ import {
 } from './tmdb.js';
 
 
+function makeFocusable(el) {
+    el.tabIndex = 0;
+    el.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.keyCode === 13 || e.key === 'DPadCenter') {
+            e.preventDefault();
+            el.click();
+        }
+    });
+}
+
 // ===== STATE =====
 let currentPhone = '';
 let currentSeries = null;
@@ -300,6 +310,9 @@ $('btn-2fa').addEventListener('click', async () => {
 });
 
 // Enter key support
+$('input-phone').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-phone').click(); });
+$('input-otp').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-otp').click(); });
+$('input-2fa').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-2fa').click(); });
 
 $('btn-logout').addEventListener('click', async () => {
     if (confirm('¿Cerrar sesión?')) {
@@ -553,6 +566,7 @@ function createCard(series) {
     card.addEventListener('click', () => openSeries(series));
     // Schedule poster load only when card enters viewport
     schedulePosterLoad(card, () => loadCardPoster(card, series));
+    makeFocusable(card);
     return card;
 }
 
@@ -1145,6 +1159,7 @@ function createMovieCard(movie) {
     card.addEventListener('click', () => openMovie(movie));
     // Defer poster load until card is near the viewport
     schedulePosterLoad(card, () => loadMovieCardPoster(card, movie));
+    makeFocusable(card);
     return card;
 }
 
@@ -1271,6 +1286,7 @@ function populateMovieFilesList(movie, videos) {
             playerOrigin = 'movie';
             playVideo(video, displayTitle);
         });
+        makeFocusable(item);
         list.appendChild(item);
     }
     list.classList.remove('hidden');
@@ -1375,6 +1391,7 @@ async function openSeason(button, series) {
                 </div>
             `;
             card.addEventListener('click', () => { playerOrigin = 'episodes'; playVideo(video, series.title); });
+            makeFocusable(card);
             $('episodes-list').appendChild(card);
         }
     } catch (err) {

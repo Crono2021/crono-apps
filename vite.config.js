@@ -3,7 +3,7 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import { resolve } from 'path';
 
 export default defineConfig({
-    base: process.env.VITE_BASE || '/',
+    base: process.env.VITE_BASE || './',
     plugins: [
         nodePolyfills({
             globals: {

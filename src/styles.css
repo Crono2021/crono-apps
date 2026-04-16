@@ -524,8 +524,25 @@ body {
     box-shadow: none !important;
 }
 
+.android-tv .topbar,
+.android-tv .main-nav,
+.android-tv .genre-tabs,
+.android-tv .modal-header {
+    position: static !important;
+}
+
 .android-tv .topbar { background: #0a0a12 !important; border-bottom: 2px solid #1a1a2e !important; }
-.android-tv .genre-tabs { background: #0a0a12 !important; }
+.android-tv .genre-tabs { background: #0a0a12 !important; border-bottom: 2px solid #1a1a2e !important; }
 .android-tv .login-container { background: #1a1a2e !important; }
 .android-tv .main-nav { background: #0a0a12 !important; }
 .android-tv .hero-overlay { background: rgba(10, 10, 18, 0.8) !important; }
+
+/* Safe D-PAD focus rings that DO NOT trigger Android WebView boundary recalculation failures */
+.android-tv *:focus, 
+.android-tv .series-card:focus, 
+.android-tv .episode-card:focus,
+.android-tv .movie-file-item:focus {
+    outline: 4px solid #8b5cf6 !important;
+    outline-offset: -4px !important;
+    background-color: rgba(139,92,246, 0.25) !important;
+}
