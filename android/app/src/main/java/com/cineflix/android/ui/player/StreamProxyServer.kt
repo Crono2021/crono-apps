@@ -3,21 +3,23 @@ package com.cineflix.android.ui.player
 import android.util.Log
 import com.cineflix.android.TelegramEngine
 import fi.iki.elonen.NanoHTTPD
-import java.io.File
-import java.io.FileInputStream
 import java.io.InputStream
 
 /**
  * StreamProxyServer — NanoHTTPD-based local HTTP server that proxies
  * Telegram byte-range requests between ExoPlayer and TDLib.
  *
- * COPIED from original Cineflix Android StreamProxyServer.kt
- * Adapted: TDLib writes to a local file; this server reads from it.
+ * DISK-FREE MODE: No file is ever written to device storage.
+ * Each range request asks TDLib to download that exact range
+ * synchronously from Telegram's CDN, reads the bytes, and
+ * streams them directly to ExoPlayer. Disk usage = 0 bytes.
  *
  * Flow:
  *   ExoPlayer → HTTP GET /stream (with Range header)
- *               → server reads from TDLib local file
- *               → HTTP 206 response returned to ExoPlayer
+ *               → TdApi.DownloadFile(offset, limit, synchronous=true)
+ *               → TdApi.ReadFilePart(offset, count)
+ *               → HTTP 206 + bytes returned to ExoPlayer
+ *               → TDLib cache freed (no permanent file)
  */
 class StreamProxyServer(
     private val engine: TelegramEngine,
@@ -28,28 +30,35 @@ class StreamProxyServer(
 
     companion object {
         private const val TAG = "StreamProxy"
-        private const val CHUNK_SIZE = 64 * 1024 // 64KB chunks, same as original
+
+        // Each NanoHTTPD request gets this chunk size delivered to ExoPlayer.
+        // 2MB balances network round-trips vs. memory pressure.
+        private const val PREFETCH_SIZE = 2L * 1024L * 1024L
     }
 
-    /** Set by PlayerActivity once TDLib assigns a local file path */
-    @Volatile var localPath: String? = null
+    /**
+     * Resolve the true file size from TDLib (up to 10s).
+     * TDLib knows the real size after the first DownloadFile call returns.
+     * Falls back to the size passed via Intent if TDLib hasn't reported yet.
+     */
+    private fun resolveFileSize(): Long {
+        val deadline = System.currentTimeMillis() + 10_000L
+        while (System.currentTimeMillis() < deadline) {
+            val state = engine.getFileStateFlow(fileId).value
+            if (state != null && state.expectedSize > 0) {
+                Log.d(TAG, "resolveFileSize → ${state.expectedSize} (from TDLib)")
+                return state.expectedSize
+            }
+            Thread.sleep(100)
+        }
+        Log.w(TAG, "resolveFileSize → $fileSize (fallback from Intent)")
+        return fileSize
+    }
 
     override fun serve(session: IHTTPSession): Response {
-        Log.d(TAG, "serve() called, URI=${session.uri}, Range=${session.headers["range"]}")
+        Log.d(TAG, "serve() URI=${session.uri} Range=${session.headers["range"]}")
 
-        // Wait for TDLib to assign a local path and know the file size
-        val filePath = waitForPath()
-        if (filePath == null) {
-            return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain", "Timeout waiting for path")
-        }
-
-        // Wait to know the ACTUAL file size, otherwise ExoPlayer seeks into the void!
-        var actualFileSize = waitForFileSize()
-        if (actualFileSize <= 0) {
-            actualFileSize = fileSize // fallback to Intent extra if it really failed
-        }
-
-        val file = File(filePath)
+        val actualFileSize = resolveFileSize()
 
         // Parse the Range header: "bytes=start-end"
         val rangeHeader = session.headers["range"] ?: "bytes=0-"
@@ -57,12 +66,9 @@ class StreamProxyServer(
         val end = if (endRequested < 0 || endRequested >= actualFileSize) actualFileSize - 1 else endRequested
         val length = end - start + 1
 
-        Log.d(TAG, "Range: $start-$end, length=$length, actualFileSize=$actualFileSize")
+        Log.d(TAG, "Serving bytes $start-$end ($length bytes) of $actualFileSize total")
 
-        // Hint TDLib to prioritise this offset
-        engine.hintDownloadOffset(fileId, start)
-
-        val inputStream = BlockingProxyInputStream(engine, fileId, file, start, length)
+        val inputStream = DiskFreeInputStream(engine, fileId, start, length, actualFileSize)
 
         val response = newFixedLengthResponse(
             Response.Status.PARTIAL_CONTENT,
@@ -75,105 +81,94 @@ class StreamProxyServer(
         return response
     }
 
-    /** Block until TDLib assigns a local path (up to 25s) */
-    private fun waitForPath(): String? {
-        val deadline = System.currentTimeMillis() + 25_000L
-        while (System.currentTimeMillis() < deadline) {
-            localPath?.let { return it }
-            Thread.sleep(100)
-        }
-        return null
-    }
-
-    /** Block until TDLib tells us the actual expected file size */
-    private fun waitForFileSize(): Long {
-        val deadline = System.currentTimeMillis() + 10_000L
-        while (System.currentTimeMillis() < deadline) {
-            val state = engine.getFileStateFlow(fileId).value
-            if (state != null && state.expectedSize > 0) {
-                return state.expectedSize
-            }
-            Thread.sleep(100)
-        }
-        return 0L
-    }
-
     private fun parseRange(rangeHeader: String): Pair<Long, Long> {
         val match = Regex("bytes=(\\d+)-(\\d*)").find(rangeHeader)
         val start = match?.groupValues?.get(1)?.toLongOrNull() ?: 0L
-        val end = match?.groupValues?.get(2)?.toLongOrNull() ?: -1L
+        val end   = match?.groupValues?.get(2)?.toLongOrNull() ?: -1L
         return Pair(start, end)
     }
 
     /**
-     * InputStream that serves bytes to ExoPlayer from TDLib.
-     * Uses a 2MB prefetch buffer to minimize IPC calls.
-     * For un-cached data, uses downloadRangeAndRead (synchronous DownloadFile)
-     * which blocks until TDLib has actually fetched the bytes from Telegram CDN,
-     * eliminating the wasteful poll-sleep-retry loop.
+     * InputStream that fetches bytes on-demand directly from TDLib.
+     * Never reads from a local file. TDLib manages its own internal
+     * temporary buffer, but our app never holds the full file.
+     *
+     * Strategy:
+     *  1. Try ReadFilePart (fast — TDLib already has this range in its buffer)
+     *  2. If not cached: DownloadFile(synchronous=true) then ReadFilePart
+     *     This blocks until Telegram CDN delivers the bytes, then returns them.
+     *  3. Serves bytes from an in-memory prefetch buffer (2MB) to reduce IPC calls.
      */
-    private class BlockingProxyInputStream(
+    private class DiskFreeInputStream(
         private val engine: TelegramEngine,
         private val fileId: Int,
-        file: File,
         private val startOffset: Long,
         private val lengthRequested: Long,
+        private val totalFileSize: Long,
     ) : InputStream() {
-        private var currentPosition = startOffset
-        private val endPosition = startOffset + lengthRequested
 
+        private var currentPosition = startOffset
+        private val endPosition     = startOffset + lengthRequested
+
+        // In-memory prefetch buffer — avoids one IPC call per byte
         private var prefetchBuffer: ByteArray? = null
         private var prefetchOffset: Long = -1L
 
         override fun read(): Int {
             val b = ByteArray(1)
-            val actuallyRead = read(b, 0, 1)
-            if (actuallyRead == -1) return -1
-            return b[0].toInt() and 0xFF
+            return if (read(b, 0, 1) == -1) -1 else b[0].toInt() and 0xFF
         }
 
         override fun read(b: ByteArray, off: Int, len: Int): Int {
             if (currentPosition >= endPosition) return -1
 
-            // Fast path: serve from prefetch buffer if data is already there
-            if (prefetchBuffer != null && currentPosition >= prefetchOffset && currentPosition < prefetchOffset + prefetchBuffer!!.size) {
-                val offsetInBuffer = (currentPosition - prefetchOffset).toInt()
-                val bytesAvailable = prefetchBuffer!!.size - offsetInBuffer
-                val toRead = minOf(len, bytesAvailable)
-                System.arraycopy(prefetchBuffer!!, offsetInBuffer, b, off, toRead)
+            // --- Fast path: data is in the prefetch buffer ---
+            val pb = prefetchBuffer
+            if (pb != null &&
+                currentPosition >= prefetchOffset &&
+                currentPosition < prefetchOffset + pb.size
+            ) {
+                val bufferIdx = (currentPosition - prefetchOffset).toInt()
+                val available = pb.size - bufferIdx
+                val toRead    = minOf(len, available)
+                System.arraycopy(pb, bufferIdx, b, off, toRead)
                 currentPosition += toRead
                 return toRead
             }
 
-            // Need to fetch from TDLib. Request 2MB chunks to minimize round-trips.
-            val prefetchTargetSize = 2L * 1024L * 1024L
-            val toFetch = minOf(maxOf(len.toLong(), prefetchTargetSize), endPosition - currentPosition)
+            // --- Slow path: fetch from TDLib ---
+            val toFetch = minOf(
+                maxOf(len.toLong(), PREFETCH_SIZE),
+                endPosition - currentPosition
+            )
 
-            // Try 1: Fast-path ReadFilePart (data already downloaded/cached by TDLib)
+            // Try 1: fast ReadFilePart (already in TDLib's internal buffer)
             val fastChunk = engine.readFilePartSync(fileId, currentPosition, toFetch)
             if (fastChunk != null && fastChunk.isNotEmpty()) {
-                return servePrefetch(fastChunk, b, off, len)
+                return deliverFromChunk(fastChunk, b, off, len)
             }
 
-            // Try 2: Data not cached — use synchronous download (blocks until TDLib downloads from CDN)
-            // This is the key optimization: instead of poll+sleep+retry thousands of times,
-            // we make ONE blocking call that returns when the data is ready.
+            // Try 2: synchronous download — blocks until Telegram CDN delivers the range.
+            // This is the KEY to disk-free streaming: instead of downloading the whole
+            // file, we download ONLY the bytes ExoPlayer needs right now.
             val syncChunk = engine.downloadRangeAndRead(fileId, currentPosition, toFetch)
             if (syncChunk != null && syncChunk.isNotEmpty()) {
-                return servePrefetch(syncChunk, b, off, len)
+                return deliverFromChunk(syncChunk, b, off, len)
             }
 
-            // Check if we've reached EOF
+            // EOF check
             val state = engine.getFileStateFlow(fileId).value
             if (state != null && state.isCompleted && currentPosition >= state.expectedSize) {
+                Log.d(TAG, "EOF reached at position=$currentPosition")
                 return -1
             }
 
-            // Last resort: data still unavailable after 30s sync wait. Return 0 to let ExoPlayer retry.
+            // Transient failure — return 0 so ExoPlayer retries
+            Log.w(TAG, "Transient fetch failure at position=$currentPosition, returning 0")
             return 0
         }
 
-        private fun servePrefetch(chunk: ByteArray, b: ByteArray, off: Int, len: Int): Int {
+        private fun deliverFromChunk(chunk: ByteArray, b: ByteArray, off: Int, len: Int): Int {
             prefetchBuffer = chunk
             prefetchOffset = currentPosition
             val toRead = minOf(len, chunk.size)

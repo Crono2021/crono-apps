@@ -111,30 +111,21 @@ class PlayerActivity : Activity() {
         val port = proxy.listeningPort
         Log.i(TAG, "▶ StreamProxyServer started on port $port")
 
-        // 2. Start TDLib download in background
+        // 2. Register the file with TDLib using a minimal 1-byte DownloadFile call.
+        // This makes TDLib aware of the file so it can report the real expectedSize
+        // via UpdateFile events (used by StreamProxyServer.resolveFileSize).
+        // We do NOT download the full file — all actual bytes are fetched on-demand
+        // by StreamProxyServer.DiskFreeInputStream as ExoPlayer requests them.
         scope.launch {
             try {
-                Log.i(TAG, "▶ Requesting TDLib download for fileId=$fileId...")
-                val path = engine.startDownloadReturnPath(fileId, priority = 32)
-                if (path != null) {
-                    proxy.localPath = path
-                    Log.i(TAG, "▶ TDLib local path SET: $path")
-                } else {
-                    Log.e(TAG, "▶ TDLib returned NULL path for fileId=$fileId")
-                }
+                Log.i(TAG, "▶ Registering fileId=$fileId with TDLib (disk-free mode)...")
+                engine.startDownloadReturnPath(fileId, priority = 32)
+                // startDownloadReturnPath requests only the first 1MB (to get a path assigned).
+                // We ignore the returned path — StreamProxyServer operates without it.
+                Log.i(TAG, "▶ TDLib registration complete for fileId=$fileId")
             } catch (e: Exception) {
-                Log.e(TAG, "▶ TDLib download error: ${e.message}", e)
+                Log.e(TAG, "▶ TDLib registration error: ${e.message}", e)
             }
-        }
-
-        // 2b. MOOV atom pre-fetch: immediately tell TDLib to also download the LAST 10MB
-        // of the file. MP4/MKV files store their index (moov atom) at the end.
-        // For 2-3GB movies the MOOV atom can be 15-20MB, so 10MB gets us most of it fast.
-        if (effectiveFileSize > 10L * 1024 * 1024) {
-            val moovOffset = effectiveFileSize - (10L * 1024 * 1024)
-            val moovLimit = 10L * 1024 * 1024
-            Log.i(TAG, "▶ MOOV pre-fetch: hinting TDLib to download bytes $moovOffset-$effectiveFileSize")
-            engine.hintDownloadOffset(fileId, moovOffset, moovLimit)
         }
 
         // 3. Setup ExoPlayer (COPIED EXACTLY FROM TVGRAM PlayerManager.java)
