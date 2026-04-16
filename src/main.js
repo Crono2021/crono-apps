@@ -1356,7 +1356,9 @@ async function openSeason(button, series) {
         }
 
 
-        // La app respeta el orden natural del bot (el usuario ha pedido no invertirlos)
+        // Don't sort alphabetically. The bot provides them in reverse chronological order
+        // (newest message first). Reverse it to show oldest (Episode 1) first.
+        videos.reverse();
         // Fetch TMDB episode details — ensure TMDB search has completed
         const seasonNum = extractSeasonNumber(button.text);
         let tmdbEpisodes = [];
