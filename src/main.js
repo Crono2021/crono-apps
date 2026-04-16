@@ -237,10 +237,87 @@ function applyPosterImage(placeholder, url) {
 
 
 
+// ===== OTA UPDATER =====
+async function checkOTAUpdates() {
+    try {
+        let platform = window.__appPlatform; // 'android', 'android_tv', 'desktop'
+        let localVersion = window.__appVersion;
+
+        if (!platform && window.AndroidBridge && window.AndroidBridge.getPlatform) {
+            platform = window.AndroidBridge.getPlatform();
+            localVersion = window.AndroidBridge.getVersionCode();
+        }
+
+        if (!platform || !localVersion) return; // Web normal doesn't update via APK
+
+        // Add random timestamp to avoid caching
+        const res = await fetch(`https://raw.githubusercontent.com/Crono2021/crono-apps/master/update.json?t=${Date.now()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const platformData = data[platform];
+        if (!platformData) return;
+
+        let requiresUpdate = false;
+        if (typeof localVersion === 'number' || platform !== 'desktop') {
+            if (platformData.versionCode > parseInt(localVersion)) requiresUpdate = true;
+        } else {
+            // Desktop uses semver string
+            if (platformData.version !== localVersion) requiresUpdate = true;
+        }
+
+        if (requiresUpdate) {
+            showUpdateModal(platformData.url);
+        }
+    } catch(e) {
+        console.warn('[OTA] Check failed:', e);
+    }
+}
+
+function showUpdateModal(url) {
+    const div = document.createElement('div');
+    div.innerHTML = `
+        <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:999999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);font-family:system-ui,-apple-system,sans-serif">
+            <div style="background:#16161e;padding:3rem;border-radius:12px;text-align:center;max-width:400px;border:1px solid rgba(255,255,255,0.1);box-shadow:0 10px 40px rgba(0,0,0,0.5)">
+                <div style="font-size:3rem;margin-bottom:1rem">🚀</div>
+                <h2 style="margin:0 0 1rem 0;color:#fff;font-size:1.5rem">Nueva Versión Disponible</h2>
+                <p style="color:#aaa;margin-bottom:2rem;line-height:1.5;font-size:1rem">Es obligatorio actualizar la aplicación para continuar utilizándola de forma segura y con las últimas funciones de la plataforma.</p>
+                <button id="btn-ota-update" style="background:var(--accent,#ff3366);color:#fff;border:none;padding:1rem 2rem;border-radius:8px;font-weight:bold;font-size:1.1rem;cursor:pointer;width:100%;transition:transform 0.1s">Actualizar Ahora</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(div);
+
+    const btn = document.getElementById('btn-ota-update');
+    // Ensure D-Pad focus
+    btn.tabIndex = 0;
+    btn.focus();
+    
+    // Auto-focus persistence for Android TV if they click somewhere else
+    div.addEventListener('keydown', (e) => {
+        if (!e.target.matches('#btn-ota-update')) { e.preventDefault(); btn.focus(); }
+    });
+
+    btn.addEventListener('click', () => {
+        btn.textContent = 'Descargando...';
+        btn.style.opacity = '0.7';
+        if (window.__appPlatform === 'android_tv') {
+            window.AndroidBridge?.downloadAndInstallUpdate(url);
+        } else if (window.__appPlatform === 'android') {
+            window.AndroidBridge?.downloadAndInstallUpdate(url);
+        } else if (window.__appPlatform === 'desktop') {
+            window.cineflix?.updater?.openExternal(url);
+        }
+    });
+}
+
 // ===== INIT =====
 async function init() {
     showView('view-login');
     showStep('login-loading');
+
+    // Comprobar OTA primero
+    await checkOTAUpdates();
 
     // On Android: restore session from native SharedPreferences BEFORE checking login.
     // localStorage can be wiped by the OS; SharedPreferences is always persistent.

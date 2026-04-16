@@ -1,0 +1,14 @@
+{
+  "desktop": { 
+    "version": "1.0.1", 
+    "url": "https://github.com/Crono2021/crono-apps/releases/download/v1.0.1/Cineflix-Setup-1.0.1.exe" 
+  },
+  "android": { 
+    "versionCode": 2, 
+    "url": "https://github.com/Crono2021/crono-apps/releases/download/v2.0/Cineflix-Mobile.apk" 
+  },
+  "android_tv": { 
+    "versionCode": 2, 
+    "url": "https://github.com/Crono2021/crono-apps/releases/download/v2.0/Cineflix-TV.apk" 
+  }
+}
