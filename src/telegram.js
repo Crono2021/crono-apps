@@ -69,19 +69,37 @@ function callNativeDataAsync(methodName, ...args) {
 
 // ===== SESSION =====
 
-function getSavedSession() {
-    return localStorage.getItem(SESSION_KEY) || '';
+async function getSavedSession() {
+    let sessionStr = localStorage.getItem(SESSION_KEY) || '';
+    if (!sessionStr && window.cineflix?.isElectron) {
+        try {
+            sessionStr = await window.cineflix.store.get(SESSION_KEY) || '';
+            if (sessionStr) {
+                localStorage.setItem(SESSION_KEY, sessionStr);
+            }
+        } catch {}
+    }
+    return sessionStr;
 }
 
-function saveSession() {
-    if (!client) return;
-    const sessionStr = client.session.save();
+function saveSession(overrideStr) {
+    if (!client && overrideStr === undefined) return;
+    const sessionStr = overrideStr !== undefined ? overrideStr : client.session.save();
+    
     // 1. Always save to localStorage (fast, synchronous)
-    localStorage.setItem(SESSION_KEY, sessionStr);
-    // 2. On Android: also persist to native SharedPreferences (survives memory cleanup)
+    if (sessionStr) localStorage.setItem(SESSION_KEY, sessionStr);
+    else localStorage.removeItem(SESSION_KEY);
+    
+    // 2. On Electron: sync to local desktop config
+    if (window.cineflix?.isElectron) {
+        if (sessionStr) window.cineflix.store.set(SESSION_KEY, sessionStr).catch(()=>{});
+        else window.cineflix.store.delete(SESSION_KEY).catch(()=>{});
+    }
+
+    // 3. On Android: persist to native SharedPreferences (survives memory cleanup)
     if (window.Capacitor?.isNativePlatform?.()) {
         const prefs = window.Capacitor?.Plugins?.Preferences;
-        if (prefs) prefs.set({ key: SESSION_KEY, value: sessionStr }).catch(() => {});
+        if (prefs) prefs.set({ key: SESSION_KEY, value: sessionStr || '' }).catch(() => {});
     }
 }
 
@@ -91,6 +109,16 @@ function saveSession() {
  * BEFORE init() checks isLoggedIn(). Must be awaited at app startup.
  */
 export async function restoreNativeSession() {
+    // Desktop: Pre-load session into localStorage to avoid login loop
+    if (window.cineflix?.isElectron) {
+        try {
+            const sessionStr = await window.cineflix.store.get(SESSION_KEY);
+            if (sessionStr && !localStorage.getItem(SESSION_KEY)) {
+                localStorage.setItem(SESSION_KEY, sessionStr);
+            }
+        } catch {}
+    }
+
     if (!window.Capacitor?.isNativePlatform?.()) return; // web: nothing to do
     try {
         const prefs = window.Capacitor?.Plugins?.Preferences;
@@ -109,7 +137,8 @@ export async function restoreNativeSession() {
 
 export async function getClient() {
     if (client && client.connected) return client;
-    const session = new StringSession(getSavedSession());
+    const sessionStr = await getSavedSession();
+    const session = new StringSession(sessionStr);
     client = new TelegramClient(session, API_ID, API_HASH, {
         connectionRetries: 5,
         useWSS: true,
@@ -142,21 +171,38 @@ export async function isLoggedIn() {
     }
 }
 
-export async function sendCode(phone) {
+export async function sendCode(phone, isRetry = false) {
     if (isNativeApp()) {
         const state = await callNativeAsync('loginWithPhone', phone);
         if (state.startsWith('ERROR')) throw new Error(state);
         return { isCodeViaApp: state === 'WAIT_CODE', success: true };
     }
-    await getClient();
-    const result = await client.invoke(new Api.auth.SendCode({
-        phoneNumber: phone,
-        apiId: API_ID,
-        apiHash: API_HASH,
-        settings: new Api.CodeSettings({}),
-    }));
-    phoneHash = result.phoneCodeHash;
-    return { success: true };
+    try {
+        await getClient();
+        const result = await client.invoke(new Api.auth.SendCode({
+            phoneNumber: phone,
+            apiId: API_ID,
+            apiHash: API_HASH,
+            settings: new Api.CodeSettings({}),
+        }));
+        phoneHash = result.phoneCodeHash;
+        return { success: true };
+    } catch (err) {
+        const msg = (err.message || '').toUpperCase();
+        if (!isRetry && msg.includes('AUTH_RESTART')) {
+            console.warn('[Auth] AUTH_RESTART caught. Clearing session and retrying...');
+            if (client) {
+                try { await client.disconnect(); } catch {}
+                client = null;
+            }
+            saveSession(''); // Attempt to clear
+            localStorage.removeItem(SESSION_KEY);
+            
+            await new Promise(r => setTimeout(r, 1000));
+            return await sendCode(phone, true);
+        }
+        throw err;
+    }
 }
 
 export async function verifyCode(phone, code) {

@@ -39,6 +39,9 @@ export default defineConfig({
             buffer: resolve('./node_modules/buffer'),
         },
     },
+    esbuild: {
+        keepNames: true, // Crucial for GramJS telegram/Password algorithm detection
+    },
     build: {
         outDir: 'dist',
         sourcemap: false,
