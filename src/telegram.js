@@ -391,6 +391,69 @@ export async function getVideoMessages(limit = 50, minId = 0) {
     return videos;
 }
 
+// ── Electron: IPC stream handler ──────────────────────────────────────────────
+let _electronHandlerActive = false;
+export function initElectronStreamHandler() {
+    if (!window.cineflix?.isElectron || _electronHandlerActive) return;
+    _electronHandlerActive = true;
+
+    window.cineflix.stream.onFetchRange(async ({ requestId, streamId, start, size }) => {
+        const info = streamRegistry.get(streamId);
+        if (!info) {
+            window.cineflix.stream.replyRange(requestId, new ArrayBuffer(0));
+            return;
+        }
+        try {
+            const chunk = await fetchTelegramRange(info.client, info.doc, start, size);
+            window.cineflix.stream.replyRange(requestId, chunk.buffer);
+        } catch (err) {
+            window.cineflix.stream.replyRange(requestId, new ArrayBuffer(0));
+        }
+    });
+}
+
+/**
+ * Play in embedded MPV (Electron only).
+ */
+export async function playInMpv(playlistArray, seriesTitle, startIndex = 0) {
+    const streamInfos = [];
+    
+    for (let i = 0; i < playlistArray.length; i++) {
+        const v = playlistArray[i];
+        let media = v.media || v;
+        const doc = media.document;
+        const streamId = `${doc.id.toString()}-${Date.now()}`;
+        const c = await getClient();
+        
+        streamRegistry.set(streamId, { client: c, doc });
+        
+        await window.cineflix.stream.register(streamId, {
+            size: Number(doc.size),
+            mimeType: doc.mimeType || 'video/mp4',
+        });
+        
+        const label = v.displayTitle || (v.caption || v.fileName || v.title || seriesTitle || '').replace(/\.[^.]+$/, '');
+        streamInfos.push({
+            streamId: streamId,
+            fileSize: Number(doc.size),
+            mimeType: doc.mimeType || 'video/mp4',
+            title: label,
+        });
+    }
+
+    if (streamInfos.length === 0) return;
+
+    const res = await window.cineflix.player.launch({
+        playlist: streamInfos,
+        startIndex,
+        seriesTitle
+    });
+
+    if (res && !res.ok) {
+        throw new Error(res.error || 'No se pudo abrir el reproductor');
+    }
+}
+
 // ===== SERVICE WORKER STREAMING =====
 
 /**
@@ -503,6 +566,20 @@ export async function initServiceWorker() {
  * The browser handles buffering, seeking and moov atom detection automatically.
  */
 export async function streamVideo(media, videoElement, onProgress) {
+    // ── Electron path: stream via local HTTP server → MPV ───────────────────
+    if (window.cineflix?.isElectron) {
+        initElectronStreamHandler();
+        const c = await getClient();
+        const doc = media.document;
+        const streamId = `${doc.id.toString()}-${Date.now()}`;
+        streamRegistry.set(streamId, { client: c, doc });
+        await window.cineflix.stream.register(streamId, {
+            size: Number(doc.size),
+            mimeType: doc.mimeType || 'video/mp4',
+        });
+        return { streamId, fileSize: Number(doc.size), mimeType: doc.mimeType || 'video/mp4' };
+    }
+
     // Always re-init SW port before playing — the browser can restart the SW
     // after idle periods, resetting its in-memory state (port = null).
     // Re-initializing takes < 50ms when the SW is already active.

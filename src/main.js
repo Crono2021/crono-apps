@@ -98,7 +98,7 @@ import {
     isLoggedIn, sendCode, verifyCode, verify2FA, logout,
     sendBotCommand, clickInlineButton, getVideoMessages,
     streamVideo, initServiceWorker, searchMovieByPayload,
-    isNativeApp, streamVideoNative, restoreNativeSession,
+    isNativeApp, streamVideoNative, restoreNativeSession, playInMpv
 } from './telegram.js';
 import {
     searchSeries, searchMovie, getSeasonEpisodes, extractSeasonNumber,
@@ -1516,7 +1516,7 @@ function populateMovieFilesList(movie, videos) {
         item.addEventListener('click', () => {
             closeMovieModal();
             playerOrigin = 'movie';
-            playVideo(video, displayTitle);
+            playVideo(video, displayTitle, toShow);
         });
         makeFocusable(item);
         list.appendChild(item);
@@ -1610,6 +1610,9 @@ async function openSeason(button, series) {
             const epTitle = tmdbEp?.name || parseSource.replace(/\.[^.]+$/, '');
             const overview = tmdbEp?.overview || '';
 
+            // Save the nice title directly onto the video object so the player can use it later
+            video.displayTitle = `${parsed ? `${parsed.season}x${String(parsed.episode).padStart(2,'0')} - ` : ''}${epTitle}`;
+
             card.innerHTML = `
                 <div class="episode-thumb" style="${still ? `background-image:url('${still}')` : ''}">
                     ${!still ? '<div class="episode-thumb-placeholder">▶</div>' : '<div class="episode-play-overlay">▶</div>'}
@@ -1622,7 +1625,7 @@ async function openSeason(button, series) {
                     <div class="episode-meta">${sizeStr}${durStr ? ' · ' + durStr : ''}</div>
                 </div>
             `;
-            card.addEventListener('click', () => { playerOrigin = 'episodes'; playVideo(video, series.title); });
+            card.addEventListener('click', () => { playerOrigin = 'episodes'; playVideo(video, series.title, videos); });
             makeFocusable(card);
             $('episodes-list').appendChild(card);
         }
@@ -1636,7 +1639,28 @@ async function openSeason(button, series) {
 $('btn-back-series').addEventListener('click', () => showView('view-series'));
 
 // ===== PLAYER =====
-async function playVideo(video, seriesTitle) {
+async function playVideo(video, seriesTitle, playlistArray = null) {
+    // ── Electron: route ALL playback through MPV ──────────────────────────────
+    if (window.cineflix?.isElectron) {
+        $('video-player').src = '';
+        const loader = $('mpv-loader');
+        if (loader) loader.classList.remove('hidden');
+        try {
+            if (playlistArray && playlistArray.length > 0) {
+                const startIndex = playlistArray.indexOf(video) !== -1 ? playlistArray.indexOf(video) : 0;
+                await playInMpv(playlistArray, seriesTitle, startIndex);
+            } else {
+                const label = video.displayTitle || (video.caption || video.fileName || seriesTitle || '').replace(/\.[^.]+$/, '');
+                await playInMpv([{ media: video.media, caption: label, displayTitle: label }], seriesTitle, 0);
+            }
+        } catch (err) {
+            alert(`No se pudo abrir en MPV:\n${err.message}`);
+        } finally {
+            if (loader) loader.classList.add('hidden');
+        }
+        return;
+    }
+
     // ── Native Android: use ExoPlayer via Capacitor plugin ──────────────────
     if (isNativeApp()) {
         try {
@@ -1648,7 +1672,6 @@ async function playVideo(video, seriesTitle) {
         return;
     }
 
-    alert("Receptor Web (Fallback HTML5) iniciado");
     const videoEl = $('video-player');
 
     $('player-title').textContent = video.fileName;
