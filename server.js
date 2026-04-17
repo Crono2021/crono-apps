@@ -304,6 +304,24 @@ async function runResolveJob() {
 const app = express();
 app.use(express.json());
 
+// ── CORS — allow GitHub Pages and local dev to query Railway directly ─────────
+const ALLOWED_ORIGINS = [
+    'https://crono2021.github.io',
+    'https://crono-apps.github.io',
+    'http://localhost:5173',
+    'http://localhost:3001',
+];
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+});
+
 // ── Auth helper ───────────────────────────────────────────────────────────────
 function requireAuth(req, res, next) {
     const auth = req.headers.authorization || '';

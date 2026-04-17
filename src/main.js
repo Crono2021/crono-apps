@@ -6,7 +6,10 @@ globalThis.Buffer = _Buf;
 
 let catalog = [];
 
-// ── Remote catalog URLs (GitHub raw) ─────────────────────────────────────────
+// ── Railway API base (serves catalog + movies WITH tmdb_poster/name/etc.) ─────
+const RAILWAY_API = 'https://cineflix-production-19e3.up.railway.app';
+
+// ── GitHub raw fallback (no TMDB data, used offline / when Railway is down) ───
 const CATALOG_REMOTE_URL = 'https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/catalog.json';
 const CATALOG_CACHE_KEY  = 'cineflix_catalog_cache';
 const CATALOG_CACHE_TS   = 'cineflix_catalog_ts';
@@ -27,7 +30,7 @@ async function loadCatalog() {
         }
     } catch { /* ignore */ }
 
-    // 2️⃣ If cache is empty or older than TTL, fetch from remote synchronously
+    // 2️⃣ If cache is empty or older than TTL, fetch from Railway (has full TMDB data)
     const lastFetch = parseInt(localStorage.getItem(CATALOG_CACHE_TS) || '0', 10);
     const needsSync = !catalog.length || (Date.now() - lastFetch > CATALOG_TTL_MS);
 
@@ -40,6 +43,24 @@ async function loadCatalog() {
 }
 
 async function fetchRemoteCatalog() {
+    // ① Try Railway first — returns full rows with tmdb_poster, tmdb_name, etc.
+    try {
+        const res = await fetch(`${RAILWAY_API}/api/catalog`);
+        if (res.ok) {
+            const remote = await res.json();
+            if (Array.isArray(remote) && remote.length > 0) {
+                catalog = remote;
+                localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(remote));
+                localStorage.setItem(CATALOG_CACHE_TS, Date.now().toString());
+                console.log(`[Catalog] ✅ Loaded ${remote.length} items from Railway (with TMDB)`);
+                return;
+            }
+        }
+    } catch (err) {
+        console.warn('[Catalog] Railway fetch failed, trying GitHub fallback:', err.message);
+    }
+
+    // ② Fallback to GitHub (no TMDB data but works offline)
     try {
         const res = await fetch(CATALOG_REMOTE_URL + '?v=' + Date.now());
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -48,20 +69,10 @@ async function fetchRemoteCatalog() {
             catalog = remote;
             localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(remote));
             localStorage.setItem(CATALOG_CACHE_TS, Date.now().toString());
-            console.log(`[Catalog] ✅ Updated from remote: ${remote.length} items`);
+            console.log(`[Catalog] ✅ Updated from GitHub: ${remote.length} items (no TMDB)`);
         }
     } catch (err) {
-        console.warn('[Catalog] Remote fetch failed, using cache/Railway fallback:', err.message);
-        if (!catalog.length) {
-            try {
-                const res = await fetch('/api/catalog');
-                if (res.ok) {
-                    catalog = await res.json();
-                    localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(catalog));
-                    localStorage.setItem(CATALOG_CACHE_TS, Date.now().toString());
-                }
-            } catch { /* ignore */ }
-        }
+        console.warn('[Catalog] GitHub fallback also failed:', err.message);
     }
 }
 import {
@@ -831,11 +842,25 @@ async function loadMovies() {
         }
     } catch { /* ignore */ }
 
-    // 2️⃣ Fetch from GitHub (primary source)
+    // 2️⃣ Fetch from Railway (primary — has full TMDB data)
     const lastFetch = parseInt(localStorage.getItem(MOVIES_CACHE_TS) || '0', 10);
     const isExpired = (Date.now() - lastFetch) > MOVIES_TTL_MS;
 
     async function fetchRemote() {
+        // ① Railway first — returns rows with tmdb_poster, tmdb_name, etc.
+        try {
+            console.log('[Movies] Fetching from Railway API (with TMDB data)...');
+            const r = await fetch(`${RAILWAY_API}/api/movies`);
+            if (r.ok) {
+                const data = await r.json();
+                processAndSave(data);
+                return;
+            }
+        } catch (err) {
+            console.warn('[Movies] Railway fetch failed, trying GitHub fallback:', err.message);
+        }
+
+        // ② GitHub fallback (no TMDB data, works offline)
         try {
             console.log('[Movies] Fetching updated movies catalog from GitHub...');
             const r = await fetch(MOVIES_REMOTE_URL + '?v=' + Date.now());
@@ -843,23 +868,14 @@ async function loadMovies() {
             const data = await r.json();
             processAndSave(data);
         } catch (err) {
-            console.warn('[Movies] Failed to fetch remote catalog, falling back to Railway API:', err);
-            if (moviesCatalog.length === 0) {
-                try {
-                    const res = await fetch('/api/movies');
-                    if (res.ok) {
-                        const data = await res.json();
-                        processAndSave(data);
-                    }
-                } catch { /* ignore */ }
-            }
+            console.warn('[Movies] Both sources failed:', err);
         }
 
         function processAndSave(parsed) {
             moviesCatalog = processMoviesList(parsed);
             localStorage.setItem(MOVIES_CACHE_KEY, JSON.stringify(moviesCatalog));
             localStorage.setItem(MOVIES_CACHE_TS, Date.now().toString());
-            console.log(`[Movies] Updated ${moviesCatalog.length} movies via remote`);
+            console.log(`[Movies] Updated ${moviesCatalog.length} movies`);
         }
     }
 
