@@ -416,6 +416,7 @@ export function initElectronStreamHandler() {
  * Play in embedded MPV (Electron only).
  */
 export async function playInMpv(playlistArray, seriesTitle, startIndex = 0) {
+    initElectronStreamHandler();
     const streamInfos = [];
     
     for (let i = 0; i < playlistArray.length; i++) {

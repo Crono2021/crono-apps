@@ -223,6 +223,13 @@
             </div>
             <video id="video-player" controls></video>
         </div>
+        
+        <!-- MPV Loading Overlay -->
+        <div id="mpv-loader" class="hidden" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,10,12,0.95);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;">
+            <div class="spinner" style="width:50px;height:50px;border-width:4px;"></div>
+            <h2 style="margin-top:20px;font-size:1.5rem;font-weight:600;">Cambiando a MPV...</h2>
+            <p style="color:#8b8e96;margin-top:8px;">Aceleración por hardware iniciada</p>
+        </div>
     </div>
 
     <script type="module" src="/src/main.js"></script>
