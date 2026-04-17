@@ -11,12 +11,12 @@ const RAILWAY_API = 'https://cineflix-production-19e3.up.railway.app';
 
 // ── GitHub raw fallback (no TMDB data, used offline / when Railway is down) ───
 const CATALOG_REMOTE_URL = 'https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/catalog.json';
-const CATALOG_CACHE_KEY     = 'cineflix_catalog_cache';
-const CATALOG_MAX_ID_KEY    = 'cineflix_catalog_max_id';  // last known max DB id
+const CATALOG_CACHE_KEY     = 'cineflix_catalog_cache_v2';
+const CATALOG_MAX_ID_KEY    = 'cineflix_catalog_max_id_v2';  // last known max DB id
 
 const MOVIES_REMOTE_URL  = 'https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/movies.json';
-const MOVIES_CACHE_KEY      = 'cineflix_movies_cache';
-const MOVIES_MAX_ID_KEY     = 'cineflix_movies_max_id';   // last known max DB id
+const MOVIES_CACHE_KEY      = 'cineflix_movies_cache_v2';
+const MOVIES_MAX_ID_KEY     = 'cineflix_movies_max_id_v2';   // last known max DB id
 
 async function loadCatalog() {
     // 1️⃣ Show cached version INSTANTLY (zero wait for the user)
@@ -1003,8 +1003,21 @@ async function showMovies() {
         await setupMovieHero(recentMovies.slice(0, 5));
     }
 
-    // Load TMDB genres per catalog movie in background (correct approach: TMDB search finds the right movie)
-    loadMoviesBackground();
+    // Initialize Genre Rows synchronously using TMDB data from Railway
+    for (const genre of MOVIE_GENRE_ROWS) {
+        const items = moviesCatalog.filter(m => {
+            let gIds = [];
+            if (m.tmdb_genre_ids) {
+                try { gIds = typeof m.tmdb_genre_ids === 'string' ? JSON.parse(m.tmdb_genre_ids) : m.tmdb_genre_ids; } catch(e){}
+            }
+            return genre.ids.some(id => gIds.includes(id));
+        });
+        if (items.length > 0) {
+            renderMovieRow(genre.id, genre.title, items); // Full length, no slicing
+        }
+    }
+    
+    renderAllMoviesCatalog();
 }
 
 function showMoviesSection(mode) {
@@ -1145,27 +1158,24 @@ function initMovieGenreTabs() {
 
 /**
  * Filter movies by genre tab click.
- * Uses movieGenreCache (from discover) - polls while genre is still loading.
+ * Reads directly from local tmdb_genre_ids cache instead of waiting for observer.
  */
-async function filterMoviesByGenre(rowId, label) {
+function filterMoviesByGenre(rowId, label) {
     showMoviesSection('grid');
-    $('movies-count').textContent = `Cargando ${label}...`;
-    $('movies-grid').innerHTML = '';
+    const genre = MOVIE_GENRE_ROWS.find(g => g.id === rowId);
+    if (!genre) return;
 
-    // Wait up to 20s for genre data if still loading
-    if (!movieGenreCache.has(rowId)) {
-        await new Promise(resolve => {
-            const check = setInterval(() => {
-                if (movieGenreCache.has(rowId)) { clearInterval(check); resolve(); }
-            }, 400);
-            setTimeout(() => { clearInterval(check); resolve(); }, 20000);
-        });
-    }
+    const filtered = moviesCatalog.filter(m => {
+        let gIds = [];
+        if (m.tmdb_genre_ids) {
+            try { gIds = typeof m.tmdb_genre_ids === 'string' ? JSON.parse(m.tmdb_genre_ids) : m.tmdb_genre_ids; } catch(e){}
+        }
+        return genre.ids.some(id => gIds.includes(id));
+    });
 
-    const cached = movieGenreCache.get(rowId) || [];
-    renderMovieGrid(cached);
-    $('movies-count').textContent = cached.length
-        ? `${cached.length} películas · ${label}`
+    renderMovieGrid(filtered);
+    $('movies-count').textContent = filtered.length
+        ? `${filtered.length} películas · ${label}`
         : `Sin coincidencias en el catálogo para ${label}`;
 }
 
@@ -1207,72 +1217,6 @@ function renderMovieGrid(movies) {
     movies.forEach(m => grid.appendChild(createMovieCard(m)));
 }
 
-/**
- * Pre-loads TMDB data for catalog movies in background.
- * Each successful result goes through onMovieTmdbLoaded() which classifies genres.
- * Movies already loaded via poster cards are skipped (cache hit).
- */
-async function loadMoviesBackground() {
-    const sorted = [...moviesCatalog].sort((a, b) => (b.year || 0) - (a.year || 0));
-
-    // Process already-cached movies first (instant on revisit — data is in localStorage)
-    for (const m of sorted.slice(0, 400)) {
-        const tmdb = movieTmdbCache.get(m.id);
-        if (tmdb) onMovieTmdbLoaded(m, tmdb);
-    }
-
-    // Fetch TMDB for uncached movies (10 concurrent for speed)
-    const toLoad = sorted.slice(0, 400).filter(m => !movieTmdbCache.has(m.id));
-    const BATCH = 10;
-    for (let i = 0; i < toLoad.length; i += BATCH) {
-        await Promise.all(toLoad.slice(i, i + BATCH).map(async m => {
-            const tmdb = await searchMovie(m.search_title || m.title, m.year);
-            if (!tmdb) return;
-            movieTmdbCache.set(m.id, tmdb);
-            onMovieTmdbLoaded(m, tmdb); // genre classification happens here
-        }));
-        await new Promise(r => setTimeout(r, 2500)); // Respect TMDB 40req/10s limit
-    }
-
-    // Mark all genre caches as at least initialised so tabs don't wait forever
-    for (const genre of MOVIE_GENRE_ROWS) {
-        if (!movieGenreCache.has(genre.id)) movieGenreCache.set(genre.id, []);
-    }
-
-    renderAllMoviesCatalog();
-}
-
-/**
- * Called whenever a movie is successfully matched to TMDB (from poster load OR background load).
- * Classifies it into genres and schedules a debounced row update.
- */
-function onMovieTmdbLoaded(movie, tmdb) {
-    if (!tmdb?.genreIds?.length) return;
-    let changed = false;
-    for (const genre of MOVIE_GENRE_ROWS) {
-        if (!tmdb.genreIds.some(g => genre.ids.includes(g))) continue;
-        const items = movieGenreCache.get(genre.id);
-        if (items === undefined) {
-            movieGenreCache.set(genre.id, [movie]);
-            changed = true;
-        } else if (!items.find(x => x.id === movie.id)) {
-            items.push(movie);
-            changed = true;
-        }
-    }
-    if (!changed) return;
-    // Debounce: update DOM rows at most once every 1.5s
-    if (!genreUpdateTimer) {
-        genreUpdateTimer = setTimeout(() => {
-            genreUpdateTimer = null;
-            for (const genre of MOVIE_GENRE_ROWS) {
-                const items = movieGenreCache.get(genre.id) || [];
-                if (items.length > 0)
-                    renderMovieRow(genre.id, genre.title, items.slice(0, 40));
-            }
-        }, 1500);
-    }
-}
 
 /**
  * Render the full catalog below genre rows with infinite scroll (60 movies per batch).
@@ -1324,7 +1268,7 @@ function createMovieCard(movie) {
     // If server already resolved the poster, embed it directly — no lazy-load flash
     const hasPoster = !!movie.tmdb_poster;
     const posterImg = hasPoster
-        ? `<img data-poster="1" src="${posterUrl(movie.tmdb_poster)}"
+        ? `<img data-poster="1" src="${posterUrl(movie.tmdb_poster)}" loading="lazy"
                style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit;pointer-events:none;" />`
         : '';
 
