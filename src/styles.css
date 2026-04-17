@@ -516,6 +516,24 @@ body {
     text-align: center;
 }
 .modal-error.hidden { display: none; }
+/* ===== PAGINATION ===== */
+.pagination-controls {
+    display: flex; justify-content: center; align-items: center; gap: 20px;
+    padding: 32px 0 40px;
+}
+.page-btn {
+    padding: 10px 24px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.05); color: #e4e4e7;
+    font-size: 0.95rem; font-weight: 600; cursor: pointer; font-family: inherit;
+    transition: background 0.2s, transform 0.15s, border-color 0.2s;
+}
+.page-btn:hover:not(:disabled) {
+    background: rgba(139,92,246,0.15); border-color: rgba(139,92,246,0.5); transform: translateY(-2px);
+}
+.page-btn:disabled {
+    opacity: 0.3; cursor: not-allowed;
+}
+.page-info { color: #a1a1aa; font-size: 0.95rem; font-weight: 500; }
 
 /* ===== ANDROID TV TV/LOW-END OPTIMIZATIONS ===== */
 .android-tv * {

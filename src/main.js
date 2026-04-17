@@ -682,7 +682,7 @@ function renderGrid(series, resetPage = true) {
     if (!pagEl) {
         pagEl = document.createElement('div');
         pagEl.id = 'series-grid-pag';
-        pagEl.style.cssText = 'display:flex; justify-content:center; gap:20px; padding:32px 0; align-items: center;';
+        pagEl.className = 'pagination-controls';
         $('search-results').appendChild(pagEl);
     }
     
@@ -693,9 +693,9 @@ function renderGrid(series, resetPage = true) {
     
     pagEl.style.display = 'flex';
     pagEl.innerHTML = `
-        <button id="ser-pag-prev" class="base-btn" ${seriesGridState.page === 1 ? 'disabled' : ''}>⬅ Anterior</button>
-        <span style="color:#a0a0b0; font-size:16px;">Página ${seriesGridState.page} de ${totalPages}</span>
-        <button id="ser-pag-next" class="base-btn" ${seriesGridState.page === totalPages ? 'disabled' : ''}>Siguiente ➡</button>
+        <button id="ser-pag-prev" class="page-btn" ${seriesGridState.page === 1 ? 'disabled' : ''}>&#10094; Anterior</button>
+        <span class="page-info">Página ${seriesGridState.page} de ${totalPages}</span>
+        <button id="ser-pag-next" class="page-btn" ${seriesGridState.page === totalPages ? 'disabled' : ''}>Siguiente &#10095;</button>
     `;
     
     if (seriesGridState.page > 1) {
@@ -1281,7 +1281,7 @@ function renderMovieGrid(movies, resetPage = true) {
     if (!pagEl) {
         pagEl = document.createElement('div');
         pagEl.id = 'movies-grid-pag';
-        pagEl.style.cssText = 'display:flex; justify-content:center; gap:20px; padding:32px 0; align-items: center;';
+        pagEl.className = 'pagination-controls';
         $('movies-search-results').appendChild(pagEl);
     }
     
@@ -1292,9 +1292,9 @@ function renderMovieGrid(movies, resetPage = true) {
     
     pagEl.style.display = 'flex';
     pagEl.innerHTML = `
-        <button id="mov-pag-prev" class="base-btn" ${movieGridState.page === 1 ? 'disabled' : ''}>⬅ Anterior</button>
-        <span style="color:#a0a0b0; font-size:16px;">Página ${movieGridState.page} de ${totalPages}</span>
-        <button id="mov-pag-next" class="base-btn" ${movieGridState.page === totalPages ? 'disabled' : ''}>Siguiente ➡</button>
+        <button id="mov-pag-prev" class="page-btn" ${movieGridState.page === 1 ? 'disabled' : ''}>&#10094; Anterior</button>
+        <span class="page-info">Página ${movieGridState.page} de ${totalPages}</span>
+        <button id="mov-pag-next" class="page-btn" ${movieGridState.page === totalPages ? 'disabled' : ''}>Siguiente &#10095;</button>
     `;
     
     if (movieGridState.page > 1) {
@@ -1319,7 +1319,7 @@ function renderAllMoviesCatalog(resetPage = true) {
                 <span class="row-count">${moviesCatalog.length.toLocaleString()} películas</span>
             </div>
             <div id="all-movies-grid" class="catalog-grid all-movies-grid"></div>
-            <div id="all-movies-pag" class="pagination-controls" style="display:flex; justify-content:center; gap:20px; padding:32px 0; align-items: center;"></div>
+            <div id="all-movies-pag" class="pagination-controls"></div>
         `;
         container.appendChild(section);
     }
@@ -1347,9 +1347,9 @@ function renderAllMoviesCatalog(resetPage = true) {
     
     pagEl.style.display = 'flex';
     pagEl.innerHTML = `
-        <button id="all-mov-prev" class="base-btn" ${allMoviesState.page === 1 ? 'disabled' : ''}>⬅ Anterior</button>
-        <span style="color:#a0a0b0; font-size:16px;">Página ${allMoviesState.page} de ${totalPages}</span>
-        <button id="all-mov-next" class="base-btn" ${allMoviesState.page === totalPages ? 'disabled' : ''}>Siguiente ➡</button>
+        <button id="all-mov-prev" class="page-btn" ${allMoviesState.page === 1 ? 'disabled' : ''}>&#10094; Anterior</button>
+        <span class="page-info">Página ${allMoviesState.page} de ${totalPages}</span>
+        <button id="all-mov-next" class="page-btn" ${allMoviesState.page === totalPages ? 'disabled' : ''}>Siguiente &#10095;</button>
     `;
     
     if (allMoviesState.page > 1) {
