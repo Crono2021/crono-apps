@@ -29,7 +29,11 @@ async function loadCatalog() {
     } catch { /* ignore */ }
 
     // 2️⃣ Delta sync: ask server for its maxId, compare with ours
-    fetchRemoteCatalog().catch(() => {});
+    if (catalog.length === 0) {
+        await fetchRemoteCatalog(); // Block if we have nothing to show
+    } else {
+        fetchRemoteCatalog().catch(() => {}); // Background sync if we already have cache
+    }
 }
 
 async function fetchRemoteCatalog() {
@@ -898,7 +902,11 @@ async function loadMovies() {
     } catch { /* ignore */ }
 
     // 2️⃣ Delta sync in background (non-blocking)
-    fetchRemoteMovies().catch(() => {});
+    if (moviesCatalog.length === 0) {
+        await fetchRemoteMovies(); // Block if we have nothing to show
+    } else {
+        fetchRemoteMovies().catch(() => {}); // Background sync if we already have cache
+    }
 }
 
 async function fetchRemoteMovies() {
