@@ -683,7 +683,7 @@ function renderGrid(series, resetPage = true) {
         pagEl = document.createElement('div');
         pagEl.id = 'series-grid-pag';
         pagEl.style.cssText = 'display:flex; justify-content:center; gap:20px; padding:32px 0; align-items: center;';
-        $('catalog-search-results').appendChild(pagEl);
+        $('search-results').appendChild(pagEl);
     }
     
     if (totalPages <= 1) {
@@ -1306,44 +1306,58 @@ function renderMovieGrid(movies, resetPage = true) {
 }
 
 
-/**
- * Render the full catalog below genre rows with infinite scroll (60 movies per batch).
- */
-function renderAllMoviesCatalog() {
-    if (document.getElementById('all-movies-section')) return; // already added
-    catalogScrollPage = 0;
-    const container = $('movies-rows');
-    const section = document.createElement('div');
-    section.id = 'all-movies-section';
-    section.innerHTML = `
-        <div class="row-header" style="padding-top:32px">
-            <h2 class="row-title">🎬 Todo el catálogo</h2>
-            <span class="row-count">${moviesCatalog.length.toLocaleString()} películas</span>
-        </div>
-        <div id="all-movies-grid" class="catalog-grid all-movies-grid"></div>
-        <div id="all-movies-sentinel" style="height:1px"></div>
-    `;
-    container.appendChild(section);
+let allMoviesState = { items: [], page: 1 };
 
-    // Sort by year descending
-    const sorted = [...moviesCatalog].sort((a, b) => (b.year || 0) - (a.year || 0));
-
-    function loadBatch() {
-        const grid = document.getElementById('all-movies-grid');
-        if (!grid) return;
-        const start = catalogScrollPage * CATALOG_PAGE_SIZE;
-        const batch = sorted.slice(start, start + CATALOG_PAGE_SIZE);
-        if (!batch.length) { observer.disconnect(); return; }
-        catalogScrollPage++;
-        batch.forEach(m => grid.appendChild(createMovieCard(m)));
+function renderAllMoviesCatalog(resetPage = true) {
+    if (!document.getElementById('all-movies-section')) {
+        const container = $('movies-rows');
+        const section = document.createElement('div');
+        section.id = 'all-movies-section';
+        section.innerHTML = `
+            <div class="row-header" style="padding-top:32px">
+                <h2 class="row-title">🎬 Todo el catálogo</h2>
+                <span class="row-count">${moviesCatalog.length.toLocaleString()} películas</span>
+            </div>
+            <div id="all-movies-grid" class="catalog-grid all-movies-grid"></div>
+            <div id="all-movies-pag" class="pagination-controls" style="display:flex; justify-content:center; gap:20px; padding:32px 0; align-items: center;"></div>
+        `;
+        container.appendChild(section);
     }
-
-    const observer = new IntersectionObserver(entries => {
-        if (entries.some(e => e.isIntersecting)) loadBatch();
-    }, { rootMargin: '400px' });
-
-    loadBatch(); // first batch immediately
-    observer.observe(document.getElementById('all-movies-sentinel'));
+    
+    if (resetPage) {
+        allMoviesState.items = [...moviesCatalog].sort((a, b) => (b.year || 0) - (a.year || 0));
+        allMoviesState.page = 1;
+    }
+    
+    const grid = $('all-movies-grid');
+    grid.innerHTML = '';
+    
+    const PAGE_SIZE = 50;
+    const totalPages = Math.ceil(allMoviesState.items.length / PAGE_SIZE) || 1;
+    const start = (allMoviesState.page - 1) * PAGE_SIZE;
+    const batch = allMoviesState.items.slice(start, start + PAGE_SIZE);
+    
+    batch.forEach(m => grid.appendChild(createMovieCard(m)));
+    
+    const pagEl = $('all-movies-pag');
+    if (totalPages <= 1) {
+        pagEl.style.display = 'none';
+        return;
+    }
+    
+    pagEl.style.display = 'flex';
+    pagEl.innerHTML = `
+        <button id="all-mov-prev" class="base-btn" ${allMoviesState.page === 1 ? 'disabled' : ''}>⬅ Anterior</button>
+        <span style="color:#a0a0b0; font-size:16px;">Página ${allMoviesState.page} de ${totalPages}</span>
+        <button id="all-mov-next" class="base-btn" ${allMoviesState.page === totalPages ? 'disabled' : ''}>Siguiente ➡</button>
+    `;
+    
+    if (allMoviesState.page > 1) {
+        $('all-mov-prev').onclick = () => { allMoviesState.page--; renderAllMoviesCatalog(false); window.scrollTo({behavior: 'smooth', top: $('all-movies-section').offsetTop - 60}); };
+    }
+    if (allMoviesState.page < totalPages) {
+        $('all-mov-next').onclick = () => { allMoviesState.page++; renderAllMoviesCatalog(false); window.scrollTo({behavior: 'smooth', top: $('all-movies-section').offsetTop - 60}); };
+    }
 }
 
 // ===== MOVIE CARDS =====
