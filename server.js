@@ -346,9 +346,23 @@ function catalogFallback() {
 app.get('/api/catalog', async (req, res) => {
     if (!db) return res.json(catalogFallback());
     try {
-        const { rows } = await db.query('SELECT * FROM series WHERE active = true ORDER BY position ASC, id ASC');
+        const afterId = parseInt(req.query.after_id || '0', 10);
+        const query = afterId > 0
+            ? 'SELECT * FROM series WHERE active = true AND id > $1 ORDER BY id ASC'
+            : 'SELECT * FROM series WHERE active = true ORDER BY position ASC, id ASC';
+        const params = afterId > 0 ? [afterId] : [];
+        const { rows } = await db.query(query, params);
         res.json(rows);
     } catch (err) { console.error(err); res.json(catalogFallback()); }
+});
+
+// Lightweight meta check — returns {count, maxId} so client knows if delta sync is needed
+app.get('/api/catalog/meta', async (req, res) => {
+    if (!db) return res.json({ count: 0, maxId: 0 });
+    try {
+        const { rows } = await db.query('SELECT COUNT(*) AS count, MAX(id) AS max_id FROM series WHERE active = true');
+        res.json({ count: parseInt(rows[0].count), maxId: parseInt(rows[0].max_id) || 0 });
+    } catch (err) { res.json({ count: 0, maxId: 0 }); }
 });
 
 app.get('/api/catalog/all', requireAuth, async (req, res) => {
@@ -406,11 +420,12 @@ app.post('/api/catalog/reorder', requireAuth, async (req, res) => {
 // MOVIES API
 // ══════════════════════════════════════════════════════════════════════════════
 
-// GET /api/movies — public, supports ?q=search for filtering
+// GET /api/movies — public, supports ?q=search and ?after_id=N for delta sync
 app.get('/api/movies', async (req, res) => {
     if (!db) return res.json([]);
     try {
         const q = (req.query.q || '').trim();
+        const afterId = parseInt(req.query.after_id || '0', 10);
         let rows;
         if (q) {
             const result = await db.query(
@@ -418,6 +433,12 @@ app.get('/api/movies', async (req, res) => {
                  AND (LOWER(title) LIKE LOWER($1) OR LOWER(search_title) LIKE LOWER($1))
                  ORDER BY position ASC, id ASC LIMIT 200`,
                 [`%${q}%`]
+            );
+            rows = result.rows;
+        } else if (afterId > 0) {
+            const result = await db.query(
+                'SELECT * FROM movies WHERE active = true AND id > $1 ORDER BY id ASC',
+                [afterId]
             );
             rows = result.rows;
         } else {
@@ -428,6 +449,15 @@ app.get('/api/movies', async (req, res) => {
         }
         res.json(rows);
     } catch (err) { console.error(err); res.json([]); }
+});
+
+// Lightweight meta check for movies delta sync
+app.get('/api/movies/meta', async (req, res) => {
+    if (!db) return res.json({ count: 0, maxId: 0 });
+    try {
+        const { rows } = await db.query('SELECT COUNT(*) AS count, MAX(id) AS max_id FROM movies WHERE active = true');
+        res.json({ count: parseInt(rows[0].count), maxId: parseInt(rows[0].max_id) || 0 });
+    } catch (err) { res.json({ count: 0, maxId: 0 }); }
 });
 
 // GET /api/movies/all — admin

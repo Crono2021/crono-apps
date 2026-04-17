@@ -11,14 +11,12 @@ const RAILWAY_API = 'https://cineflix-production-19e3.up.railway.app';
 
 // ── GitHub raw fallback (no TMDB data, used offline / when Railway is down) ───
 const CATALOG_REMOTE_URL = 'https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/catalog.json';
-const CATALOG_CACHE_KEY  = 'cineflix_catalog_cache';
-const CATALOG_CACHE_TS   = 'cineflix_catalog_ts';
-const CATALOG_TTL_MS     = 1000 * 60 * 60 * 6; // Refresh every 6 hours max
+const CATALOG_CACHE_KEY     = 'cineflix_catalog_cache';
+const CATALOG_MAX_ID_KEY    = 'cineflix_catalog_max_id';  // last known max DB id
 
 const MOVIES_REMOTE_URL  = 'https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/movies.json';
-const MOVIES_CACHE_KEY   = 'cineflix_movies_cache';
-const MOVIES_CACHE_TS    = 'cineflix_movies_ts';
-const MOVIES_TTL_MS      = 1000 * 60 * 60 * 6; // Refresh every 6 hours max
+const MOVIES_CACHE_KEY      = 'cineflix_movies_cache';
+const MOVIES_MAX_ID_KEY     = 'cineflix_movies_max_id';   // last known max DB id
 
 async function loadCatalog() {
     // 1️⃣ Show cached version INSTANTLY (zero wait for the user)
@@ -26,53 +24,70 @@ async function loadCatalog() {
         const cached = localStorage.getItem(CATALOG_CACHE_KEY);
         if (cached) {
             catalog = JSON.parse(cached);
-            console.log(`[Catalog] Loaded ${catalog.length} items from cache`);
+            console.log(`[Catalog] ⚡ ${catalog.length} series from cache`);
         }
     } catch { /* ignore */ }
 
-    // 2️⃣ If cache is empty or older than TTL, fetch from Railway (has full TMDB data)
-    const lastFetch = parseInt(localStorage.getItem(CATALOG_CACHE_TS) || '0', 10);
-    const needsSync = !catalog.length || (Date.now() - lastFetch > CATALOG_TTL_MS);
-
-    if (needsSync) {
-        await fetchRemoteCatalog();
-    } else {
-        // 3️⃣ Otherwise refresh silently in background (non-blocking)
-        fetchRemoteCatalog().catch(() => {});
-    }
+    // 2️⃣ Delta sync: ask server for its maxId, compare with ours
+    fetchRemoteCatalog().catch(() => {});
 }
 
 async function fetchRemoteCatalog() {
-    // ① Try Railway first — returns full rows with tmdb_poster, tmdb_name, etc.
     try {
-        const res = await fetch(`${RAILWAY_API}/api/catalog`);
-        if (res.ok) {
+        const localMaxId = parseInt(localStorage.getItem(CATALOG_MAX_ID_KEY) || '0', 10);
+
+        // Lightweight ping: just get count + maxId (~100 bytes)
+        const metaRes = await fetch(`${RAILWAY_API}/api/catalog/meta`);
+        if (!metaRes.ok) throw new Error('meta failed');
+        const { maxId } = await metaRes.json();
+
+        if (maxId <= localMaxId && catalog.length > 0) {
+            // Nothing new — use cache as-is
+            console.log('[Catalog] ✅ Cache is up to date (no new items)');
+            return;
+        }
+
+        if (localMaxId === 0 || catalog.length === 0) {
+            // First load: fetch everything
+            console.log('[Catalog] 🔄 First load — fetching full catalog from Railway...');
+            const res = await fetch(`${RAILWAY_API}/api/catalog`);
+            if (!res.ok) throw new Error('full fetch failed');
             const remote = await res.json();
             if (Array.isArray(remote) && remote.length > 0) {
                 catalog = remote;
-                localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(remote));
-                localStorage.setItem(CATALOG_CACHE_TS, Date.now().toString());
-                console.log(`[Catalog] ✅ Loaded ${remote.length} items from Railway (with TMDB)`);
-                return;
+                localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(catalog));
+                localStorage.setItem(CATALOG_MAX_ID_KEY, String(maxId));
+                console.log(`[Catalog] ✅ Full load: ${catalog.length} series`);
+            }
+        } else {
+            // Delta: only fetch entries newer than what we have
+            console.log(`[Catalog] 🔄 Delta sync: fetching series with id > ${localMaxId}...`);
+            const res = await fetch(`${RAILWAY_API}/api/catalog?after_id=${localMaxId}`);
+            if (!res.ok) throw new Error('delta fetch failed');
+            const newItems = await res.json();
+            if (Array.isArray(newItems) && newItems.length > 0) {
+                catalog = [...catalog, ...newItems];
+                localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(catalog));
+                localStorage.setItem(CATALOG_MAX_ID_KEY, String(maxId));
+                console.log(`[Catalog] ✅ Delta: +${newItems.length} series nuevas`);
             }
         }
     } catch (err) {
-        console.warn('[Catalog] Railway fetch failed, trying GitHub fallback:', err.message);
-    }
-
-    // ② Fallback to GitHub (no TMDB data but works offline)
-    try {
-        const res = await fetch(CATALOG_REMOTE_URL + '?v=' + Date.now());
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const remote = await res.json();
-        if (Array.isArray(remote) && remote.length > 0) {
-            catalog = remote;
-            localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(remote));
-            localStorage.setItem(CATALOG_CACHE_TS, Date.now().toString());
-            console.log(`[Catalog] ✅ Updated from GitHub: ${remote.length} items (no TMDB)`);
+        console.warn('[Catalog] Railway unreachable, using cache/GitHub fallback:', err.message);
+        // Only hit GitHub if we have truly nothing
+        if (catalog.length === 0) {
+            try {
+                const res = await fetch(CATALOG_REMOTE_URL);
+                if (res.ok) {
+                    const remote = await res.json();
+                    if (Array.isArray(remote) && remote.length > 0) {
+                        catalog = remote;
+                        localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(catalog));
+                        console.log(`[Catalog] ✅ GitHub fallback: ${catalog.length} series (sin TMDB)`);
+                    }
+                }
+            } catch { /* truly offline */ }
         }
-    } catch (err) {
-        console.warn('[Catalog] GitHub fallback also failed:', err.message);
     }
 }
 import {
@@ -837,55 +852,75 @@ async function loadMovies() {
             const parsed = JSON.parse(cached);
             if (Array.isArray(parsed) && parsed.length > 0) {
                 moviesCatalog = processMoviesList(parsed);
-                console.log(`[Movies] Loaded ${moviesCatalog.length} distinct items from cache`);
+                console.log(`[Movies] ⚡ ${moviesCatalog.length} películas from cache`);
             }
         }
     } catch { /* ignore */ }
 
-    // 2️⃣ Fetch from Railway (primary — has full TMDB data)
-    const lastFetch = parseInt(localStorage.getItem(MOVIES_CACHE_TS) || '0', 10);
-    const isExpired = (Date.now() - lastFetch) > MOVIES_TTL_MS;
+    // 2️⃣ Delta sync in background (non-blocking)
+    fetchRemoteMovies().catch(() => {});
+}
 
-    async function fetchRemote() {
-        // ① Railway first — returns rows with tmdb_poster, tmdb_name, etc.
-        try {
-            console.log('[Movies] Fetching from Railway API (with TMDB data)...');
+async function fetchRemoteMovies() {
+    try {
+        const localMaxId = parseInt(localStorage.getItem(MOVIES_MAX_ID_KEY) || '0', 10);
+
+        // Lightweight meta ping
+        const metaRes = await fetch(`${RAILWAY_API}/api/movies/meta`);
+        if (!metaRes.ok) throw new Error('meta failed');
+        const { maxId } = await metaRes.json();
+
+        if (maxId <= localMaxId && moviesCatalog.length > 0) {
+            console.log('[Movies] ✅ Cache is up to date (no new movies)');
+            return;
+        }
+
+        function processAndSave(parsed, newMaxId) {
+            const processed = processMoviesList(parsed);
+            // Merge: keep existing + add new (avoid duplicates by id)
+            const existingIds = new Set(moviesCatalog.map(m => m.id));
+            const merged = [...moviesCatalog, ...processed.filter(m => !existingIds.has(m.id))];
+            moviesCatalog = merged;
+            localStorage.setItem(MOVIES_CACHE_KEY, JSON.stringify(merged));
+            localStorage.setItem(MOVIES_MAX_ID_KEY, String(newMaxId));
+        }
+
+        if (localMaxId === 0 || moviesCatalog.length === 0) {
+            // First load: full fetch
+            console.log('[Movies] 🔄 First load — fetching all movies from Railway...');
             const r = await fetch(`${RAILWAY_API}/api/movies`);
-            if (r.ok) {
-                const data = await r.json();
-                processAndSave(data);
-                return;
-            }
-        } catch (err) {
-            console.warn('[Movies] Railway fetch failed, trying GitHub fallback:', err.message);
-        }
-
-        // ② GitHub fallback (no TMDB data, works offline)
-        try {
-            console.log('[Movies] Fetching updated movies catalog from GitHub...');
-            const r = await fetch(MOVIES_REMOTE_URL + '?v=' + Date.now());
-            if (!r.ok) throw new Error('GitHub fetch failed');
+            if (!r.ok) throw new Error('full fetch failed');
             const data = await r.json();
-            processAndSave(data);
-        } catch (err) {
-            console.warn('[Movies] Both sources failed:', err);
+            processAndSave(data, maxId);
+            console.log(`[Movies] ✅ Full load: ${moviesCatalog.length} películas`);
+        } else {
+            // Delta fetch — only new entries
+            console.log(`[Movies] 🔄 Delta sync: fetching movies with id > ${localMaxId}...`);
+            const r = await fetch(`${RAILWAY_API}/api/movies?after_id=${localMaxId}`);
+            if (!r.ok) throw new Error('delta fetch failed');
+            const newItems = await r.json();
+            if (Array.isArray(newItems) && newItems.length > 0) {
+                processAndSave(newItems, maxId);
+                console.log(`[Movies] ✅ Delta: +${newItems.length} películas nuevas`);
+            } else {
+                // Update maxId even if no new items (in case of deletions)
+                localStorage.setItem(MOVIES_MAX_ID_KEY, String(maxId));
+            }
         }
-
-        function processAndSave(parsed) {
-            moviesCatalog = processMoviesList(parsed);
-            localStorage.setItem(MOVIES_CACHE_KEY, JSON.stringify(moviesCatalog));
-            localStorage.setItem(MOVIES_CACHE_TS, Date.now().toString());
-            console.log(`[Movies] Updated ${moviesCatalog.length} movies`);
+    } catch (err) {
+        console.warn('[Movies] Railway unreachable, using cache/GitHub fallback:', err.message);
+        if (moviesCatalog.length === 0) {
+            try {
+                const r = await fetch(MOVIES_REMOTE_URL);
+                if (r.ok) {
+                    const data = await r.json();
+                    moviesCatalog = processMoviesList(data);
+                    localStorage.setItem(MOVIES_CACHE_KEY, JSON.stringify(moviesCatalog));
+                    console.log(`[Movies] ✅ GitHub fallback: ${moviesCatalog.length} películas (sin TMDB)`);
+                }
+            } catch { /* truly offline */ }
         }
     }
-
-    if (!isExpired && moviesCatalog.length > 0) {
-        console.log('[Movies] Background update scheduled in 5s');
-        setTimeout(fetchRemote, 5000);
-        return;
-    }
-
-    await fetchRemote();
 }
 
 function processMoviesList(rawList) {
