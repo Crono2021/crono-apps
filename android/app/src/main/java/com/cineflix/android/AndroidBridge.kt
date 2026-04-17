@@ -260,6 +260,57 @@ class AndroidBridge(
     }
 
     // ──────────────────────────────────────────────────────────────────────────
+    // OTA Update: Download and install new APK
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @JavascriptInterface
+    fun downloadAndInstallUpdate(url: String) {
+        try {
+            // Delete previous update file if it exists to prevent "update-1.apk" renaming issues
+            val oldFile = java.io.File(
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+                "cineflix_update.apk"
+            )
+            if (oldFile.exists()) oldFile.delete()
+
+            val req = android.app.DownloadManager.Request(android.net.Uri.parse(url))
+            req.setTitle("Cineflix Update")
+            req.setDescription("Descargando nueva versión...")
+            req.setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            req.setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, "cineflix_update.apk")
+            
+            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+            val downloadId = dm.enqueue(req)
+            
+            val receiver = object : android.content.BroadcastReceiver() {
+                override fun onReceive(ctx: Context, intent: Intent) {
+                    val id = intent.getLongExtra(android.app.DownloadManager.EXTRA_DOWNLOAD_ID, -1)
+                    if (id == downloadId) {
+                        try {
+                            val apkUri = dm.getUriForDownloadedFile(downloadId)
+                            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            }
+                            ctx.startActivity(installIntent)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                        ctx.unregisterReceiver(this)
+                    }
+                }
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                context.registerReceiver(receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_EXPORTED)
+            } else {
+                context.registerReceiver(receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE))
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -315,6 +366,18 @@ class AndroidBridge(
             })
         }
         return arr.toString()
+    }
+
+    @JavascriptInterface
+    fun getPlatform(): String = "android_tv"
+
+    @JavascriptInterface
+    fun getVersionCode(): Long {
+        return try {
+            context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+        } catch (e: Exception) {
+            2L
+        }
     }
 
     fun cleanup() { scope.cancel() }
