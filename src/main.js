@@ -656,10 +656,50 @@ function renderRow(id, title, series, prepend = false) {
 }
 
 // ===== GRID (search / genre filter) =====
-function renderGrid(series) {
+let seriesGridState = { items: [], page: 1 };
+
+function renderGrid(series, resetPage = true) {
+    if (resetPage) {
+        seriesGridState.items = series;
+        seriesGridState.page = 1;
+    }
+    
     const grid = $('catalog-grid');
     grid.innerHTML = '';
-    series.forEach(s => grid.appendChild(createCard(s)));
+    
+    const PAGE_SIZE = 50;
+    const totalPages = Math.ceil(seriesGridState.items.length / PAGE_SIZE) || 1;
+    const start = (seriesGridState.page - 1) * PAGE_SIZE;
+    const batch = seriesGridState.items.slice(start, start + PAGE_SIZE);
+    
+    batch.forEach(s => grid.appendChild(createCard(s)));
+    
+    let pagEl = $('series-grid-pag');
+    if (!pagEl) {
+        pagEl = document.createElement('div');
+        pagEl.id = 'series-grid-pag';
+        pagEl.style.cssText = 'display:flex; justify-content:center; gap:20px; padding:32px 0; align-items: center;';
+        $('catalog-search-results').appendChild(pagEl);
+    }
+    
+    if (totalPages <= 1) {
+        pagEl.style.display = 'none';
+        return;
+    }
+    
+    pagEl.style.display = 'flex';
+    pagEl.innerHTML = `
+        <button id="ser-pag-prev" class="base-btn" ${seriesGridState.page === 1 ? 'disabled' : ''}>⬅ Anterior</button>
+        <span style="color:#a0a0b0; font-size:16px;">Página ${seriesGridState.page} de ${totalPages}</span>
+        <button id="ser-pag-next" class="base-btn" ${seriesGridState.page === totalPages ? 'disabled' : ''}>Siguiente ➡</button>
+    `;
+    
+    if (seriesGridState.page > 1) {
+        $('ser-pag-prev').onclick = () => { seriesGridState.page--; renderGrid(seriesGridState.items, false); window.scrollTo({top: 0}); };
+    }
+    if (seriesGridState.page < totalPages) {
+        $('ser-pag-next').onclick = () => { seriesGridState.page++; renderGrid(seriesGridState.items, false); window.scrollTo({top: 0}); };
+    }
 }
 
 // ===== CARD =====
@@ -1211,10 +1251,50 @@ function renderMovieRow(id, title, movies, prepend = false) {
     prepend ? container.prepend(row) : container.appendChild(row);
 }
 
-function renderMovieGrid(movies) {
+let movieGridState = { items: [], page: 1 };
+
+function renderMovieGrid(movies, resetPage = true) {
+    if (resetPage) {
+        movieGridState.items = movies;
+        movieGridState.page = 1;
+    }
+    
     const grid = $('movies-grid');
     grid.innerHTML = '';
-    movies.forEach(m => grid.appendChild(createMovieCard(m)));
+    
+    const PAGE_SIZE = 50;
+    const totalPages = Math.ceil(movieGridState.items.length / PAGE_SIZE) || 1;
+    const start = (movieGridState.page - 1) * PAGE_SIZE;
+    const batch = movieGridState.items.slice(start, start + PAGE_SIZE);
+    
+    batch.forEach(m => grid.appendChild(createMovieCard(m)));
+    
+    let pagEl = $('movies-grid-pag');
+    if (!pagEl) {
+        pagEl = document.createElement('div');
+        pagEl.id = 'movies-grid-pag';
+        pagEl.style.cssText = 'display:flex; justify-content:center; gap:20px; padding:32px 0; align-items: center;';
+        $('movies-search-results').appendChild(pagEl);
+    }
+    
+    if (totalPages <= 1) {
+        pagEl.style.display = 'none';
+        return;
+    }
+    
+    pagEl.style.display = 'flex';
+    pagEl.innerHTML = `
+        <button id="mov-pag-prev" class="base-btn" ${movieGridState.page === 1 ? 'disabled' : ''}>⬅ Anterior</button>
+        <span style="color:#a0a0b0; font-size:16px;">Página ${movieGridState.page} de ${totalPages}</span>
+        <button id="mov-pag-next" class="base-btn" ${movieGridState.page === totalPages ? 'disabled' : ''}>Siguiente ➡</button>
+    `;
+    
+    if (movieGridState.page > 1) {
+        $('mov-pag-prev').onclick = () => { movieGridState.page--; renderMovieGrid(movieGridState.items, false); window.scrollTo({top: 0}); };
+    }
+    if (movieGridState.page < totalPages) {
+        $('mov-pag-next').onclick = () => { movieGridState.page++; renderMovieGrid(movieGridState.items, false); window.scrollTo({top: 0}); };
+    }
 }
 
 
