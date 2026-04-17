@@ -640,11 +640,20 @@ function renderGrid(series) {
 function createCard(series) {
     const card = document.createElement('div');
     card.className = 'series-card';
-    const displayTitle = series.title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
+    const displayTitle = (series.tmdb_name || series.title).replace(/\s*\(\d{4}\)\s*$/, '').trim();
+
+    // If server already resolved the poster, embed it directly — no lazy-load flash
+    const hasPoster = !!series.tmdb_poster;
+    const posterImg = hasPoster
+        ? `<img data-poster="1" src="${posterUrl(series.tmdb_poster)}"
+               style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit;pointer-events:none;" />`
+        : '';
+
     card.innerHTML = `
         <div class="series-card-poster">
-            <div class="series-card-poster-placeholder">
-                <span>${escapeHtml(displayTitle.charAt(0))}</span>
+            <div class="series-card-poster-placeholder" style="${hasPoster ? 'position:relative' : ''}">
+                ${hasPoster ? '' : `<span>${escapeHtml(displayTitle.charAt(0))}</span>`}
+                ${posterImg}
             </div>
         </div>
         <div class="series-card-meta">
@@ -652,8 +661,11 @@ function createCard(series) {
             ${series.year ? `<div class="series-card-year">${series.year}</div>` : ''}
         </div>`;
     card.addEventListener('click', () => openSeries(series));
-    // Schedule poster load only when card enters viewport
-    schedulePosterLoad(card, () => loadCardPoster(card, series));
+
+    // Only schedule lazy poster load if server hasn't resolved it yet
+    if (!hasPoster) {
+        schedulePosterLoad(card, () => loadCardPoster(card, series));
+    }
     makeFocusable(card);
     return card;
 }
@@ -1255,38 +1267,51 @@ function renderAllMoviesCatalog() {
 function createMovieCard(movie) {
     const card = document.createElement('div');
     card.className = 'series-card';
-    const displayTitle = movie.title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
+    const displayTitle = (movie.tmdb_name || movie.title).replace(/\s*\(\d{4}\)\s*$/, '').trim();
+    const displayYear  = movie.year || null;
+
+    // If server already resolved the poster, embed it directly — no lazy-load flash
+    const hasPoster = !!movie.tmdb_poster;
+    const posterImg = hasPoster
+        ? `<img data-poster="1" src="${posterUrl(movie.tmdb_poster)}"
+               style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:inherit;pointer-events:none;" />`
+        : '';
+
     card.innerHTML = `
         <div class="series-card-poster">
-            <div class="series-card-poster-placeholder">
-                <span>${escapeHtml(displayTitle.charAt(0).toUpperCase())}</span>
+            <div class="series-card-poster-placeholder" style="${hasPoster ? 'position:relative' : ''}">
+                ${hasPoster ? '' : `<span>${escapeHtml(displayTitle.charAt(0).toUpperCase())}</span>`}
+                ${posterImg}
             </div>
         </div>
         <div class="series-card-meta">
             <div class="series-card-title">${escapeHtml(displayTitle)}</div>
-            ${movie.year ? `<div class="series-card-year">${movie.year}</div>` : ''}
+            ${displayYear ? `<div class="series-card-year">${displayYear}</div>` : ''}
         </div>`;
     card.addEventListener('click', () => openMovie(movie));
-    // Defer poster load until card is near the viewport
-    schedulePosterLoad(card, () => loadMovieCardPoster(card, movie));
+
+    // Only schedule lazy poster load if server hasn't resolved it yet
+    if (!hasPoster) {
+        schedulePosterLoad(card, () => loadMovieCardPoster(card, movie));
+    }
     makeFocusable(card);
     return card;
 }
 
 async function loadMovieCardPoster(card, movie) {
-    let tmdb = movieTmdbCache.get(movie.id);
+    // Fast path: server already resolved TMDB data — use it instantly, zero API call
+    let tmdb = movieTmdbCache.get(movie.id) || tmdbFromEntry(movie);
+
     if (!tmdb) {
         // Micro-delay to avoid queueing TMDB requests for partial searches if the user is typing fast
-        // By awaiting here, we also give the DOM time to actually append the card
         await new Promise(r => setTimeout(r, 400));
-        if (!card.isConnected) return; // card was removed (user navigated away / typed more)
+        if (!card.isConnected) return;
         tmdb = await searchMovie(movie.search_title || movie.title, movie.year);
     }
 
     if (tmdb) {
         movieTmdbCache.set(movie.id, tmdb);
-        onMovieTmdbLoaded(movie, tmdb); // ← classify genre with the data we already have
-        // Update title and year to official TMDB data
+        onMovieTmdbLoaded(movie, tmdb);
         const titleEl = card.querySelector('.series-card-title');
         if (titleEl) titleEl.textContent = tmdb.name;
         const yearEl = card.querySelector('.series-card-year');
