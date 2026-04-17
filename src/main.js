@@ -1644,7 +1644,7 @@ async function playVideo(video, seriesTitle, playlistArray = null) {
     if (window.cineflix?.isElectron) {
         $('video-player').src = '';
         const loader = $('mpv-loader');
-        if (loader) loader.classList.remove('hidden');
+        if (loader) loader.style.display = 'flex';
         try {
             if (playlistArray && playlistArray.length > 0) {
                 const startIndex = playlistArray.indexOf(video) !== -1 ? playlistArray.indexOf(video) : 0;
@@ -1656,7 +1656,7 @@ async function playVideo(video, seriesTitle, playlistArray = null) {
         } catch (err) {
             alert(`No se pudo abrir en MPV:\n${err.message}`);
         } finally {
-            if (loader) loader.classList.add('hidden');
+            if (loader) loader.style.display = 'none';
         }
         return;
     }
