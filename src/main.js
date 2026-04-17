@@ -1576,9 +1576,9 @@ async function openSeason(button, series) {
         }
 
 
-        // Don't sort alphabetically. The bot provides them in reverse chronological order
-        // (newest message first). Reverse it to show oldest (Episode 1) first.
-        videos.reverse();
+        // Sort explicitly by msgId to ensure chronological order (Episode 1 first)
+        // regardless of whether they came from Kotlin (chronological) or GramJS (reverse chronological)
+        videos.sort((a, b) => a.msgId - b.msgId);
         // Fetch TMDB episode details — ensure TMDB search has completed
         const seasonNum = extractSeasonNumber(button.text);
         let tmdbEpisodes = [];
