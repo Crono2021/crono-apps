@@ -226,6 +226,58 @@ async function runResolveJob() {
 
     (async () => {
         try {
+            // ── 1. SYNC FROM GITHUB ───────────────────────────────────────────
+            // Ensure Railway has the latest items added by the Telegram Bot
+            console.log('[TMDB] Fetching latest JSON from GitHub to sync new items...');
+            try {
+                // Sync Series
+                const resC = await fetch('https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/catalog.json?v=' + Date.now());
+                if (resC.ok) {
+                    const latestSeries = await resC.json();
+                    const { rows } = await db.query('SELECT payload FROM series');
+                    const existingPayloads = new Set(rows.map(r => r.payload));
+                    let addedSeries = 0;
+                    for (let i = 0; i < latestSeries.length; i++) {
+                        const s = latestSeries[i];
+                        const key = s.payload || s.id || s.title;
+                        if (!existingPayloads.has(key)) {
+                            await db.query(
+                                'INSERT INTO series (title, year, payload, position) VALUES ($1,$2,$3,$4)',
+                                [s.title, s.year || null, key, i]
+                            );
+                            existingPayloads.add(key);
+                            addedSeries++;
+                        }
+                    }
+                    console.log(`[TMDB] Sync series: added ${addedSeries} new entries from GitHub.`);
+                }
+                
+                // Sync Movies
+                const resM = await fetch('https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/movies.json?v=' + Date.now());
+                if (resM.ok) {
+                    const latestMovies = await resM.json();
+                    const { rows } = await db.query('SELECT search_title, COALESCE(year, 0) as year FROM movies');
+                    const existingMovies = new Set(rows.map(r => r.search_title + '|' + r.year));
+                    let addedMovies = 0;
+                    for (let i = 0; i < latestMovies.length; i++) {
+                        const m = latestMovies[i];
+                        const key = (m.search_title || m.title) + '|' + (m.year || 0);
+                        if (!existingMovies.has(key)) {
+                            await db.query(
+                                'INSERT INTO movies (title, search_title, year, position) VALUES ($1,$2,$3,$4)',
+                                [m.title, m.search_title || m.title, m.year || null, i]
+                            );
+                            existingMovies.add(key);
+                            addedMovies++;
+                        }
+                    }
+                    console.log(`[TMDB] Sync movies: added ${addedMovies} new entries from GitHub.`);
+                }
+            } catch (syncErr) {
+                console.warn('[TMDB] Sync from GitHub failed:', syncErr.message);
+            }
+
+            // ── 2. RESOLVE TMDB ───────────────────────────────────────────────
             // Fetch all unresolved series
             const { rows: series } = await db.query(
                 `SELECT id, title, year FROM series WHERE tmdb_resolved_at IS NULL AND active = true ORDER BY position ASC`
