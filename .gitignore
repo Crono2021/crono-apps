@@ -10,3 +10,6 @@ tvgram_extracted/
 jadx/
 jadx.zip
 *.jar
+
+# Bot file (edited locally, deployed separately)
+main.py
