@@ -759,13 +759,14 @@ export async function streamVideoMobileCapacitor(videoObj) {
 
     await ExoPlayer.initStream({ fileSize, mimeType });
 
-    // Lanzar inmediatamente
+    // Lanzar inmediatamente: El servidor interno bloquea peticiones hasta recibir datos
     console.log('[Native Mobile] ▶️ Lanzando ExoPlayer instantáneamente...');
     ExoPlayer.play({});
 
     let offset = 0;
     let wakeLock = null;
 
+    // Adquirir Wakelock del navegador para que no se apague la pantalla ni el puente JS
     if ('wakeLock' in navigator) {
         try {
             wakeLock = await navigator.wakeLock.request('screen');
@@ -775,28 +776,31 @@ export async function streamVideoMobileCapacitor(videoObj) {
         }
     }
 
-    // Usar el iterador nativo de GramJS para multiplexación paralela de descargas
-    const fileLocation = new Api.InputDocumentFileLocation({
-        id: doc.id, accessHash: doc.accessHash,
-        fileReference: doc.fileReference, thumbSize: '',
-    });
-
+    // Fire and forget loop to not block the calling function if needed,
+    // though the original code awaited the whole loop. We run it asynchronously.
     (async () => {
-        try {
-            const dlStream = c.iterDownload({
-                file: fileLocation,
-                requestSize: CHUNK_SIZE,
-                dcId: doc.dcId,
-                fileSize: doc.size
-            });
-
-            for await (const chunk of dlStream) {
-                const base64 = uint8ToBase64(chunk);
-                await ExoPlayer.pushChunk({ data: base64 });
-                offset += chunk.length;
+        while (offset < fileSize) {
+            const size = Math.min(CHUNK_SIZE, fileSize - offset);
+            let chunk;
+            try {
+                chunk = await fetchTelegramRange(c, doc, offset, size);
+            } catch (err) {
+                if (err.message && err.message.toLowerCase().includes('disconnect')) {
+                    console.warn('[Native Mobile] Reconectando...');
+                    await c.connect();
+                }
+                try {
+                    chunk = await fetchTelegramRange(c, doc, offset, size);
+                } catch (e2) {
+                    console.error('[Native Mobile] Error descarga fatal en offset', offset, e2);
+                    break;
+                }
             }
-        } catch (err) {
-            console.error('[Native Mobile] Error en descarga paralela:', err);
+
+            const base64 = uint8ToBase64(chunk);
+            await ExoPlayer.pushChunk({ data: base64 });
+
+            offset += chunk.length;
         }
 
         await ExoPlayer.downloadComplete({});
