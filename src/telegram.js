@@ -762,6 +762,17 @@ export async function streamVideoMobileCapacitor(videoObj) {
 
     let offset = 0;
     let playerLaunched = false;
+    let wakeLock = null;
+
+    // Adquirir Wakelock del navegador para que no se apague la pantalla ni el puente JS
+    if ('wakeLock' in navigator) {
+        try {
+            wakeLock = await navigator.wakeLock.request('screen');
+            console.log('[Native Mobile] ☀️ Wakelock de pantalla activado');
+        } catch (err) {
+            console.warn('[Native Mobile] No se pudo activar Wakelock:', err.message);
+        }
+    }
 
     // Fire and forget loop to not block the calling function if needed,
     // though the original code awaited the whole loop. We run it asynchronously.
@@ -802,6 +813,15 @@ export async function streamVideoMobileCapacitor(videoObj) {
             await ExoPlayer.play({});
         }
         console.log('[Native Mobile] ✅ Descarga completa:', offset, 'bytes');
+
+        // Liberar Wakelock al terminar la descarga
+        if (wakeLock) {
+            try {
+                await wakeLock.release();
+                console.log('[Native Mobile] 🌙 Wakelock de pantalla liberado');
+            } catch (err) {}
+            wakeLock = null;
+        }
     })();
 }
 
