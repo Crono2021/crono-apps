@@ -105,7 +105,7 @@ import {
     parseEpisodeFile, posterUrl, stillUrl,
     getTrending, getTrendingMovies, discoverMoviesByGenre, normTitle,
 } from './tmdb.js';
-import './tv-nav.js';
+
 
 function makeFocusable(el) {
     el.tabIndex = 0;
@@ -1661,8 +1661,8 @@ async function playVideo(video, seriesTitle, playlistArray = null) {
         return;
     }
 
-    // ── Native Android TV: use ExoPlayer via Capacitor plugin ─────────────────
-    if (isNativeApp() && window._cineflixIsTV) {
+    // ── Native Android: use ExoPlayer via Capacitor plugin ──────────────────
+    if (isNativeApp()) {
         try {
             await streamVideoNative(video);
         } catch (err) {
