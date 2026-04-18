@@ -1046,8 +1046,9 @@ async function showMovies() {
     };
 
     // Recent row + hero: instantáneo, usando datos del catálogo local
+    const currentYear = new Date().getFullYear();
     const recentMovies = [...moviesCatalog]
-        .filter(m => m.year >= 2024)
+        .filter(m => m.year >= currentYear - 1)
         .sort((a, b) => (b.year || 0) - (a.year || 0))
         .slice(0, 40);
     renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
