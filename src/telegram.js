@@ -368,6 +368,15 @@ export async function getVideoMessages(limit = 50, minId = 0) {
                 if (attr.fileName) fileName = attr.fileName;
             }
         }
+        // Fallback for non-native video formats (MKV, AVI, TS…).
+        // Telegram doesn't assign DocumentAttributeVideo to files it can't transcode,
+        // so we promote them to "video" based on file extension.
+        if (!isVideo && fileName) {
+            const ext = fileName.split('.').pop().toLowerCase();
+            if (['mkv','avi','ts','m2ts','webm','flv','wmv','m4v','mov'].includes(ext)) {
+                isVideo = true;
+            }
+        }
         if (!isVideo) continue;
 
         // Fallback: use caption, then generic name with msgId

@@ -1519,13 +1519,22 @@ function populateMovieFilesList(movie, videos) {
             ? `${(video.fileSize / 1073741824).toFixed(1)} GB`
             : `${(video.fileSize / (1024 * 1024)).toFixed(0)} MB`;
         const durStr = formatDuration(video.duration);
-        const label = (video.caption || video.fileName || '').replace(/\.[^.]+$/, '') || displayTitle;
+        const rawLabel = (video.caption || video.fileName || '').replace(/\.[^.]+$/, '') || displayTitle;
+        const label = escapeHtml(rawLabel);
+
+        // Detectar formato MKV u otros no-mp4
+        const ext = (video.fileName || video.caption || '').split('.').pop().toLowerCase();
+        const formatBadge = ext === 'mkv'  ? '<span class="badge-format badge-mkv">MKV</span>'
+                          : ext === 'avi'  ? '<span class="badge-format badge-mkv">AVI</span>'
+                          : ext === 'ts'   ? '<span class="badge-format badge-mkv">TS</span>'
+                          : '';
+
         const item = document.createElement('div');
         item.className = 'movie-file-item';
         item.innerHTML = `
             <div class="movie-file-icon">▶</div>
             <div class="movie-file-info">
-                <div class="movie-file-name">${escapeHtml(label)}</div>
+                <div class="movie-file-name">${label}${formatBadge}</div>
                 <div class="movie-file-meta">${sizeStr}${durStr ? ' · ' + durStr : ''}</div>
             </div>
             <div class="movie-file-arrow">›</div>

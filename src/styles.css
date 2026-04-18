@@ -495,6 +495,25 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.badge-format {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+    text-transform: uppercase;
+}
+.badge-mkv {
+    background: rgba(139,92,246,0.25);
+    color: #a78bfa;
+    border: 1px solid rgba(139,92,246,0.4);
 }
 .movie-file-meta { font-size: 0.78rem; color: rgba(255,255,255,0.4); margin-top: 2px; }
 .movie-file-arrow {
