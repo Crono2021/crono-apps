@@ -1053,17 +1053,6 @@ async function showMovies() {
         .slice(0, 40);
     renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
 
-    // Hero: películas aleatorias del catálogo con datos TMDB ya cacheados — CERO llamadas de red
-    setupMovieHero(getRandomHeroMovies());
-
-    // Tendencias TMDB en segundo plano (sin bloquear la UI)
-    getTrendingMovies().then(trendingTmdb => {
-        const matched = trendingTmdb.map(t => findMovieInCatalog(t)).filter(Boolean);
-        if (matched.length > 0) {
-            renderMovieRow('mov_trending', '🔥 En tendencia esta semana', matched, true);
-        }
-    }).catch(() => {});
-
     // Delay rendering of heavy genre rows to allow instant UI response on mobile/TV
     setTimeout(() => {
         // Initialize Genre Rows using TMDB data from Railway
