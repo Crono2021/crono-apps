@@ -222,6 +222,24 @@ async function resolveTmdbForRow(title, year, type) {
     };
 }
 
+async function forceResolveTmdb(tmdbId, type) {
+    // type: 'tv' | 'movie'
+    const endpoint = type === 'tv' ? `tv/${tmdbId}` : `movie/${tmdbId}`;
+    const params = new URLSearchParams({ api_key: TMDB_KEY, language: 'es-ES' });
+    const res = await tmdbFetch(`${TMDB_BASE}/${endpoint}?${params}`);
+    if (!res.ok) return null;
+    const r = await res.json();
+    return {
+        tmdb_id:          r.id,
+        tmdb_name:        r.name || r.title || null,
+        tmdb_overview:    r.overview || null,
+        tmdb_poster:      r.poster_path || null,
+        tmdb_backdrop:    r.backdrop_path || null,
+        tmdb_rating:      r.vote_average ? Math.round(r.vote_average * 10) / 10 : null,
+        tmdb_genre_ids:   r.genres ? JSON.stringify(r.genres.map(g => g.id)) : null,
+    };
+}
+
 async function runResolveJob() {
     if (!db) return { error: 'No database' };
     if (_resolveJob?.running) return { error: 'Ya hay una resolución en curso' };
@@ -607,6 +625,47 @@ app.post('/api/admin/resolve-tmdb/reset-all', requireAuth, async (req, res) => {
     await db.query(`UPDATE movies SET tmdb_resolved_at=NULL, tmdb_id=NULL`);
     await db.query(`UPDATE series SET tmdb_resolved_at=NULL, tmdb_id=NULL`);
     res.json({ success: true });
+});
+
+// ── Manual Resolve Endpoints ──────────────────────────────────────────────────
+app.get('/api/admin/unresolved', requireAuth, async (req, res) => {
+    if (!db) return res.json([]);
+    const { rows: movies } = await db.query(`
+        SELECT id, title, 'movies' AS table_name, year 
+        FROM movies 
+        WHERE tmdb_id IS NULL AND tmdb_resolved_at IS NOT NULL
+    `);
+    const { rows: series } = await db.query(`
+        SELECT id, title, 'series' AS table_name, year 
+        FROM series 
+        WHERE tmdb_id IS NULL AND tmdb_resolved_at IS NOT NULL
+    `);
+    res.json([...movies, ...series]);
+});
+
+app.post('/api/admin/force-resolve', requireAuth, async (req, res) => {
+    if (!db) return res.status(503).json({ error: 'No database' });
+    const { dbId, table, tmdbId } = req.body;
+    if (!dbId || !table || !tmdbId) return res.status(400).json({ error: 'Missing parameters' });
+    
+    try {
+        const type = table === 'movies' ? 'movie' : 'tv';
+        const data = await forceResolveTmdb(tmdbId, type);
+        
+        if (!data) return res.status(404).json({ error: 'No se encontró ese ID en TMDB' });
+        
+        await db.query(
+            `UPDATE ${table} SET tmdb_id=$1, tmdb_name=$2, tmdb_overview=$3,
+             tmdb_poster=$4, tmdb_backdrop=$5, tmdb_rating=$6,
+             tmdb_genre_ids=$7, tmdb_resolved_at=NOW() WHERE id=$8`,
+            [data.tmdb_id, data.tmdb_name, data.tmdb_overview, data.tmdb_poster,
+             data.tmdb_backdrop, data.tmdb_rating, data.tmdb_genre_ids, dbId]
+        );
+        res.json({ success: true, data });
+    } catch(err) {
+        console.error('[Force Resolve] Error:', err);
+        res.status(500).json({ error: 'Error interno o de TMDB: ' + err.message });
+    }
 });
 
 // ── Admin panel ───────────────────────────────────────────────────────────────

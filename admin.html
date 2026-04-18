@@ -146,6 +146,20 @@
     font-size: .85rem; width: 100%;
   }
 
+  /* Unresolved */
+  .unresolved-row {
+    display: flex; gap: .5rem; align-items: center;
+    background: var(--surface2); padding: .5rem .8rem;
+    border-radius: 6px; margin-bottom: .4rem; border: 1px solid var(--border);
+  }
+  .unresolved-title { flex: 1; font-size: .85rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .unresolved-id {
+    width: 130px; padding: .4rem .6rem; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text); font-size: .85rem; outline: none;
+  }
+  .unresolved-id:focus { border-color: var(--accent); }
+
   /* Loading */
   .loader { text-align: center; padding: 3rem; color: var(--muted); }
   .empty  { text-align: center; padding: 3rem; color: var(--muted); }
@@ -220,6 +234,21 @@
       </div>
     </div>
 
+    <!-- TMDB Manual Override -->
+    <div class="add-form" id="tmdb-manual-card" style="display:none; border-color:var(--accent)">
+      <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+        <span style="font-size:1.1rem">🏥</span>
+        <h2 style="flex:1;margin:0;color:var(--accent-h)">Unidad de Terapia Intensiva (Sin resultado)</h2>
+        <span class="badge" id="unresolved-count" style="background:var(--accent);color:#fff">0</span>
+      </div>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem">
+        Estos catálogos no pudieron asociarse con una carátula. Busca el elemento en 
+        <a href="https://www.themoviedb.org/" target="_blank" style="color:var(--accent-h)">TheMovieDB</a> 
+        y pega su ID Numérico aquí.
+      </p>
+      <div id="unresolved-list" style="max-height:400px;overflow-y:auto;padding-right:.5rem;"></div>
+    </div>
+
     <!-- Series Table -->
     <div class="table-wrap">
       <div class="table-header">
@@ -276,6 +305,7 @@ async function showPanel() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('admin-panel').style.display = 'block';
   await loadSeries();
+  await loadUnresolved();
 }
 
 async function loadSeries() {
@@ -508,10 +538,56 @@ function startTmdbPoller() {
         btn.disabled = false;
         btn.textContent = '▶ Resolver ahora';
         if (job.done) toast(`TMDB resuelto: ${job.resolved} entradas ✔`, 'success');
+        await loadUnresolved();
       }
     } catch { /* ignore polling errors */ }
   }, 2000);
 }
+
+// ── TMDB MANUAL ──────────────────────────────────────────────────────────────────────
+async function loadUnresolved() {
+  try {
+    const res = await fetch('/api/admin/unresolved', { headers: authHeaders() });
+    const list = await res.json();
+    const wrap = document.getElementById('tmdb-manual-card');
+    const container = document.getElementById('unresolved-list');
+    
+    if (list.length === 0) { wrap.style.display = 'none'; return; }
+    
+    wrap.style.display = 'block';
+    document.getElementById('unresolved-count').textContent = list.length;
+    container.innerHTML = list.map(item => `
+      <div class="unresolved-row" id="ur-${item.table_name}-${item.id}">
+        <div class="unresolved-title">
+          <span class="badge ${item.table_name === 'movies' ? 'badge-inactive' : 'badge-active'}" style="font-size:0.65rem;margin-right:.4rem">${item.table_name === 'movies' ? 'Peli' : 'Serie'}</span>
+          ${esc(item.title)} <span style="opacity:0.5">${item.year ? `(${item.year})` : ''}</span>
+        </div>
+        <input type="number" placeholder="Pegar ID" class="unresolved-id" id="inputId-${item.table_name}-${item.id}" />
+        <button class="btn btn-primary btn-sm" onclick="forceResolve(${item.id}, '${item.table_name}')">💉 ID</button>
+      </div>
+    `).join('');
+  } catch(e) { }
+}
+
+window.forceResolve = async function(dbId, table) {
+  const tmdbId = document.getElementById(`inputId-${table}-${dbId}`).value.trim();
+  if(!tmdbId) { toast('Falta el ID', 'error'); return; }
+  
+  try {
+    const res = await fetch('/api/admin/force-resolve', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ dbId, table, tmdbId })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error);
+    
+    toast(`Inyectado: ${data.data.tmdb_name} ✓`, 'success');
+    document.getElementById(`ur-${table}-${dbId}`).remove();
+    const countEl = document.getElementById('unresolved-count');
+    countEl.textContent = parseInt(countEl.textContent) - 1;
+    if(countEl.textContent === '0') document.getElementById('tmdb-manual-card').style.display = 'none';
+  } catch(e) { toast(e.message, 'error'); }
+};
 
 // Check if a job is already running on page load
 window.addEventListener('load', async () => {
