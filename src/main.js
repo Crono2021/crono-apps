@@ -901,12 +901,28 @@ async function loadMovies() {
         }
     } catch { /* ignore */ }
 
-    // 2️⃣ Delta sync in background (non-blocking)
-    if (moviesCatalog.length === 0) {
-        await fetchRemoteMovies(); // Block if we have nothing to show
-    } else {
-        fetchRemoteMovies().catch(() => {}); // Background sync if we already have cache
-    }
+    // 2️⃣ ALWAYS run delta sync in background — never block the UI thread
+    fetchRemoteMovies().then(() => {
+        // If the first load had nothing cached, the UI was blank — now render it
+        if (moviesReady && moviesCatalog.length > 0) {
+            const recentMovies = [...moviesCatalog]
+                .filter(m => m.year >= 2024)
+                .sort((a, b) => (b.year || 0) - (a.year || 0))
+                .slice(0, 40);
+            renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
+            for (const genre of MOVIE_GENRE_ROWS) {
+                const items = moviesCatalog.filter(m => {
+                    let gIds = [];
+                    if (m.tmdb_genre_ids) {
+                        try { gIds = typeof m.tmdb_genre_ids === 'string' ? JSON.parse(m.tmdb_genre_ids) : m.tmdb_genre_ids; } catch(e){}
+                    }
+                    return genre.ids.some(id => gIds.includes(id));
+                });
+                if (items.length > 0) renderMovieRow(genre.id, genre.title, items.slice(0, 40));
+            }
+            renderAllMoviesCatalog();
+        }
+    }).catch(() => {});
 }
 
 async function fetchRemoteMovies() {
