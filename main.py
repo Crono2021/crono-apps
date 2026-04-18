@@ -88,6 +88,12 @@ RATE_LIMITS_FILE = DATA_DIR / "rate_limits.json"  # límite de peticiones por d�
 BANNED_FILE = DATA_DIR / "banned.json"  # usuarios baneados
 HIDDEN_FILE = DATA_DIR / "hidden.txt" # Tema oculto
 
+# ── Cache en memoria para topics (evita leer disco en cada mensaje) ──────────
+# Las series siguen guardando al disco inmediatamente.
+# Las películas usan escritura diferida (debounce 10s) para evitar bloquear asyncio.
+_topics_mem: dict | None = None         # caché RAM del topics.json
+_pelis_save_task = None                 # handle del temporizador diferido
+
 # Tamaño de página (temas por página en listados generales)
 PAGE_SIZE = 30
 # Cuántos temas se muestran en "Recientes"
@@ -519,8 +525,14 @@ def process_message_for_seasons(topic_info: dict, msg, original_message_id: int)
 
 
 def load_topics():
+    global _topics_mem
+    # Devuelve la caché RAM si ya está cargada (evita leer disco en cada mensaje)
+    if _topics_mem is not None:
+        return _topics_mem
+
     if not TOPICS_FILE.exists():
-        return {}
+        _topics_mem = {}
+        return _topics_mem
     try:
         with open(TOPICS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -542,21 +554,55 @@ def load_topics():
                 changed = True
             ensure_season_structure(info)
 
+        _topics_mem = data
         if changed:
             save_topics(data)
 
-        return data
+        return _topics_mem
     except Exception as e:
         print("[load_topics] ERROR cargando JSON:", e)
-        return {}
+        _topics_mem = {}
+        return _topics_mem
 
 
-def save_topics(data):
+def save_topics(data: dict):
+    """Escritura inmediata al disco. Usar para series y cambios críticos."""
+    global _topics_mem
+    _topics_mem = data  # actualiza siempre la cache RAM
     try:
         with open(TOPICS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
         print("[save_topics] ERROR guardando JSON:", e)
+
+
+def _write_topics_sync(data: dict):
+    """Escritura síncrona al disco. Diseñada para llamarse desde run_in_executor."""
+    try:
+        with open(TOPICS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        print("[Pelis] ✅ Flush diferido completado.")
+    except Exception as e:
+        print("[Pelis] ERROR en flush diferido:", e)
+
+
+async def _pelis_deferred_flush():
+    """Espera 10 segundos e indexa al disco las películas acumuladas en RAM."""
+    global _pelis_save_task
+    await asyncio.sleep(10)
+    if _topics_mem is not None:
+        await asyncio.get_event_loop().run_in_executor(None, _write_topics_sync, dict(_topics_mem))
+    _pelis_save_task = None
+
+
+def schedule_pelis_save():
+    """Reinicia el temporizador de guardado diferido (debounce 10s) para el tema de películas."""
+    global _pelis_save_task
+    if _pelis_save_task and not _pelis_save_task.done():
+        _pelis_save_task.cancel()
+    _pelis_save_task = asyncio.get_event_loop().create_task(_pelis_deferred_flush())
+    print("[Pelis] ⏳ Guardado diferido programado en 10s.")
+
 
 
 def get_pelis_topic_id(topics=None):
@@ -1059,7 +1105,15 @@ async def detect(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         {"id": msg.message_id, "title": title, "unique_id": unique_id, "file_name": (file_obj.file_name or "")}
                     )
 
-    save_topics(topics)
+    # Guardar cambios: películas usan escritura diferida (debounce 10s), series inmediata
+    if topics[topic_id].get("is_pelis"):
+        # Solo actualiza la caché RAM; el flush al disco ocurrirá 10s después del último mensaje
+        global _topics_mem
+        _topics_mem = topics
+        schedule_pelis_save()
+    else:
+        save_topics(topics)
+
 
 
 # ======================================================
@@ -4984,6 +5038,13 @@ async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     topics = load_topics()
+
+    # Forzar flush inmediato al disco si había cambios de películas pendientes en RAM
+    if _pelis_save_task and not _pelis_save_task.done():
+        _pelis_save_task.cancel()
+    if _topics_mem is not None:
+        await asyncio.get_event_loop().run_in_executor(None, _write_topics_sync, dict(_topics_mem))
+
     _ensure_series_payloads(topics)
 
     # ── Generar catalog.json (series) ────────────────────────────────────────
@@ -5047,15 +5108,7 @@ async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .connect_timeout(30.0)
-        .read_timeout(30.0)
-        .write_timeout(30.0)
-        .pool_timeout(30.0)
-        .build()
-    )
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
     # Guard global de usuarios baneados (se ejecuta antes del resto de handlers)
     app.add_handler(MessageHandler(filters.ALL, ban_guard_message), group=-1)
     app.add_handler(CallbackQueryHandler(ban_guard_callback, pattern=r".*"), group=-1)
