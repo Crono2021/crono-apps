@@ -1051,7 +1051,12 @@ async function showMovies() {
         .sort((a, b) => (b.year || 0) - (a.year || 0))
         .slice(0, 40);
     renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
-    setupMovieHero(recentMovies.slice(0, 5)); // Sin await — muestra el hero ya
+
+    // Fallback robusto: si no hay peliculas con año >= 2024 usamos el catálogo completo
+    const heroMovies = recentMovies.length > 0
+        ? recentMovies.slice(0, 5)
+        : moviesCatalog.slice(0, 5);
+    setupMovieHero(heroMovies); // Sin await — muestra el hero ya
 
     // Tendencias TMDB en segundo plano (sin bloquear la UI)
     getTrendingMovies().then(trendingTmdb => {
