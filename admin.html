@@ -208,7 +208,8 @@
       <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
         <span style="font-size:1.1rem">🎬</span>
         <h2 style="flex:1;margin:0">Resolver TMDB — Caché de miniaturas y sinopsis</h2>
-        <button class="btn btn-secondary" id="tmdb-resolve-btn">▶ Resolver ahora</button>
+        <button class="btn btn-danger" style="background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.3)" id="tmdb-retry-btn">🔄 Purgar Fallidos</button>
+        <button class="btn btn-primary" id="tmdb-resolve-btn">▶ Resolver ahora</button>
       </div>
       <div id="tmdb-progress-wrap" style="margin-top:1rem;display:none">
         <div style="background:var(--surface2);border-radius:6px;overflow:hidden;height:8px;margin-bottom:.6rem">
@@ -435,6 +436,23 @@ function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 
 // ── TMDB RESOLVER ───────────────────────────────────────────────────────────────────────
 let _tmdbPoller = null;
+
+document.getElementById('tmdb-retry-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('tmdb-retry-btn');
+  if(!confirm('¿Purgar estado de todos los elementos "Sin resultado"? Volverán a intentarse en la próxima resolución.')) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Purgando...';
+  try {
+    const res = await fetch('/api/admin/resolve-tmdb/retry-failed', { method: 'POST', headers: authHeaders() });
+    if (!res.ok) throw new Error((await res.json()).error);
+    toast('Lista de fallidos vaciada. ¡Haz clic en Resolver!', 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 Purgar Fallidos';
+  }
+});
 
 document.getElementById('tmdb-resolve-btn').addEventListener('click', async () => {
   const btn = document.getElementById('tmdb-resolve-btn');

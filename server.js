@@ -181,7 +181,11 @@ async function tmdbFetch(url) {
 
 async function resolveTmdbForRow(title, year, type) {
     // type: 'tv' | 'movie'
-    const cleanTitle = title.replace(/\s*\(\d{4}\)\s*$/, '').trim()
+    const cleanTitle = title
+        .replace(/^[^a-zA-Z0-9¿¡À-ÿ]+/, '')        // Strip hidden emojis, spaces, variations
+        .replace(/^0\d{1,2}\s*[-_.]?\s*/, '')      // Strip 08, 097
+        .replace(/^\d{1,3}\s*[-_.]\s+/, '')        // Strip 120 - 
+        .replace(/\s*\(\d{4}\)\s*$/, '').trim()
         .split(/\s*[|·]\s*/)[0]
         .replace(/\s*\(\s*(Castellano|Cast\.|Latino|Audio|Español|Doblado|Subtitulado)[^)]*\)/gi, '')
         .replace(/\s*\([^)]*\)\s*$/, '')
@@ -584,6 +588,15 @@ app.post('/api/admin/resolve-tmdb/reset/:table/:id', requireAuth, async (req, re
     if (!db) return res.status(503).json({ error: 'No database' });
     const table = req.params.table === 'movies' ? 'movies' : 'series';
     await db.query(`UPDATE ${table} SET tmdb_resolved_at=NULL, tmdb_id=NULL WHERE id=$1`, [req.params.id]);
+    res.json({ success: true });
+});
+
+// Reset ALL failed (unresolved) items across both tables
+app.post('/api/admin/resolve-tmdb/retry-failed', requireAuth, async (req, res) => {
+    if (!db) return res.status(503).json({ error: 'No database' });
+    if (_resolveJob?.running) return res.status(409).json({ error: 'Ya hay una resolución en curso' });
+    await db.query(`UPDATE movies SET tmdb_resolved_at=NULL WHERE tmdb_id IS NULL AND tmdb_resolved_at IS NOT NULL`);
+    await db.query(`UPDATE series SET tmdb_resolved_at=NULL WHERE tmdb_id IS NULL AND tmdb_resolved_at IS NOT NULL`);
     res.json({ success: true });
 });
 
