@@ -69,6 +69,9 @@ class PlayerActivity : Activity() {
             or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
         )
 
+        // Mantener pantalla encendida durante toda la reproducción (sin salvapantallas)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         val fileId   = intent.getIntExtra(EXTRA_FILE_ID, -1)
         val fileSize = intent.getLongExtra(EXTRA_FILE_SIZE, 0L)
         val mimeType = intent.getStringExtra(EXTRA_MIME_TYPE) ?: "video/mp4"
@@ -134,7 +137,8 @@ class PlayerActivity : Activity() {
 
         playerView = PlayerView(this)
         playerView?.useController = true
-        playerView?.setShowSubtitleButton(true) // Habilita el botón 'CC' nativo de subtítulos
+        playerView?.setShowSubtitleButton(true)      // Botón CC para subtítulos
+        playerView?.setShowAudioTrackButton(true)    // Botón de pistas de audio visible directamente
         setContentView(playerView)
 
         // TVGram load control logic (min 15s, max 50s, playback start 5s)
