@@ -1,0 +1,85 @@
+.class public Lorg/drinkless/tdlib/TdApi$BanChatMember;
+.super Lorg/drinkless/tdlib/TdApi$Function;
+.source "TdApi.java"
+
+
+# annotations
+.annotation system Ldalvik/annotation/EnclosingClass;
+    value = Lorg/drinkless/tdlib/TdApi;
+.end annotation
+
+.annotation system Ldalvik/annotation/InnerClass;
+    accessFlags = 0x9
+    name = "BanChatMember"
+.end annotation
+
+.annotation system Ldalvik/annotation/Signature;
+    value = {
+        "Lorg/drinkless/tdlib/TdApi$Function<",
+        "Lorg/drinkless/tdlib/TdApi$Ok;",
+        ">;"
+    }
+.end annotation
+
+
+# static fields
+.field public static final CONSTRUCTOR:I = -0x34ef8284
+
+
+# instance fields
+.field public bannedUntilDate:I
+
+.field public chatId:J
+
+.field public memberId:Lorg/drinkless/tdlib/TdApi$MessageSender;
+
+.field public revokeMessages:Z
+
+
+# direct methods
+.method public constructor <init>()V
+    .locals 0
+
+    .line 42486
+    invoke-direct {p0}, Lorg/drinkless/tdlib/TdApi$Function;-><init>()V
+
+    .line 42487
+    return-void
+.end method
+
+.method public constructor <init>(JLorg/drinkless/tdlib/TdApi$MessageSender;IZ)V
+    .locals 0
+    .param p1, "j5"    # J
+    .param p3, "messageSender"    # Lorg/drinkless/tdlib/TdApi$MessageSender;
+    .param p4, "i9"    # I
+    .param p5, "z8"    # Z
+
+    .line 42474
+    invoke-direct {p0}, Lorg/drinkless/tdlib/TdApi$Function;-><init>()V
+
+    .line 42475
+    iput-wide p1, p0, Lorg/drinkless/tdlib/TdApi$BanChatMember;->chatId:J
+
+    .line 42476
+    iput-object p3, p0, Lorg/drinkless/tdlib/TdApi$BanChatMember;->memberId:Lorg/drinkless/tdlib/TdApi$MessageSender;
+
+    .line 42477
+    iput p4, p0, Lorg/drinkless/tdlib/TdApi$BanChatMember;->bannedUntilDate:I
+
+    .line 42478
+    iput-boolean p5, p0, Lorg/drinkless/tdlib/TdApi$BanChatMember;->revokeMessages:Z
+
+    .line 42479
+    return-void
+.end method
+
+
+# virtual methods
+.method public getConstructor()I
+    .locals 1
+
+    .line 42483
+    const v0, -0x34ef8284    # -9469308.0f
+
+    return v0
+.end method

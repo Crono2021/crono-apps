@@ -1,0 +1,79 @@
+.class public Lorg/drinkless/tdlib/TdApi$SendQuickReplyShortcutMessages;
+.super Lorg/drinkless/tdlib/TdApi$Function;
+.source "TdApi.java"
+
+
+# annotations
+.annotation system Ldalvik/annotation/EnclosingClass;
+    value = Lorg/drinkless/tdlib/TdApi;
+.end annotation
+
+.annotation system Ldalvik/annotation/InnerClass;
+    accessFlags = 0x9
+    name = "SendQuickReplyShortcutMessages"
+.end annotation
+
+.annotation system Ldalvik/annotation/Signature;
+    value = {
+        "Lorg/drinkless/tdlib/TdApi$Function<",
+        "Lorg/drinkless/tdlib/TdApi$Messages;",
+        ">;"
+    }
+.end annotation
+
+
+# static fields
+.field public static final CONSTRUCTOR:I = 0xdd5169d
+
+
+# instance fields
+.field public chatId:J
+
+.field public sendingId:I
+
+.field public shortcutId:I
+
+
+# direct methods
+.method public constructor <init>()V
+    .locals 0
+
+    .line 39976
+    invoke-direct {p0}, Lorg/drinkless/tdlib/TdApi$Function;-><init>()V
+
+    .line 39977
+    return-void
+.end method
+
+.method public constructor <init>(JII)V
+    .locals 0
+    .param p1, "j5"    # J
+    .param p3, "i9"    # I
+    .param p4, "i10"    # I
+
+    .line 39965
+    invoke-direct {p0}, Lorg/drinkless/tdlib/TdApi$Function;-><init>()V
+
+    .line 39966
+    iput-wide p1, p0, Lorg/drinkless/tdlib/TdApi$SendQuickReplyShortcutMessages;->chatId:J
+
+    .line 39967
+    iput p3, p0, Lorg/drinkless/tdlib/TdApi$SendQuickReplyShortcutMessages;->shortcutId:I
+
+    .line 39968
+    iput p4, p0, Lorg/drinkless/tdlib/TdApi$SendQuickReplyShortcutMessages;->sendingId:I
+
+    .line 39969
+    return-void
+.end method
+
+
+# virtual methods
+.method public getConstructor()I
+    .locals 1
+
+    .line 39973
+    const v0, 0xdd5169d
+
+    return v0
+.end method

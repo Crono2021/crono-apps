@@ -1,0 +1,65 @@
+.class public Lorg/drinkless/tdlib/TdApi$RestrictionInfo;
+.super Lorg/drinkless/tdlib/TdApi$Object;
+.source "TdApi.java"
+
+
+# annotations
+.annotation system Ldalvik/annotation/EnclosingClass;
+    value = Lorg/drinkless/tdlib/TdApi;
+.end annotation
+
+.annotation system Ldalvik/annotation/InnerClass;
+    accessFlags = 0x9
+    name = "RestrictionInfo"
+.end annotation
+
+
+# static fields
+.field public static final CONSTRUCTOR:I = -0x760caaf3
+
+
+# instance fields
+.field public hasSensitiveContent:Z
+
+.field public restrictionReason:Ljava/lang/String;
+
+
+# direct methods
+.method public constructor <init>()V
+    .locals 0
+
+    .line 30368
+    invoke-direct {p0}, Lorg/drinkless/tdlib/TdApi$Object;-><init>()V
+
+    .line 30369
+    return-void
+.end method
+
+.method public constructor <init>(Ljava/lang/String;Z)V
+    .locals 0
+    .param p1, "str"    # Ljava/lang/String;
+    .param p2, "z8"    # Z
+
+    .line 30358
+    invoke-direct {p0}, Lorg/drinkless/tdlib/TdApi$Object;-><init>()V
+
+    .line 30359
+    iput-object p1, p0, Lorg/drinkless/tdlib/TdApi$RestrictionInfo;->restrictionReason:Ljava/lang/String;
+
+    .line 30360
+    iput-boolean p2, p0, Lorg/drinkless/tdlib/TdApi$RestrictionInfo;->hasSensitiveContent:Z
+
+    .line 30361
+    return-void
+.end method
+
+
+# virtual methods
+.method public getConstructor()I
+    .locals 1
+
+    .line 30365
+    const v0, -0x760caaf3
+
+    return v0
+.end method

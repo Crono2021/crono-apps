@@ -1,0 +1,200 @@
+.class final Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;
+.super Ljava/lang/Object;
+.source "DecoderAudioRenderer.java"
+
+# interfaces
+.implements Landroidx/media3/exoplayer/audio/AudioSink$Listener;
+
+
+# annotations
+.annotation system Ldalvik/annotation/EnclosingClass;
+    value = Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+.end annotation
+
+.annotation system Ldalvik/annotation/InnerClass;
+    accessFlags = 0x12
+    name = "AudioSinkListener"
+.end annotation
+
+
+# instance fields
+.field final synthetic this$0:Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+
+
+# direct methods
+.method private constructor <init>(Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;)V
+    .locals 0
+
+    .line 848
+    .local p0, "this":Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;, "Landroidx/media3/exoplayer/audio/DecoderAudioRenderer<TT;>.AudioSinkListener;"
+    iput-object p1, p0, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;->this$0:Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+
+    return-void
+.end method
+
+.method synthetic constructor <init>(Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$1;)V
+    .locals 0
+    .param p1, "x0"    # Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+    .param p2, "x1"    # Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$1;
+
+    .line 848
+    .local p0, "this":Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;, "Landroidx/media3/exoplayer/audio/DecoderAudioRenderer<TT;>.AudioSinkListener;"
+    invoke-direct {p0, p1}, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;-><init>(Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;)V
+
+    return-void
+.end method
+
+
+# virtual methods
+.method public onAudioSinkError(Ljava/lang/Exception;)V
+    .locals 2
+    .param p1, "audioSinkError"    # Ljava/lang/Exception;
+
+    .line 877
+    .local p0, "this":Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;, "Landroidx/media3/exoplayer/audio/DecoderAudioRenderer<TT;>.AudioSinkListener;"
+    const-string v0, "DecoderAudioRenderer"
+
+    const-string v1, "Audio sink error"
+
+    invoke-static {v0, v1, p1}, Landroidx/media3/common/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
+
+    .line 878
+    iget-object v0, p0, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;->this$0:Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+
+    invoke-static {v0}, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;->access$200(Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;)Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;
+
+    move-result-object v0
+
+    invoke-virtual {v0, p1}, Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;->audioSinkError(Ljava/lang/Exception;)V
+
+    .line 879
+    return-void
+.end method
+
+.method public onAudioTrackInitialized(Landroidx/media3/exoplayer/audio/AudioSink$AudioTrackConfig;)V
+    .locals 1
+    .param p1, "audioTrackConfig"    # Landroidx/media3/exoplayer/audio/AudioSink$AudioTrackConfig;
+
+    .line 883
+    .local p0, "this":Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;, "Landroidx/media3/exoplayer/audio/DecoderAudioRenderer<TT;>.AudioSinkListener;"
+    iget-object v0, p0, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;->this$0:Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+
+    invoke-static {v0}, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;->access$200(Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;)Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;
+
+    move-result-object v0
+
+    invoke-virtual {v0, p1}, Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;->audioTrackInitialized(Landroidx/media3/exoplayer/audio/AudioSink$AudioTrackConfig;)V
+
+    .line 884
+    return-void
+.end method
+
+.method public onAudioTrackReleased(Landroidx/media3/exoplayer/audio/AudioSink$AudioTrackConfig;)V
+    .locals 1
+    .param p1, "audioTrackConfig"    # Landroidx/media3/exoplayer/audio/AudioSink$AudioTrackConfig;
+
+    .line 888
+    .local p0, "this":Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;, "Landroidx/media3/exoplayer/audio/DecoderAudioRenderer<TT;>.AudioSinkListener;"
+    iget-object v0, p0, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;->this$0:Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+
+    invoke-static {v0}, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;->access$200(Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;)Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;
+
+    move-result-object v0
+
+    invoke-virtual {v0, p1}, Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;->audioTrackReleased(Landroidx/media3/exoplayer/audio/AudioSink$AudioTrackConfig;)V
+
+    .line 889
+    return-void
+.end method
+
+.method public onPositionAdvancing(J)V
+    .locals 1
+    .param p1, "playoutStartSystemTimeMs"    # J
+
+    .line 862
+    .local p0, "this":Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;, "Landroidx/media3/exoplayer/audio/DecoderAudioRenderer<TT;>.AudioSinkListener;"
+    iget-object v0, p0, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;->this$0:Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+
+    invoke-static {v0}, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;->access$200(Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;)Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;
+
+    move-result-object v0
+
+    invoke-virtual {v0, p1, p2}, Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;->positionAdvancing(J)V
+
+    .line 863
+    return-void
+.end method
+
+.method public onPositionDiscontinuity()V
+    .locals 1
+
+    .line 852
+    .local p0, "this":Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;, "Landroidx/media3/exoplayer/audio/DecoderAudioRenderer<TT;>.AudioSinkListener;"
+    iget-object v0, p0, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;->this$0:Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+
+    invoke-virtual {v0}, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;->onPositionDiscontinuity()V
+
+    .line 853
+    return-void
+.end method
+
+.method public onSilenceSkipped()V
+    .locals 2
+
+    .line 857
+    .local p0, "this":Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;, "Landroidx/media3/exoplayer/audio/DecoderAudioRenderer<TT;>.AudioSinkListener;"
+    iget-object v0, p0, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;->this$0:Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+
+    const/4 v1, 0x1
+
+    invoke-static {v0, v1}, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;->access$102(Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;Z)Z
+
+    .line 858
+    return-void
+.end method
+
+.method public onSkipSilenceEnabledChanged(Z)V
+    .locals 1
+    .param p1, "skipSilenceEnabled"    # Z
+
+    .line 872
+    .local p0, "this":Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;, "Landroidx/media3/exoplayer/audio/DecoderAudioRenderer<TT;>.AudioSinkListener;"
+    iget-object v0, p0, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;->this$0:Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+
+    invoke-static {v0}, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;->access$200(Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;)Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;
+
+    move-result-object v0
+
+    invoke-virtual {v0, p1}, Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;->skipSilenceEnabledChanged(Z)V
+
+    .line 873
+    return-void
+.end method
+
+.method public onUnderrun(IJJ)V
+    .locals 7
+    .param p1, "bufferSize"    # I
+    .param p2, "bufferSizeMs"    # J
+    .param p4, "elapsedSinceLastFeedMs"    # J
+
+    .line 867
+    .local p0, "this":Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;, "Landroidx/media3/exoplayer/audio/DecoderAudioRenderer<TT;>.AudioSinkListener;"
+    iget-object v0, p0, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer$AudioSinkListener;->this$0:Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;
+
+    invoke-static {v0}, Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;->access$200(Landroidx/media3/exoplayer/audio/DecoderAudioRenderer;)Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;
+
+    move-result-object v1
+
+    move v2, p1
+
+    move-wide v3, p2
+
+    move-wide v5, p4
+
+    invoke-virtual/range {v1 .. v6}, Landroidx/media3/exoplayer/audio/AudioRendererEventListener$EventDispatcher;->underrun(IJJ)V
+
+    .line 868
+    return-void
+.end method
