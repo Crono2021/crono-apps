@@ -1048,7 +1048,7 @@ async function showMovies() {
     // Recent row + hero: instantáneo, usando datos del catálogo local
     const currentYear = new Date().getFullYear();
     const recentMovies = [...moviesCatalog]
-        .filter(m => m.year >= currentYear - 1)
+        .filter(m => m.year >= currentYear - 2)
         .sort((a, b) => (b.year || 0) - (a.year || 0))
         .slice(0, 40);
     renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
@@ -1168,29 +1168,31 @@ function renderMovieHeroSlide(idx) {
     if (!movie) return;
 
     // ── Render inmediato con datos del catálogo (sin red) ─────────────────
-    const displayTitle = movie.title.replace(/\s*\(\d{4}\)\s*$/, '').trim();
+    const rawTitle = movie.title || movie.search_title || 'Película';
+    const displayTitle = rawTitle.replace(/\s*\(\d{4}\)\s*$/, '').trim() || rawTitle;
     $('movies-hero-title').textContent = displayTitle;
     $('movies-hero-overview').textContent = '';
     $('movies-hero-meta').innerHTML = movie.year ? `<span>${movie.year}</span>` : '';
     $('movies-hero-backdrop').style.backgroundImage = '';
     $('movies-hero-play-btn').onclick = () => openMovie(movie);
 
-    // ── Enriquecimiento TMDB en segundo plano (backdrop, rating, overview) ─
-    searchMovie(movie.search_title || movie.title, movie.year).then(tmdb => {
-        if (!tmdb) return;
-        // Descartar si el usuario ya cambió de slide
-        if (movieHeroShows[movieHeroIndex] !== movie) return;
-        $('movies-hero-title').textContent = tmdb.name || displayTitle;
-        $('movies-hero-overview').textContent = tmdb.overview || '';
-        $('movies-hero-meta').innerHTML = [
-            tmdb.rating ? `<span class="hero-rating">★ ${tmdb.rating}</span>` : '',
-            (tmdb.year || movie.year) ? `<span>${tmdb.year || movie.year}</span>` : '',
-        ].filter(Boolean).join('');
-        if (tmdb.backdropPath) {
-            $('movies-hero-backdrop').style.backgroundImage =
-                `url('https://image.tmdb.org/t/p/w1280${tmdb.backdropPath}')`;
-        }
-    }).catch(() => {});
+    // ── Enriquecimiento TMDB diferido 2s para no competir con series ────────
+    setTimeout(() => {
+        if (movieHeroShows[movieHeroIndex] !== movie) return; // usuario cambio de slide
+        searchMovie(movie.search_title || movie.title, movie.year).then(tmdb => {
+            if (!tmdb || movieHeroShows[movieHeroIndex] !== movie) return;
+            $('movies-hero-title').textContent = tmdb.name || displayTitle;
+            $('movies-hero-overview').textContent = tmdb.overview || '';
+            $('movies-hero-meta').innerHTML = [
+                tmdb.rating ? `<span class="hero-rating">★ ${tmdb.rating}</span>` : '',
+                (tmdb.year || movie.year) ? `<span>${tmdb.year || movie.year}</span>` : '',
+            ].filter(Boolean).join('');
+            if (tmdb.backdropPath) {
+                $('movies-hero-backdrop').style.backgroundImage =
+                    `url('https://image.tmdb.org/t/p/w1280${tmdb.backdropPath}')`;
+            }
+        }).catch(() => {});
+    }, 2000);
 }
 
 function updateMovieHeroDots() {
