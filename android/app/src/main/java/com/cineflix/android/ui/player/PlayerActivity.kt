@@ -137,9 +137,46 @@ class PlayerActivity : Activity() {
 
         playerView = PlayerView(this)
         playerView?.useController = true
-        playerView?.setShowSubtitleButton(true)      // Botón CC para subtítulos
-        playerView?.setShowAudioTrackButton(true)    // Botón de pistas de audio visible directamente
-        setContentView(playerView)
+        playerView?.setShowSubtitleButton(true)  // Botón CC nativo de subtítulos
+
+        // Envolver en FrameLayout para añadir el botón de pista de audio personalizado
+        val wrapper = android.widget.FrameLayout(this)
+        wrapper.addView(
+            playerView,
+            android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        // Botón "Audio" superpuesto — visible junto a CC cuando aparecen los controles
+        val dp = resources.displayMetrics.density
+        val audioBtn = android.widget.TextView(this).apply {
+            text = "🎵 Audio"
+            textSize = 12f
+            setTextColor(android.graphics.Color.WHITE)
+            setPadding(20, 10, 20, 10)
+            setBackgroundColor(0x88000000.toInt())
+            contentDescription = "Seleccionar pista de audio"
+            visibility = android.view.View.INVISIBLE
+        }
+        wrapper.addView(audioBtn, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+            bottomMargin = (52 * dp).toInt()
+            marginEnd   = (200 * dp).toInt()
+        })
+
+        setContentView(wrapper)
+
+        // Sincronizar visibilidad del botón Audio con los controles del reproductor
+        playerView?.setControllerVisibilityListener(
+            androidx.media3.ui.PlayerView.ControllerVisibilityListener { vis ->
+                audioBtn.visibility = vis
+            }
+        )
 
         // TVGram load control logic (min 15s, max 50s, playback start 5s)
         val minBufferMs = 15000
@@ -153,10 +190,10 @@ class PlayerActivity : Activity() {
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        // Track selector: configurado de forma predeterminada (subtítulos apagados a menos que el usuario lo active manually)
+        // Track selector: subtítulos apagados por defecto, el usuario activa con CC
         val trackSelector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(this)
         trackSelector.parameters = trackSelector.buildUponParameters()
-            .setSelectUndeterminedTextLanguage(false) // No auto-seleccionar
+            .setSelectUndeterminedTextLanguage(false)
             .build()
 
         // TVGram timeouts (60 seconds)
@@ -180,6 +217,19 @@ class PlayerActivity : Activity() {
             
         playerView?.player = exo
         player = exo
+
+        // Diálogo de selección de pista de audio al pulsar el botón
+        audioBtn.setOnClickListener {
+            androidx.media3.ui.TrackSelectionDialogBuilder(
+                this,
+                "Pista de audio",
+                exo,
+                androidx.media3.common.C.TRACK_TYPE_AUDIO
+            )
+            .setAllowAdaptiveSelections(false)
+            .build()
+            .show()
+        }
 
         val mediaItem = MediaItem.fromUri(Uri.parse(streamUrl))
         exo.setMediaItem(mediaItem)
