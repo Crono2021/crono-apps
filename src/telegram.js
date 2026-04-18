@@ -729,17 +729,7 @@ export async function streamVideoNative(videoObj) {
     );
 }
 
-/**
- * Convierte Uint8Array a Base64 de forma eficiente (sin overflow de stack).
- */
-function uint8ToBase64(bytes) {
-    const CHUNK = 0x8000; // 32KB por iteración
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
-    }
-    return btoa(binary);
-}
+
 
 /**
  * Android Mobile Fallback: Capacitor ExoPlayer Plugin with base64 chunks proxy.
