@@ -15,8 +15,8 @@ const CATALOG_CACHE_KEY     = 'cineflix_catalog_cache_v2';
 const CATALOG_MAX_ID_KEY    = 'cineflix_catalog_max_id_v2';  // last known max DB id
 
 const MOVIES_REMOTE_URL  = 'https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/movies.json';
-const MOVIES_CACHE_KEY      = 'cineflix_movies_cache_v2';
-const MOVIES_MAX_ID_KEY     = 'cineflix_movies_max_id_v2';   // last known max DB id
+const MOVIES_CACHE_KEY      = 'cineflix_movies_cache_v3';
+const MOVIES_MAX_ID_KEY     = 'cineflix_movies_max_id_v3';   // last known max DB id
 
 async function loadCatalog() {
     // 1️⃣ Show cached version INSTANTLY (zero wait for the user)
