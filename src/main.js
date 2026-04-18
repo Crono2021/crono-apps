@@ -105,7 +105,7 @@ import {
     parseEpisodeFile, posterUrl, stillUrl,
     getTrending, getTrendingMovies, discoverMoviesByGenre, normTitle,
 } from './tmdb.js';
-
+import './tv-nav.js';
 
 function makeFocusable(el) {
     el.tabIndex = 0;
