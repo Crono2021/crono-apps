@@ -1053,11 +1053,8 @@ async function showMovies() {
         .slice(0, 40);
     renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
 
-    // Fallback robusto: si no hay peliculas con año >= 2024 usamos el catálogo completo
-    const heroMovies = recentMovies.length > 0
-        ? recentMovies.slice(0, 5)
-        : moviesCatalog.slice(0, 5);
-    setupMovieHero(heroMovies); // Sin await — muestra el hero ya
+    // Hero: películas aleatorias del catálogo con datos TMDB ya cacheados — CERO llamadas de red
+    setupMovieHero(getRandomHeroMovies());
 
     // Tendencias TMDB en segundo plano (sin bloquear la UI)
     getTrendingMovies().then(trendingTmdb => {
@@ -1154,6 +1151,43 @@ function setupMovieHero(movies) {
     startMovieHeroTimer();
 }
 
+// Devuelve hasta 5 peliculas aleatorias priorizando las que ya tienen backdrop cacheado en TMDB localStorage
+function getRandomHeroMovies() {
+    if (!moviesCatalog.length) return [];
+    const shuffled = [...moviesCatalog].sort(() => Math.random() - 0.5);
+    const withBackdrop = [];
+    const withoutBackdrop = [];
+    for (const movie of shuffled) {
+        if (withBackdrop.length >= 5) break;
+        const cleanTitle = (movie.search_title || movie.title || '')
+            .split(/\s*[|\u00b7]\s*/)[0]
+            .replace(/\s*\([^)]*(?:Castellano|Latino|Español|Subtitulado)[^)]*\)/gi, '')
+            .replace(/\s*\(\d{4}\)\s*$/, '')
+            .replace(/\s*\([^)]*\)\s*$/, '')
+            .trim();
+        const key = ('mv2_' + cleanTitle + '_' + (movie.year || ''))
+            .toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        try {
+            const raw = localStorage.getItem('tmdb_' + key);
+            if (raw) {
+                const { data } = JSON.parse(raw);
+                if (data?.backdropPath) {
+                    movie._cachedTmdb = data;
+                    withBackdrop.push(movie);
+                    continue;
+                }
+            }
+        } catch {}
+        if (withoutBackdrop.length < 5) withoutBackdrop.push(movie);
+    }
+    const result = [...withBackdrop];
+    for (const m of withoutBackdrop) {
+        if (result.length >= 5) break;
+        result.push(m);
+    }
+    return result;
+}
+
 function startMovieHeroTimer() {
     if (movieHeroTimer) clearInterval(movieHeroTimer);
     movieHeroTimer = setInterval(() => {
@@ -1167,32 +1201,28 @@ function renderMovieHeroSlide(idx) {
     const movie = movieHeroShows[idx];
     if (!movie) return;
 
-    // ── Render inmediato con datos del catálogo (sin red) ─────────────────
     const rawTitle = movie.title || movie.search_title || 'Película';
     const displayTitle = rawTitle.replace(/\s*\(\d{4}\)\s*$/, '').trim() || rawTitle;
-    $('movies-hero-title').textContent = displayTitle;
-    $('movies-hero-overview').textContent = '';
-    $('movies-hero-meta').innerHTML = movie.year ? `<span>${movie.year}</span>` : '';
-    $('movies-hero-backdrop').style.backgroundImage = '';
-    $('movies-hero-play-btn').onclick = () => openMovie(movie);
 
-    // ── Enriquecimiento TMDB diferido 2s para no competir con series ────────
-    setTimeout(() => {
-        if (movieHeroShows[movieHeroIndex] !== movie) return; // usuario cambio de slide
-        searchMovie(movie.search_title || movie.title, movie.year).then(tmdb => {
-            if (!tmdb || movieHeroShows[movieHeroIndex] !== movie) return;
-            $('movies-hero-title').textContent = tmdb.name || displayTitle;
-            $('movies-hero-overview').textContent = tmdb.overview || '';
-            $('movies-hero-meta').innerHTML = [
-                tmdb.rating ? `<span class="hero-rating">★ ${tmdb.rating}</span>` : '',
-                (tmdb.year || movie.year) ? `<span>${tmdb.year || movie.year}</span>` : '',
-            ].filter(Boolean).join('');
-            if (tmdb.backdropPath) {
-                $('movies-hero-backdrop').style.backgroundImage =
-                    `url('https://image.tmdb.org/t/p/w1280${tmdb.backdropPath}')`;
-            }
-        }).catch(() => {});
-    }, 2000);
+    const tmdb = movie._cachedTmdb;
+    if (tmdb) {
+        // ✔ Backdrop cacheado — cero red, instantáneo
+        $('movies-hero-title').textContent = tmdb.name || displayTitle;
+        $('movies-hero-overview').textContent = tmdb.overview || '';
+        $('movies-hero-meta').innerHTML = [
+            tmdb.rating ? `<span class="hero-rating">★ ${tmdb.rating}</span>` : '',
+            (tmdb.year || movie.year) ? `<span>${tmdb.year || movie.year}</span>` : '',
+        ].filter(Boolean).join('');
+        $('movies-hero-backdrop').style.backgroundImage =
+            `url('https://image.tmdb.org/t/p/w1280${tmdb.backdropPath}')`;
+    } else {
+        // Sin caché aún: solo título con degradado de fondo
+        $('movies-hero-title').textContent = displayTitle;
+        $('movies-hero-overview').textContent = '';
+        $('movies-hero-meta').innerHTML = movie.year ? `<span>${movie.year}</span>` : '';
+        $('movies-hero-backdrop').style.backgroundImage = '';
+    }
+    $('movies-hero-play-btn').onclick = () => openMovie(movie);
 }
 
 function updateMovieHeroDots() {
