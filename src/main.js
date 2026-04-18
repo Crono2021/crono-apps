@@ -1051,7 +1051,7 @@ async function showMovies() {
         await setupMovieHero(recentMovies.slice(0, 5));
     }
 
-    // Initialize Genre Rows synchronously using TMDB data from Railway
+    // Initialize Genre Rows using TMDB data from Railway (sliced to prevent UI thread lock)
     for (const genre of MOVIE_GENRE_ROWS) {
         const items = moviesCatalog.filter(m => {
             let gIds = [];
@@ -1061,7 +1061,8 @@ async function showMovies() {
             return genre.ids.some(id => gIds.includes(id));
         });
         if (items.length > 0) {
-            renderMovieRow(genre.id, genre.title, items); // Full length, no slicing
+            // Render sólo los primeros 40 para evitar colgar la app insertando 3000 nodos (como en All Movies)
+            renderMovieRow(genre.id, genre.title, items.slice(0, 40)); 
         }
     }
     
