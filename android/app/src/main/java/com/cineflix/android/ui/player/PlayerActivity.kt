@@ -134,6 +134,7 @@ class PlayerActivity : Activity() {
 
         playerView = PlayerView(this)
         playerView?.useController = true
+        playerView?.setShowSubtitleButton(true) // Habilita el botón 'CC' nativo de subtítulos
         setContentView(playerView)
 
         // TVGram load control logic (min 15s, max 50s, playback start 5s)
@@ -146,6 +147,12 @@ class PlayerActivity : Activity() {
             .setAllocator(androidx.media3.exoplayer.upstream.DefaultAllocator(true, androidx.media3.common.C.DEFAULT_BUFFER_SEGMENT_SIZE))
             .setBufferDurationsMs(minBufferMs, maxBufferMs, bufferForPlaybackMs, bufferForPlaybackAfterRebufferMs)
             .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
+        // Track selector: configurado de forma predeterminada (subtítulos apagados a menos que el usuario lo active manually)
+        val trackSelector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(this)
+        trackSelector.parameters = trackSelector.buildUponParameters()
+            .setSelectUndeterminedTextLanguage(false) // No auto-seleccionar
             .build()
 
         // TVGram timeouts (60 seconds)
@@ -164,6 +171,7 @@ class PlayerActivity : Activity() {
             .setRenderersFactory(renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
+            .setTrackSelector(trackSelector)
             .build()
             
         playerView?.player = exo
