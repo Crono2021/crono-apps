@@ -753,17 +753,8 @@ export async function streamVideoMobileCapacitor(videoObj) {
     }
 
     const mimeType = doc.mimeType || 'video/mp4';
-    const CHUNK_SIZE = 512 * 1024;
+    console.log('[Native Mobile] Iniciando stream reactivo (fetchRange):', fileSize, 'bytes,', mimeType);
 
-    console.log('[Native Mobile] Iniciando stream:', fileSize, 'bytes,', mimeType);
-
-    await ExoPlayer.initStream({ fileSize, mimeType });
-
-    // Lanzar inmediatamente: El servidor interno bloquea peticiones hasta recibir datos
-    console.log('[Native Mobile] ▶️ Lanzando ExoPlayer instantáneamente...');
-    ExoPlayer.play({});
-
-    let offset = 0;
     let wakeLock = null;
 
     // Adquirir Wakelock del navegador para que no se apague la pantalla ni el puente JS
@@ -776,45 +767,53 @@ export async function streamVideoMobileCapacitor(videoObj) {
         }
     }
 
-    // Fire and forget loop to not block the calling function if needed,
-    // though the original code awaited the whole loop. We run it asynchronously.
-    (async () => {
-        while (offset < fileSize) {
-            const size = Math.min(CHUNK_SIZE, fileSize - offset);
+    const streamId = `${doc.id.toString()}-${Date.now()}`;
+    await ExoPlayer.registerStream({ streamId, fileSize, mimeType });
+
+    // Escuchar peticiones bajo demanda para soportar saltos temporales (seeking)
+    const listener = await ExoPlayer.addListener('fetchRange', async ({ requestId, start, size }) => {
+        try {
             let chunk;
             try {
-                chunk = await fetchTelegramRange(c, doc, offset, size);
+                chunk = await fetchTelegramRange(c, doc, start, size);
             } catch (err) {
                 if (err.message && err.message.toLowerCase().includes('disconnect')) {
-                    console.warn('[Native Mobile] Reconectando...');
+                    console.warn('[Native Stream] Reparando socket cerrado de Telegram...');
                     await c.connect();
-                }
-                try {
-                    chunk = await fetchTelegramRange(c, doc, offset, size);
-                } catch (e2) {
-                    console.error('[Native Mobile] Error descarga fatal en offset', offset, e2);
-                    break;
+                    chunk = await fetchTelegramRange(c, doc, start, size);
+                } else {
+                    throw err;
                 }
             }
+            
+            // TUBERÍA BINARIA PURA (Loopback)
+            const response = await fetch(`http://127.0.0.1:3999/deliverChunk?requestId=${requestId}`, {
+                method: 'POST',
+                body: chunk 
+            });
 
-            const base64 = uint8ToBase64(chunk);
-            await ExoPlayer.pushChunk({ data: base64 });
-
-            offset += chunk.length;
+            if (!response.ok) {
+                throw new Error('Native IPC Pipe Server reject: ' + response.statusText);
+            }
+        } catch (err) {
+            console.error('[Native Stream] fetchRange error:', err.message);
+            await fetch(`http://127.0.0.1:3999/deliverChunk?requestId=${requestId}`, {
+                method: 'POST',
+                body: new Uint8Array(0) 
+            }).catch(() => {});
         }
+    });
 
-        await ExoPlayer.downloadComplete({});
-        console.log('[Native Mobile] ✅ Descarga completa:', offset, 'bytes');
+    console.log('[Native Mobile] ▶️ Lanzando reproductor interactivo...');
+    await ExoPlayer.play({ streamId });
 
-        // Liberar Wakelock al terminar la descarga
+    // Auto-limpieza tras 4 horas maximo
+    setTimeout(() => {
+        listener?.remove?.();
         if (wakeLock) {
-            try {
-                await wakeLock.release();
-                console.log('[Native Mobile] 🌙 Wakelock de pantalla liberado');
-            } catch (err) {}
-            wakeLock = null;
+            wakeLock.release().catch(()=>{});
         }
-    })();
+    }, 4 * 60 * 60 * 1000);
 }
 
 
