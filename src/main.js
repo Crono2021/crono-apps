@@ -1661,8 +1661,8 @@ async function playVideo(video, seriesTitle, playlistArray = null) {
         return;
     }
 
-    // ── Native Android: use ExoPlayer via Capacitor plugin ──────────────────
-    if (isNativeApp()) {
+    // ── Native Android TV: use ExoPlayer via Capacitor plugin ─────────────────
+    if (isNativeApp() && window._cineflixIsTV) {
         try {
             await streamVideoNative(video);
         } catch (err) {
