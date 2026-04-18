@@ -729,3 +729,90 @@ export async function streamVideoNative(videoObj) {
     );
 }
 
+/**
+ * Convierte Uint8Array a Base64 de forma eficiente (sin overflow de stack).
+ */
+function uint8ToBase64(bytes) {
+    const CHUNK = 0x8000; // 32KB por iteración
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+    }
+    return btoa(binary);
+}
+
+/**
+ * Android Mobile Fallback: Capacitor ExoPlayer Plugin with base64 chunks proxy.
+ */
+export async function streamVideoMobileCapacitor(videoObj) {
+    const media = videoObj.media ? videoObj.media : videoObj;
+    const ExoPlayer = window.Capacitor?.Plugins?.ExoPlayer;
+    if (!ExoPlayer) throw new Error('Capacitor ExoPlayer plugin no disponible');
+    
+    const c = await getClient();
+    const doc = media.document;
+
+    let fileSize;
+    try {
+        fileSize = typeof doc.size === 'bigint' ? Number(doc.size) : Number(String(doc.size));
+    } catch { fileSize = 0; }
+    fileSize = Math.floor(fileSize);
+
+    if (!fileSize || fileSize <= 0 || isNaN(fileSize)) {
+        throw new Error('No se pudo obtener el tamaño del archivo');
+    }
+
+    const mimeType = doc.mimeType || 'video/mp4';
+    const CHUNK_SIZE = 512 * 1024;
+    const BUFFER_BEFORE_PLAY = 2 * 1024 * 1024;
+
+    console.log('[Native Mobile] Iniciando stream:', fileSize, 'bytes,', mimeType);
+
+    await ExoPlayer.initStream({ fileSize, mimeType });
+
+    let offset = 0;
+    let playerLaunched = false;
+
+    // Fire and forget loop to not block the calling function if needed,
+    // though the original code awaited the whole loop. We run it asynchronously.
+    (async () => {
+        while (offset < fileSize) {
+            const size = Math.min(CHUNK_SIZE, fileSize - offset);
+            let chunk;
+            try {
+                chunk = await fetchTelegramRange(c, doc, offset, size);
+            } catch (err) {
+                if (err.message && err.message.toLowerCase().includes('disconnect')) {
+                    console.warn('[Native Mobile] Reconectando...');
+                    await c.connect();
+                }
+                try {
+                    chunk = await fetchTelegramRange(c, doc, offset, size);
+                } catch (e2) {
+                    console.error('[Native Mobile] Error descarga fatal en offset', offset, e2);
+                    break;
+                }
+            }
+
+            const base64 = uint8ToBase64(chunk);
+            await ExoPlayer.pushChunk({ data: base64 });
+
+            offset += chunk.length;
+
+            if (!playerLaunched && offset >= BUFFER_BEFORE_PLAY) {
+                playerLaunched = true;
+                console.log('[Native Mobile] ▶️ Buffer alcanzado, lanzando ExoPlayer...');
+                ExoPlayer.play({});
+            }
+        }
+
+        await ExoPlayer.downloadComplete({});
+        if (!playerLaunched) {
+            console.log('[Native Mobile] ▶️ Archivo pequeño, lanzando ExoPlayer...');
+            await ExoPlayer.play({});
+        }
+        console.log('[Native Mobile] ✅ Descarga completa:', offset, 'bytes');
+    })();
+}
+
+

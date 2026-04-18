@@ -98,7 +98,7 @@ import {
     isLoggedIn, sendCode, verifyCode, verify2FA, logout,
     sendBotCommand, clickInlineButton, getVideoMessages,
     streamVideo, initServiceWorker, searchMovieByPayload,
-    isNativeApp, streamVideoNative, restoreNativeSession, playInMpv
+    isNativeApp, streamVideoNative, streamVideoMobileCapacitor, restoreNativeSession, playInMpv
 } from './telegram.js';
 import {
     searchSeries, searchMovie, getSeasonEpisodes, extractSeasonNumber,
@@ -1661,13 +1661,26 @@ async function playVideo(video, seriesTitle, playlistArray = null) {
         return;
     }
 
-    // ── Native Android: use ExoPlayer via Capacitor plugin ──────────────────
+    // ── Native Android TV ───────────────────────────────────────────────────────
+    // Usamos el puente TDLib/ExoPlayer (Configuración brutal para Android TV)
     if (isNativeApp()) {
         try {
             await streamVideoNative(video);
         } catch (err) {
-            console.error('[Native Player] Error:', err.message);
-            alert('[Native Player] Error: ' + err.message + '\n' + (err.stack ? err.stack : 'No stacktrace'));
+            console.error('[Native TV Player] Error:', err.message);
+            alert('[Native TV Player] Error: ' + err.message + '\n' + (err.stack ? err.stack : 'No stacktrace'));
+        }
+        return;
+    }
+
+    // ── Native Android Mobile ───────────────────────────────────────────────────
+    // Usamos el plugin ExoPlayer de Capacitor enviando chunks Base64 en segundo plano
+    if (window.Capacitor?.isNativePlatform?.()) {
+        try {
+            await streamVideoMobileCapacitor(video);
+        } catch (err) {
+            console.error('[Native Mobile Player] Error:', err.message);
+            alert('[Native Mobile Player] Error: ' + err.message + '\n' + (err.stack ? err.stack : 'No stacktrace'));
         }
         return;
     }
