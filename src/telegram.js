@@ -770,79 +770,33 @@ export async function streamVideoMobileCapacitor(videoObj) {
     const streamId = `${doc.id.toString()}-${Date.now()}`;
     await ExoPlayer.registerStream({ streamId, fileSize, mimeType });
 
+    // Escuchar peticiones bajo demanda para soportar saltos temporales (seeking)
     const listener = await ExoPlayer.addListener('fetchRange', async ({ requestId, start, size }) => {
         try {
-            const rangeStart = Number(start);
-            const rangeSize = Number(size);
-            
-            // Telegram exige offsets alineados a 4KB
-            const BLOCK = 4096;
-            const alignedStart = Math.floor(rangeStart / BLOCK) * BLOCK;
-            const skipOffset = rangeStart - alignedStart;
-            
-            let buffer = new Uint8Array(rangeSize);
-            let downloaded = 0;
-
-            const fileLocation = new Api.InputDocumentFileLocation({
-                id: doc.id, accessHash: doc.accessHash,
-                fileReference: doc.fileReference, thumbSize: ''
-            });
-
-            // Fallback de importaciones por si bigInt está en módulo de ventana o global
-            const offsetBigInt = typeof doc.size === 'bigint' ? BigInt(alignedStart) : Number(alignedStart);
-
+            let chunk;
             try {
-                const dlStream = c.iterDownload({
-                    file: fileLocation,
-                    offset: offsetBigInt,
-                    requestSize: 524288, // MAX Telegram Limit per request
-                    dcId: doc.dcId,
-                    fileSize: doc.size
-                });
-
-                let isFirst = true;
-                for await (const chunk of dlStream) {
-                    let data = new Uint8Array(chunk);
-                    if (isFirst) {
-                        data = data.slice(skipOffset);
-                        isFirst = false;
-                    }
-
-                    const bytesNeeded = rangeSize - downloaded;
-                    if (data.length > bytesNeeded) {
-                        buffer.set(data.slice(0, bytesNeeded), downloaded);
-                        downloaded += bytesNeeded;
-                        break;
-                    } else {
-                        buffer.set(data, downloaded);
-                        downloaded += data.length;
-                    }
-
-                    if (downloaded >= rangeSize) break;
-                }
-            } catch (dlErr) {
-                if (dlErr.message && dlErr.message.toLowerCase().includes('disconnect')) {
-                    console.warn('[Native Stream] Reconectando sesión caída durante fetchRange...');
+                chunk = await fetchTelegramRange(c, doc, start, size);
+            } catch (err) {
+                if (err.message && err.message.toLowerCase().includes('disconnect')) {
+                    console.warn('[Native Stream] Reparando socket cerrado de Telegram...');
                     await c.connect();
-                    throw new Error('Reintento automático tras desconexión');
+                    chunk = await fetchTelegramRange(c, doc, start, size);
                 } else {
-                    throw dlErr;
+                    throw err;
                 }
             }
-
-            const validBuffer = buffer.slice(0, downloaded);
-
+            
             // TUBERÍA BINARIA PURA (Loopback)
             const response = await fetch(`http://127.0.0.1:3999/deliverChunk?requestId=${requestId}`, {
                 method: 'POST',
-                body: validBuffer 
+                body: chunk 
             });
 
             if (!response.ok) {
                 throw new Error('Native IPC Pipe Server reject: ' + response.statusText);
             }
         } catch (err) {
-            console.error('[Native Stream] fetchRange error en offset:', start, err.message);
+            console.error('[Native Stream] fetchRange error:', err.message);
             await fetch(`http://127.0.0.1:3999/deliverChunk?requestId=${requestId}`, {
                 method: 'POST',
                 body: new Uint8Array(0) 
