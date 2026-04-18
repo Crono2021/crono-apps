@@ -164,6 +164,15 @@
   .loader { text-align: center; padding: 3rem; color: var(--muted); }
   .empty  { text-align: center; padding: 3rem; color: var(--muted); }
 
+  /* Tabs */
+  .tabs { display: flex; gap: 1rem; margin-bottom: 2rem; border-bottom: 1px solid var(--border); }
+  .tab-btn {
+    background: transparent; border: none; color: var(--muted); font-size: 1rem; font-weight: 600;
+    padding: .8rem 1rem; cursor: pointer; border-bottom: 2px solid transparent; transition: all .2s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
   @media (max-width: 768px) {
     .form-grid { grid-template-columns: 1fr; }
     .content { padding: 1rem; }
@@ -194,69 +203,79 @@
   </div>
 
     <div class="content">
-    <!-- Add Form -->
-    <div class="add-form">
-      <h2>➕ Añadir nueva serie</h2>
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Título</label>
-          <input type="text" id="f-title" placeholder="Breaking Bad (2008)">
-        </div>
-        <div class="form-group">
-          <label>Año TMDB</label>
-          <input type="number" id="f-year" placeholder="2023" min="1900" max="2030">
-        </div>
-        <div class="form-group">
-          <label>Payload del bot</label>
-          <input type="text" id="f-payload" placeholder="bb_breaking_bad">
-        </div>
-        <div class="form-group">
-          <label>&nbsp;</label>
-          <button class="btn btn-primary" id="add-btn">Añadir serie</button>
-        </div>
+      <div class="tabs">
+        <button class="tab-btn active" id="tab-cat-btn" onclick="switchTab('cat')">📋 Catálogo General</button>
+        <button class="tab-btn" id="tab-med-btn" onclick="switchTab('med')">🏥 Clínica TMDB</button>
       </div>
-    </div>
 
-    <!-- TMDB Resolver -->
-    <div class="add-form" id="tmdb-card">
-      <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
-        <span style="font-size:1.1rem">🎬</span>
-        <h2 style="flex:1;margin:0">Resolver TMDB — Caché de miniaturas y sinopsis</h2>
-        <button class="btn btn-danger" style="background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.3)" id="tmdb-retry-btn">🔄 Purgar Fallidos</button>
-        <button class="btn btn-danger" style="background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.3)" id="tmdb-reset-all-btn">⚠️ Resetear Todo de Cero</button>
-        <button class="btn btn-primary" id="tmdb-resolve-btn">▶ Resolver ahora</button>
-      </div>
-      <div id="tmdb-progress-wrap" style="margin-top:1rem;display:none">
-        <div style="background:var(--surface2);border-radius:6px;overflow:hidden;height:8px;margin-bottom:.6rem">
-          <div id="tmdb-bar" style="height:100%;background:var(--accent);width:0%;transition:width .5s"></div>
+      <div id="tab-cat">
+        <!-- Add Form -->
+        <div class="add-form">
+          <h2>➕ Añadir nueva serie</h2>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Título</label>
+              <input type="text" id="f-title" placeholder="Breaking Bad (2008)">
+            </div>
+            <div class="form-group">
+              <label>Año TMDB</label>
+              <input type="number" id="f-year" placeholder="2023" min="1900" max="2030">
+            </div>
+            <div class="form-group">
+              <label>Payload del bot</label>
+              <input type="text" id="f-payload" placeholder="bb_breaking_bad">
+            </div>
+            <div class="form-group">
+              <label>&nbsp;</label>
+              <button class="btn btn-primary" id="add-btn">Añadir serie</button>
+            </div>
+          </div>
         </div>
-        <p id="tmdb-status-text" style="font-size:.85rem;color:var(--muted)"></p>
-      </div>
-    </div>
 
-    <!-- TMDB Manual Override -->
-    <div class="add-form" id="tmdb-manual-card" style="display:none; border-color:var(--accent)">
-      <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
-        <span style="font-size:1.1rem">🏥</span>
-        <h2 style="flex:1;margin:0;color:var(--accent-h)">Unidad de Terapia Intensiva (Sin resultado)</h2>
-        <span class="badge" id="unresolved-count" style="background:var(--accent);color:#fff">0</span>
+        <!-- Series Table -->
+        <div class="table-wrap">
+          <div class="table-header">
+            <h2>📋 Catálogo</h2>
+            <input type="text" class="search-bar" id="search-bar" placeholder="🔍 Buscar series...">
+          </div>
+          <div id="table-body">
+            <div class="loader">Cargando catálogo...</div>
+          </div>
+        </div>
       </div>
-      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem">
-        Estos catálogos no pudieron asociarse con una carátula. Busca el elemento en 
-        <a href="https://www.themoviedb.org/" target="_blank" style="color:var(--accent-h)">TheMovieDB</a> 
-        y pega su ID Numérico aquí.
-      </p>
-      <div id="unresolved-list" style="max-height:400px;overflow-y:auto;padding-right:.5rem;"></div>
-    </div>
 
-    <!-- Series Table -->
-    <div class="table-wrap">
-      <div class="table-header">
-        <h2>📋 Catálogo</h2>
-        <input type="text" class="search-bar" id="search-bar" placeholder="🔍 Buscar series...">
-      </div>
-      <div id="table-body">
-        <div class="loader">Cargando catálogo...</div>
+      <div id="tab-med" style="display:none">
+        <!-- TMDB Resolver -->
+        <div class="add-form" id="tmdb-card">
+          <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+            <span style="font-size:1.1rem">🎬</span>
+            <h2 style="flex:1;margin:0">Resolver TMDB — Caché de miniaturas y sinopsis</h2>
+            <button class="btn btn-danger" style="background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.3)" id="tmdb-retry-btn">🔄 Purgar Fallidos</button>
+            <button class="btn btn-danger" style="background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.3)" id="tmdb-reset-all-btn">⚠️ Resetear Todo de Cero</button>
+            <button class="btn btn-primary" id="tmdb-resolve-btn">▶ Resolver ahora</button>
+          </div>
+          <div id="tmdb-progress-wrap" style="margin-top:1rem;display:none">
+            <div style="background:var(--surface2);border-radius:6px;overflow:hidden;height:8px;margin-bottom:.6rem">
+              <div id="tmdb-bar" style="height:100%;background:var(--accent);width:0%;transition:width .5s"></div>
+            </div>
+            <p id="tmdb-status-text" style="font-size:.85rem;color:var(--muted)"></p>
+          </div>
+        </div>
+
+        <!-- TMDB Manual Override -->
+        <div class="add-form" id="tmdb-manual-card" style="border-color:var(--accent)">
+          <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+            <span style="font-size:1.1rem">🏥</span>
+            <h2 style="flex:1;margin:0;color:var(--accent-h)">Unidad de Terapia Intensiva (Sin resultado)</h2>
+            <span class="badge" id="unresolved-count" style="background:var(--accent);color:#fff">0</span>
+          </div>
+          <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem">
+            Estos catálogos no pudieron asociarse con una carátula. Busca el elemento en 
+            <a href="https://www.themoviedb.org/" target="_blank" style="color:var(--accent-h)">TheMovieDB</a> 
+            y pega su ID Numérico aquí.
+          </p>
+          <div id="unresolved-list" style="max-height:400px;overflow-y:auto;padding-right:.5rem;"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -299,6 +318,14 @@ document.getElementById('logout-btn').addEventListener('click', () => {
 });
 
 function authHeaders() { return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }; }
+
+// ── TABS ──────────────────────────────────────────────────────────────────────
+window.switchTab = function(tab) {
+  document.getElementById('tab-cat').style.display = tab === 'cat' ? 'block' : 'none';
+  document.getElementById('tab-med').style.display = tab === 'med' ? 'block' : 'none';
+  document.getElementById('tab-cat-btn').classList.toggle('active', tab === 'cat');
+  document.getElementById('tab-med-btn').classList.toggle('active', tab === 'med');
+};
 
 // ── PANEL INIT ────────────────────────────────────────────────────────────────
 async function showPanel() {
@@ -552,9 +579,12 @@ async function loadUnresolved() {
     const wrap = document.getElementById('tmdb-manual-card');
     const container = document.getElementById('unresolved-list');
     
-    if (list.length === 0) { wrap.style.display = 'none'; return; }
+    if (list.length === 0) { 
+      document.getElementById('unresolved-count').textContent = '0';
+      container.innerHTML = '<div class="empty">🎉 ¡Catálogo 100% sano! No hay elementos sin resolver.</div>';
+      return; 
+    }
     
-    wrap.style.display = 'block';
     document.getElementById('unresolved-count').textContent = list.length;
     container.innerHTML = list.map(item => `
       <div class="unresolved-row" id="ur-${item.table_name}-${item.id}">
