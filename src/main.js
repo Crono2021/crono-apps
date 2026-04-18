@@ -920,7 +920,6 @@ async function loadMovies() {
                 });
                 if (items.length > 0) renderMovieRow(genre.id, genre.title, items.slice(0, 40));
             }
-            renderAllMoviesCatalog();
         }
     }).catch(() => {});
 }
@@ -1067,22 +1066,23 @@ async function showMovies() {
         await setupMovieHero(recentMovies.slice(0, 5));
     }
 
-    // Initialize Genre Rows using TMDB data from Railway (sliced to prevent UI thread lock)
-    for (const genre of MOVIE_GENRE_ROWS) {
-        const items = moviesCatalog.filter(m => {
-            let gIds = [];
-            if (m.tmdb_genre_ids) {
-                try { gIds = typeof m.tmdb_genre_ids === 'string' ? JSON.parse(m.tmdb_genre_ids) : m.tmdb_genre_ids; } catch(e){}
+    // Delay rendering of heavy genre rows to allow instant UI response on mobile/TV
+    setTimeout(() => {
+        // Initialize Genre Rows using TMDB data from Railway
+        for (const genre of MOVIE_GENRE_ROWS) {
+            const items = moviesCatalog.filter(m => {
+                let gIds = [];
+                if (m.tmdb_genre_ids) {
+                    try { gIds = typeof m.tmdb_genre_ids === 'string' ? JSON.parse(m.tmdb_genre_ids) : m.tmdb_genre_ids; } catch(e){}
+                }
+                return genre.ids.some(id => gIds.includes(id));
+            });
+            if (items.length > 0) {
+                renderMovieRow(genre.id, genre.title, items.slice(0, 40)); 
             }
-            return genre.ids.some(id => gIds.includes(id));
-        });
-        if (items.length > 0) {
-            // Render sólo los primeros 40 para evitar colgar la app insertando 3000 nodos (como en All Movies)
-            renderMovieRow(genre.id, genre.title, items.slice(0, 40)); 
         }
-    }
-    
-    renderAllMoviesCatalog();
+        
+    }, 100);
 }
 
 function showMoviesSection(mode) {

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Cine en Castellano HD</title>
+    <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script type="module" crossorigin src="./assets/index-BvpYDP0o.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-DL7ieU6I.css">
+</head>
+<body>
+    <div id="app">
+        <!-- LOGIN -->
+        <div id="view-login" class="view active">
+            <div class="login-container">
+                <div class="login-logo">🎥</div>
+                <h1 class="login-title">Cine en Castellano HD</h1>
+                <p class="login-subtitle">Tu videoclub en streaming (v2.1)</p>
+
+                <div id="step-phone" class="login-step active">
+                    <label>Número de teléfono</label>
+                    <div class="input-row">
+                        <input type="tel" id="input-phone" placeholder="+34 600 000 000" value="+34" autocomplete="off">
+                        <button id="btn-phone" class="btn-primary">Enviar</button>
+                    </div>
+                    <p id="phone-error" class="error-text"></p>
+                </div>
+
+                <div id="step-otp" class="login-step">
+                    <label>Código de verificación</label>
+                    <p class="hint">Te hemos enviado un código a Telegram</p>
+                    <div class="input-row">
+                        <input type="text" id="input-otp" placeholder="12345" maxlength="5" autocomplete="one-time-code">
+                        <button id="btn-otp" class="btn-primary">Verificar</button>
+                    </div>
+                    <p id="otp-error" class="error-text"></p>
+                </div>
+
+                <div id="step-2fa" class="login-step">
+                    <label>Contraseña 2FA</label>
+                    <p class="hint">Tu cuenta tiene verificación en dos pasos</p>
+                    <div class="input-row">
+                        <input type="password" id="input-2fa" placeholder="Contraseña">
+                        <button id="btn-2fa" class="btn-primary">Entrar</button>
+                    </div>
+                    <p id="twofa-error" class="error-text"></p>
+                </div>
+
+                <div id="login-loading" class="login-step">
+                    <div class="spinner"></div>
+                    <p>Conectando con Telegram...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- CATALOG (SERIES) -->
+        <div id="view-catalog" class="view">
+            <header class="topbar">
+                <h1 class="topbar-title">Cine en Castellano HD</h1>
+                <div class="topbar-search">
+                    <input type="text" id="search-input" placeholder="🔍 Buscar series...">
+                </div>
+                <button id="btn-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
+            </header>
+
+            <!-- Main nav tabs: Series / Movies -->
+            <nav class="main-nav">
+                <button id="nav-series" class="main-nav-btn active">📺 Series</button>
+                <button id="nav-movies" class="main-nav-btn">🎬 Películas</button>
+            </nav>
+
+            <!-- Genre tabs — always visible -->
+            <div id="genre-tabs" class="genre-tabs"></div>
+
+            <!-- Search / Genre result grid -->
+            <div id="search-results" class="search-results">
+                <div class="search-header">
+                    <span id="search-count" class="search-count"></span>
+                </div>
+                <div id="catalog-grid" class="catalog-grid"></div>
+            </div>
+
+            <!-- Netflix-style home -->
+            <div id="netflix-content">
+                <!-- Hero -->
+                <div id="catalog-hero" class="hero-section">
+                    <div id="hero-backdrop" class="hero-backdrop"></div>
+                    <div class="hero-overlay"></div>
+                    <div class="hero-content">
+                        <div class="hero-badge">🔥 Tendencia</div>
+                        <h2 id="hero-title" class="hero-title">Cargando...</h2>
+                        <div id="hero-meta" class="hero-meta"></div>
+                        <p id="hero-overview" class="hero-overview"></p>
+                        <div class="hero-buttons">
+                            <button id="hero-play-btn" class="hero-btn hero-btn-primary">▶ Ver ahora</button>
+                        </div>
+                    </div>
+                    <div id="hero-dots" class="hero-dots"></div>
+                </div>
+
+                <!-- Content rows -->
+                <div id="catalog-rows" class="catalog-rows"></div>
+            </div>
+        </div>
+
+        <!-- MOVIES VIEW — Netflix layout -->
+        <div id="view-movies" class="view">
+            <header class="topbar">
+                <h1 class="topbar-title">Cine en Castellano HD</h1>
+                <div class="topbar-search">
+                    <input type="text" id="movies-search-input" placeholder="🔍 Buscar películas...">
+                </div>
+                <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
+            </header>
+
+            <!-- Main nav tabs -->
+            <nav class="main-nav">
+                <button id="nav-series-from-movies" class="main-nav-btn">📺 Series</button>
+                <button id="nav-movies-active" class="main-nav-btn active">🎬 Películas</button>
+            </nav>
+
+            <!-- Genre tabs -->
+            <div id="movies-genre-tabs" class="genre-tabs"></div>
+
+            <!-- Search / Genre result grid -->
+            <div id="movies-search-results" class="search-results">
+                <div class="search-header">
+                    <span id="movies-count" class="search-count"></span>
+                </div>
+                <div id="movies-grid" class="catalog-grid"></div>
+            </div>
+
+            <!-- Netflix-style home -->
+            <div id="movies-content">
+                <!-- Hero -->
+                <div id="movies-hero" class="hero-section">
+                    <div id="movies-hero-backdrop" class="hero-backdrop"></div>
+                    <div class="hero-overlay"></div>
+                    <div class="hero-content">
+                        <div class="hero-badge">🎬 En cartelera</div>
+                        <h2 id="movies-hero-title" class="hero-title">Cargando...</h2>
+                        <div id="movies-hero-meta" class="hero-meta"></div>
+                        <p id="movies-hero-overview" class="hero-overview"></p>
+                        <div class="hero-buttons">
+                            <button id="movies-hero-play-btn" class="hero-btn hero-btn-primary">▶ Ver ahora</button>
+                        </div>
+                    </div>
+                    <div id="movies-hero-dots" class="hero-dots"></div>
+                </div>
+                <!-- Content rows -->
+                <div id="movies-rows" class="catalog-rows"></div>
+            </div>
+        </div>
+
+        <!-- MOVIE FILES MODAL (overlay shown when bot searches) -->
+        <div id="movie-files-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <div class="modal-header-info">
+                        <h2 id="modal-movie-title" class="modal-title"></h2>
+                        <p id="modal-movie-year" class="modal-year"></p>
+                    </div>
+                    <button id="modal-close" class="btn-icon modal-close-btn">✕</button>
+                </div>
+                <div id="modal-tmdb-info" class="modal-tmdb-info"></div>
+                <div id="modal-loading" class="center-message">
+                    <div class="spinner"></div>
+                    <p>Buscando en el bot…</p>
+                </div>
+                <div id="modal-files-list" class="modal-files-list hidden"></div>
+                <div id="modal-error" class="modal-error hidden"></div>
+            </div>
+        </div>
+
+        <!-- SERIES DETAIL (seasons from bot) -->
+        <div id="view-series" class="view">
+            <header class="topbar">
+                <button id="btn-back-catalog" class="btn-back">←</button>
+                <h1 id="series-title" class="topbar-title"></h1>
+            </header>
+            <div id="series-loading" class="center-message">
+                <div class="spinner"></div>
+                <p>Consultando temporadas...</p>
+            </div>
+            <div id="seasons-list" class="seasons-list"></div>
+        </div>
+
+        <!-- EPISODES -->
+        <div id="view-episodes" class="view">
+            <header class="topbar">
+                <button id="btn-back-series" class="btn-back">←</button>
+                <h1 id="episodes-title" class="topbar-title"></h1>
+            </header>
+            <div id="episodes-loading" class="center-message">
+                <div class="spinner"></div>
+                <p>Cargando episodios...</p>
+            </div>
+            <div id="episodes-list" class="episodes-list"></div>
+        </div>
+
+        <!-- PLAYER -->
+        <div id="view-player" class="view">
+            <header class="topbar">
+                <button id="btn-back-player" class="btn-back">←</button>
+                <div class="topbar-info">
+                    <h1 id="player-title" class="topbar-title"></h1>
+                    <p id="player-subtitle" class="topbar-sub"></p>
+                </div>
+            </header>
+            <div id="player-download" class="download-overlay">
+                <div class="download-card">
+                    <div class="spinner"></div>
+                    <p id="download-text">Preparando vídeo...</p>
+                    <div class="progress-bar">
+                        <div id="download-progress" class="progress-fill"></div>
+                    </div>
+                    <p id="download-percent">0%</p>
+                </div>
+            </div>
+            <video id="video-player" controls></video>
+        </div>
+        
+        <!-- MPV Loading Overlay -->
+        <div id="mpv-loader" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,10,12,0.95);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:9999;">
+            <div class="spinner" style="width:50px;height:50px;border-width:4px;"></div>
+            <h2 style="margin-top:20px;font-size:1.5rem;font-weight:600;">Cambiando a MPV...</h2>
+            <p style="color:#8b8e96;margin-top:8px;">Aceleración por hardware iniciada</p>
+        </div>
+    </div>
+
+    <script src="./tv-nav.js" defer></script>
+</body>
+</html>
