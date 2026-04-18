@@ -2,9 +2,8 @@ name: Build Modded TV APK
 
 on:
   push:
-    paths:
-      - 'decompiled_apk/**'
-      - '.github/workflows/build-tv-apk.yml'
+    branches:
+      - master
   workflow_dispatch:
 
 jobs:
