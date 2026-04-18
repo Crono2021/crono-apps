@@ -754,14 +754,16 @@ export async function streamVideoMobileCapacitor(videoObj) {
 
     const mimeType = doc.mimeType || 'video/mp4';
     const CHUNK_SIZE = 512 * 1024;
-    const BUFFER_BEFORE_PLAY = 2 * 1024 * 1024;
 
     console.log('[Native Mobile] Iniciando stream:', fileSize, 'bytes,', mimeType);
 
     await ExoPlayer.initStream({ fileSize, mimeType });
 
+    // Lanzar inmediatamente: El servidor interno bloquea peticiones hasta recibir datos
+    console.log('[Native Mobile] ▶️ Lanzando ExoPlayer instantáneamente...');
+    ExoPlayer.play({});
+
     let offset = 0;
-    let playerLaunched = false;
     let wakeLock = null;
 
     // Adquirir Wakelock del navegador para que no se apague la pantalla ni el puente JS
@@ -799,19 +801,9 @@ export async function streamVideoMobileCapacitor(videoObj) {
             await ExoPlayer.pushChunk({ data: base64 });
 
             offset += chunk.length;
-
-            if (!playerLaunched && offset >= BUFFER_BEFORE_PLAY) {
-                playerLaunched = true;
-                console.log('[Native Mobile] ▶️ Buffer alcanzado, lanzando ExoPlayer...');
-                ExoPlayer.play({});
-            }
         }
 
         await ExoPlayer.downloadComplete({});
-        if (!playerLaunched) {
-            console.log('[Native Mobile] ▶️ Archivo pequeño, lanzando ExoPlayer...');
-            await ExoPlayer.play({});
-        }
         console.log('[Native Mobile] ✅ Descarga completa:', offset, 'bytes');
 
         // Liberar Wakelock al terminar la descarga
