@@ -209,6 +209,7 @@
         <span style="font-size:1.1rem">🎬</span>
         <h2 style="flex:1;margin:0">Resolver TMDB — Caché de miniaturas y sinopsis</h2>
         <button class="btn btn-danger" style="background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.3)" id="tmdb-retry-btn">🔄 Purgar Fallidos</button>
+        <button class="btn btn-danger" style="background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.3)" id="tmdb-reset-all-btn">⚠️ Resetear Todo de Cero</button>
         <button class="btn btn-primary" id="tmdb-resolve-btn">▶ Resolver ahora</button>
       </div>
       <div id="tmdb-progress-wrap" style="margin-top:1rem;display:none">
@@ -436,6 +437,23 @@ function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 
 // ── TMDB RESOLVER ───────────────────────────────────────────────────────────────────────
 let _tmdbPoller = null;
+
+document.getElementById('tmdb-reset-all-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('tmdb-reset-all-btn');
+  if(!confirm('¿Estás seguro de querer borrar el caché de TMDB COMPLETO? Las 12,000 películas y series del catálogo se buscarán de nuevo desde cero. Esta operación es colosal.')) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Destruyendo caché...';
+  try {
+    const res = await fetch('/api/admin/resolve-tmdb/reset-all', { method: 'POST', headers: authHeaders() });
+    if (!res.ok) throw new Error((await res.json()).error);
+    toast('Catálogo listo para escanear en limpio. Haz clic en Resolver.', 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚠️ Resetear Todo de Cero';
+  }
+});
 
 document.getElementById('tmdb-retry-btn').addEventListener('click', async () => {
   const btn = document.getElementById('tmdb-retry-btn');

@@ -600,6 +600,15 @@ app.post('/api/admin/resolve-tmdb/retry-failed', requireAuth, async (req, res) =
     res.json({ success: true });
 });
 
+// Reset ALL items across both tables from scratch
+app.post('/api/admin/resolve-tmdb/reset-all', requireAuth, async (req, res) => {
+    if (!db) return res.status(503).json({ error: 'No database' });
+    if (_resolveJob?.running) return res.status(409).json({ error: 'Ya hay una resolución en curso' });
+    await db.query(`UPDATE movies SET tmdb_resolved_at=NULL, tmdb_id=NULL`);
+    await db.query(`UPDATE series SET tmdb_resolved_at=NULL, tmdb_id=NULL`);
+    res.json({ success: true });
+});
+
 // ── Admin panel ───────────────────────────────────────────────────────────────
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 
