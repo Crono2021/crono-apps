@@ -16,16 +16,23 @@
 (function () {
   'use strict';
 
+  let bootAttempts = 0;
   function boot() {
-    if (!window._cineflixIsTV) return;
-    console.log('[TV-NAV] Activating D-pad navigation for Android TV');
-    new CineflixTVNav().init();
+    if (window._cineflixIsTV) {
+      console.log('[TV-NAV] Activating D-pad navigation for Android TV');
+      new CineflixTVNav().init();
+    } else if (bootAttempts < 15) {
+      bootAttempts++;
+      setTimeout(boot, 300);
+    } else {
+      console.log('[TV-NAV] Aborting boot, window._cineflixIsTV not set after 15 attempts');
+    }
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(boot, 300));
+    document.addEventListener('DOMContentLoaded', boot);
   } else {
-    setTimeout(boot, 300);
+    boot();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
