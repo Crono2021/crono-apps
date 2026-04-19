@@ -889,40 +889,48 @@ $('btn-back-player').addEventListener('click', () => {
 async function loadMovies() {
     if (moviesCatalog.length > 0) return;
 
-    // 1️⃣ Show cached version INSTANTLY
+    // 1️⃣ Try cache first
+    let hadCache = false;
     try {
         const cached = localStorage.getItem(MOVIES_CACHE_KEY);
         if (cached) {
             const parsed = JSON.parse(cached);
             if (Array.isArray(parsed) && parsed.length > 0) {
                 moviesCatalog = processMoviesList(parsed);
+                hadCache = true;
                 console.log(`[Movies] ⚡ ${moviesCatalog.length} películas from cache`);
             }
         }
     } catch { /* ignore */ }
 
-    // 2️⃣ ALWAYS run delta sync in background — never block the UI thread
-    fetchRemoteMovies().then(() => {
-        // If the first load had nothing cached, the UI was blank — now render it
-        if (moviesReady && moviesCatalog.length > 0) {
-            const recentMovies = [...moviesCatalog]
-                .filter(m => m.year >= 2024)
-                .sort((a, b) => (b.year || 0) - (a.year || 0))
-                .slice(0, 40);
-            renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
-            for (const genre of MOVIE_GENRE_ROWS) {
-                const items = moviesCatalog.filter(m => {
-                    let gIds = [];
-                    if (m.tmdb_genre_ids) {
-                        try { gIds = typeof m.tmdb_genre_ids === 'string' ? JSON.parse(m.tmdb_genre_ids) : m.tmdb_genre_ids; } catch(e){}
-                    }
-                    return genre.ids.some(id => gIds.includes(id));
-                });
-                if (items.length > 0) renderMovieRow(genre.id, genre.title, items.slice(0, 40));
+    if (hadCache) {
+        // 2a️⃣ Has cache: delta sync in background, UI renders instantly from cache
+        fetchRemoteMovies().then(() => {
+            if (moviesReady && moviesCatalog.length > 0) {
+                const recentMovies = [...moviesCatalog]
+                    .filter(m => m.year >= 2024)
+                    .sort((a, b) => (b.year || 0) - (a.year || 0))
+                    .slice(0, 40);
+                renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
+                for (const genre of MOVIE_GENRE_ROWS) {
+                    const items = moviesCatalog.filter(m => {
+                        let gIds = [];
+                        if (m.tmdb_genre_ids) {
+                            try { gIds = typeof m.tmdb_genre_ids === 'string' ? JSON.parse(m.tmdb_genre_ids) : m.tmdb_genre_ids; } catch(e){}
+                        }
+                        return genre.ids.some(id => gIds.includes(id));
+                    });
+                    if (items.length > 0) renderMovieRow(genre.id, genre.title, items.slice(0, 40));
+                }
             }
-        }
-    }).catch(() => {});
+        }).catch(() => {});
+    } else {
+        // 2b️⃣ No cache: MUST await so we don't render an empty blank screen
+        console.log('[Movies] 🔄 No cache — waiting for Railway catalog...');
+        await fetchRemoteMovies();
+    }
 }
+
 
 async function fetchRemoteMovies() {
     try {
