@@ -481,14 +481,23 @@ async function showCatalog() {
         $('search-count').textContent = `${filtered.length} resultado${filtered.length !== 1 ? 's' : ''}`;
     };
 
-    // 1. Estrenos recientes (no TMDB needed)
+    // 1. Últimas actualizaciones (series que han recibido nuevos episodios en el bot)
+    const recentUpdates = [...catalog]
+        .filter(s => s.last_updated)
+        .sort((a, b) => (b.last_updated || 0) - (a.last_updated || 0))
+        .slice(0, getRowLimit());
+    if (recentUpdates.length > 0) {
+        renderRow('last-updates', '🕐 Últimas actualizaciones', recentUpdates);
+    }
+
+    // 2. Estrenos recientes (no TMDB needed)
     const recent = [...catalog]
         .filter(s => s.year >= 2023)
         .sort((a, b) => (b.year || 0) - (a.year || 0))
         .slice(0, 30);
     renderRow('recent', '🆕 Estrenos recientes', recent);
 
-    // 2. Trending from TMDB
+    // 3. Trending from TMDB
     try {
         const trendingTmdb = await getTrending();
         const matched = trendingTmdb.map(t => findInCatalog(t)).filter(Boolean);
@@ -502,7 +511,7 @@ async function showCatalog() {
         await setupHero(recent.slice(0, 5));
     }
 
-    // 3. Genre rows (background)
+    // 4. Genre rows (background)
     loadGenresBackground();
 }
 
