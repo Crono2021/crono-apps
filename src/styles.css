@@ -190,8 +190,12 @@ body {
 
 /* ===== CONTENT ROWS ===== */
 #netflix-content { display: block; }
-.catalog-rows { padding-bottom: 40px; }
-.content-row { margin-bottom: 8px; }
+.catalog-rows { padding-bottom: 40px; display: flex; flex-direction: column; }
+.content-row { margin-bottom: 8px; order: 5; } /* default order for genres */
+[data-row="last-updates"] { order: 1; }
+[data-row="trending"] { order: 2; }
+[data-row="recent"] { order: 3; }
+[data-row="mov_recent"] { order: 3; }
 .row-header { padding: 20px 20px 10px; display: flex; align-items: center; gap: 12px; }
 .row-title { font-size: 1.1rem; font-weight: 700; color: #f4f4f5; }
 .row-scroll-container { position: relative; overflow: hidden; }
