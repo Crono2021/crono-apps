@@ -507,7 +507,18 @@ async function showCatalog() {
         const trendingTmdb = await getTrending();
         const matched = trendingTmdb.map(t => findInCatalog(t)).filter(Boolean);
         if (matched.length > 0) {
-            renderRow('trending', '🔥 En tendencia esta semana', matched, true);
+            renderRow('trending', '🔥 En tendencia esta semana', matched, false);
+            
+            // Move it explicitly to guarantee DOM order for spatial nav without flexbox issues
+            const container = $('catalog-rows');
+            const trendingRow = container.querySelector('[data-row="trending"]');
+            const recentRow = container.querySelector('[data-row="recent"]');
+            if (trendingRow && recentRow) {
+                container.insertBefore(trendingRow, recentRow);
+            } else if (trendingRow) {
+                container.prepend(trendingRow);
+            }
+            
             await setupHero(matched.slice(0, 5));
         } else {
             await setupHero(recent.slice(0, 5));
