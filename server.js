@@ -95,7 +95,7 @@ async function initDB() {
         )
     `);
 
-    // ── TMDB columns (non-destructive — safe to run on existing DB) ───────────
+    // ── TMDB & Updates columns (non-destructive — safe to run on existing DB) ───────────
     for (const col of [
         'tmdb_id          INT',
         'tmdb_name        TEXT',
@@ -105,6 +105,7 @@ async function initDB() {
         'tmdb_rating      NUMERIC(3,1)',
         'tmdb_genre_ids   TEXT',
         'tmdb_resolved_at TIMESTAMPTZ',
+        'last_updated     INT',
     ]) {
         const colName = col.trim().split(/\s+/)[0];
         await db.query(`ALTER TABLE series ADD COLUMN IF NOT EXISTS ${col}`).catch(() => {});
@@ -256,22 +257,32 @@ async function runResolveJob() {
                 const resC = await fetch('https://raw.githubusercontent.com/Crono2021/cineflix-catalog/main/catalog.json?v=' + Date.now());
                 if (resC.ok) {
                     const latestSeries = await resC.json();
-                    const { rows } = await db.query('SELECT payload FROM series');
-                    const existingPayloads = new Set(rows.map(r => r.payload));
+                    const { rows } = await db.query('SELECT payload, last_updated FROM series');
+                    const existingPayloads = new Map(rows.map(r => [r.payload, r.last_updated || 0]));
                     let addedSeries = 0;
+                    let updatedSeries = 0;
                     for (let i = 0; i < latestSeries.length; i++) {
                         const s = latestSeries[i];
                         const key = s.payload || s.id || s.title;
-                        if (!existingPayloads.has(key)) {
+                        const hasKey = existingPayloads.has(key);
+                        if (!hasKey) {
                             await db.query(
-                                'INSERT INTO series (title, year, payload, position) VALUES ($1,$2,$3,$4)',
-                                [s.title, s.year || null, key, i]
+                                'INSERT INTO series (title, year, payload, position, last_updated) VALUES ($1,$2,$3,$4,$5)',
+                                [s.title, s.year || null, key, i, s.last_updated || null]
                             );
-                            existingPayloads.add(key);
+                            existingPayloads.set(key, s.last_updated || 0);
                             addedSeries++;
+                        } else {
+                            const oldTs = existingPayloads.get(key) || 0;
+                            const newTs = s.last_updated || 0;
+                            if (newTs > oldTs) {
+                                await db.query('UPDATE series SET last_updated=$1 WHERE payload=$2', [newTs, key]);
+                                existingPayloads.set(key, newTs);
+                                updatedSeries++;
+                            }
                         }
                     }
-                    console.log(`[TMDB] Sync series: added ${addedSeries} new entries from GitHub.`);
+                    console.log(`[TMDB] Sync series: added ${addedSeries}, updated ${updatedSeries} timestamps from GitHub.`);
                 }
                 
                 // Sync Movies
