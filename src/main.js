@@ -1061,6 +1061,11 @@ async function showMovies() {
         .slice(0, 40);
     renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
 
+    // Hero: mismas películas de Estrenos recientes — cero llamadas externas
+    if (recentMovies.length > 0) {
+        setupMovieHero(recentMovies.slice(0, 6));
+    }
+
     // Delay rendering of heavy genre rows to allow instant UI response on mobile/TV
     setTimeout(() => {
         // Initialize Genre Rows using TMDB data from Railway
@@ -1198,27 +1203,17 @@ function renderMovieHeroSlide(idx) {
     const movie = movieHeroShows[idx];
     if (!movie) return;
 
-    const rawTitle = movie.title || movie.search_title || 'Película';
-    const displayTitle = rawTitle.replace(/\s*\(\d{4}\)\s*$/, '').trim() || rawTitle;
+    // Solo datos del catálogo — sin llamadas externas
+    const displayTitle = (movie.tmdb_name || movie.title || '').replace(/\s*\(\d{4}\)\s*$/, '').trim();
+    $('movies-hero-title').textContent = displayTitle;
+    $('movies-hero-overview').textContent = '';
+    $('movies-hero-meta').innerHTML = movie.year ? `<span>${movie.year}</span>` : '';
 
-    const tmdb = movie._cachedTmdb;
-    if (tmdb) {
-        // ✔ Backdrop cacheado — cero red, instantáneo
-        $('movies-hero-title').textContent = tmdb.name || displayTitle;
-        $('movies-hero-overview').textContent = tmdb.overview || '';
-        $('movies-hero-meta').innerHTML = [
-            tmdb.rating ? `<span class="hero-rating">★ ${tmdb.rating}</span>` : '',
-            (tmdb.year || movie.year) ? `<span>${tmdb.year || movie.year}</span>` : '',
-        ].filter(Boolean).join('');
-        $('movies-hero-backdrop').style.backgroundImage =
-            `url('https://image.tmdb.org/t/p/w1280${tmdb.backdropPath}')`;
-    } else {
-        // Sin caché aún: solo título con degradado de fondo
-        $('movies-hero-title').textContent = displayTitle;
-        $('movies-hero-overview').textContent = '';
-        $('movies-hero-meta').innerHTML = movie.year ? `<span>${movie.year}</span>` : '';
-        $('movies-hero-backdrop').style.backgroundImage = '';
-    }
+    // Póster del catálogo como imagen de fondo (ampliado a w1280)
+    $('movies-hero-backdrop').style.backgroundImage = movie.tmdb_poster
+        ? `url('https://image.tmdb.org/t/p/w1280${movie.tmdb_poster}')`
+        : '';
+
     $('movies-hero-play-btn').onclick = () => openMovie(movie);
 }
 

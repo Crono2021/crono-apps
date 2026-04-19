@@ -10,7 +10,7 @@
     <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="./assets/index-BDTAtQIu.js"></script>
+  <script type="module" crossorigin src="./assets/index-DBwPR6XS.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-DL7ieU6I.css">
 </head>
 <body>
@@ -137,6 +137,21 @@
 
             <!-- Carruseles de películas —­ sin cabecera hero -->
             <div id="movies-content">
+                <!-- Hero: 5 estrenos recientes del catálogo — cero llamadas externas -->
+                <div id="movies-hero" class="hero-section">
+                    <div id="movies-hero-backdrop" class="hero-backdrop"></div>
+                    <div class="hero-overlay"></div>
+                    <div class="hero-content">
+                        <div class="hero-badge">🎬 Estrenos</div>
+                        <h2 id="movies-hero-title" class="hero-title"></h2>
+                        <div id="movies-hero-meta" class="hero-meta"></div>
+                        <p id="movies-hero-overview" class="hero-overview"></p>
+                        <div class="hero-buttons">
+                            <button id="movies-hero-play-btn" class="hero-btn hero-btn-primary">▶ Ver ahora</button>
+                        </div>
+                    </div>
+                    <div id="movies-hero-dots" class="hero-dots"></div>
+                </div>
                 <div id="movies-rows" class="catalog-rows"></div>
             </div>
         </div>
