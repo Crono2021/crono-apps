@@ -240,21 +240,12 @@ class PlayerActivity : Activity() {
             castContext = CastContext.getSharedInstance(this)
             sessionManager = castContext?.sessionManager
 
-            val castButton = MediaRouteButton(this).apply {
-                // White tint for dark player background
-                val whiteFilter = android.graphics.PorterDuffColorFilter(
-                    android.graphics.Color.WHITE,
-                    android.graphics.PorterDuff.Mode.SRC_IN
-                )
-                // The MediaRouteButton uses a drawable internally
-                post {
-                    val viewGroup = this as? android.view.ViewGroup
-                    val count = viewGroup?.childCount ?: 0
-                    for (i in 0 until count) {
-                        // Iteration safe
-                    }
-                }
-            }
+            val castButton = MediaRouteButton(this)
+            
+            // Set the cast icon color to white so it's visible on the dark video layout
+            val castDrawable = androidx.core.content.ContextCompat.getDrawable(this, androidx.mediarouter.R.drawable.mr_button_light)
+            castDrawable?.setTint(android.graphics.Color.WHITE)
+            castButton.setRemoteIndicatorDrawable(castDrawable)
             CastButtonFactory.setUpMediaRouteButton(applicationContext, castButton)
 
             val params = FrameLayout.LayoutParams(
