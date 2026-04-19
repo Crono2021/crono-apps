@@ -18,6 +18,18 @@ import androidx.media3.ui.PlayerView
 import com.cineflix.android.TelegramEngine
 import androidx.appcompat.app.AppCompatActivity
 
+import kotlinx.coroutines.*
+
+import com.google.android.gms.cast.MediaInfo
+import com.google.android.gms.cast.MediaLoadRequestData
+import com.google.android.gms.cast.MediaMetadata
+import com.google.android.gms.cast.framework.CastButtonFactory
+import com.google.android.gms.cast.framework.CastContext
+import com.google.android.gms.cast.framework.CastSession
+import com.google.android.gms.cast.framework.SessionManager
+import com.google.android.gms.cast.framework.SessionManagerListener
+import androidx.mediarouter.app.MediaRouteButton
+
 /**
  * Cineflix ExoPlayer fullscreen activity with Chromecast support.
  *
