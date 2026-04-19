@@ -18,6 +18,9 @@ const MOVIES_REMOTE_URL  = 'https://raw.githubusercontent.com/Crono2021/cineflix
 const MOVIES_CACHE_KEY      = 'cineflix_movies_cache_v3';
 const MOVIES_MAX_ID_KEY     = 'cineflix_movies_max_id_v3';   // last known max DB id
 
+// En Android TV limitamos los carruseles a 20 items para reducir DOM y mejorar el rendimiento del D-pad
+const ROW_LIMIT = window._cineflixIsTV ? 20 : 40;
+
 async function loadCatalog() {
     // 1️⃣ Show cached version INSTANTLY (zero wait for the user)
     try {
@@ -791,7 +794,7 @@ async function loadGenresBackground() {
         // Update rows that have enough entries
         for (const [, bucket] of buckets) {
             if (bucket.items.length >= 6) {
-                renderRow(bucket.meta.id, bucket.meta.title, bucket.items.slice(0, 40));
+                renderRow(bucket.meta.id, bucket.meta.title, bucket.items.slice(0, ROW_LIMIT));
             }
         }
     }
@@ -799,7 +802,7 @@ async function loadGenresBackground() {
     // Final pass — show any remaining rows
     for (const [, bucket] of buckets) {
         if (bucket.items.length > 0) {
-            renderRow(bucket.meta.id, bucket.meta.title, bucket.items.slice(0, 40));
+            renderRow(bucket.meta.id, bucket.meta.title, bucket.items.slice(0, ROW_LIMIT));
         }
     }
     genreLoading = false;
@@ -910,7 +913,7 @@ async function loadMovies() {
                 const recentMovies = [...moviesCatalog]
                     .filter(m => m.year >= 2024)
                     .sort((a, b) => (b.year || 0) - (a.year || 0))
-                    .slice(0, 40);
+                    .slice(0, ROW_LIMIT);
                 renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
                 for (const genre of MOVIE_GENRE_ROWS) {
                     const items = moviesCatalog.filter(m => {
@@ -920,7 +923,7 @@ async function loadMovies() {
                         }
                         return genre.ids.some(id => gIds.includes(id));
                     });
-                    if (items.length > 0) renderMovieRow(genre.id, genre.title, items.slice(0, 40));
+                    if (items.length > 0) renderMovieRow(genre.id, genre.title, items.slice(0, ROW_LIMIT));
                 }
             }
         }).catch(() => {});
@@ -1058,7 +1061,7 @@ async function showMovies() {
     const recentMovies = [...moviesCatalog]
         .filter(m => m.year >= currentYear - 2)
         .sort((a, b) => (b.year || 0) - (a.year || 0))
-        .slice(0, 40);
+        .slice(0, ROW_LIMIT);
     renderMovieRow('mov_recent', '🆕 Estrenos recientes', recentMovies);
 
     // Hero: mismas películas de Estrenos recientes — cero llamadas externas
@@ -1078,7 +1081,7 @@ async function showMovies() {
                 return genre.ids.some(id => gIds.includes(id));
             });
             if (items.length > 0) {
-                renderMovieRow(genre.id, genre.title, items.slice(0, 40)); 
+                renderMovieRow(genre.id, genre.title, items.slice(0, ROW_LIMIT));
             }
         }
         
