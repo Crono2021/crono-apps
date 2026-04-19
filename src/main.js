@@ -42,21 +42,24 @@ async function loadCatalog() {
 async function fetchRemoteCatalog() {
     try {
         const localMaxId = parseInt(localStorage.getItem(CATALOG_MAX_ID_KEY) || '0', 10);
+        const localUpdateTs = parseInt(localStorage.getItem('cineflix_last_updated_ts') || '0', 10);
 
-        // Lightweight ping: just get count + maxId (~100 bytes)
+        // Lightweight ping: just get count + maxId + maxUpdateTs (~100 bytes)
         const metaRes = await fetch(`${RAILWAY_API}/api/catalog/meta`);
         if (!metaRes.ok) throw new Error('meta failed');
-        const { maxId } = await metaRes.json();
+        const { maxId, maxUpdateTs } = await metaRes.json();
 
-        if (maxId <= localMaxId && catalog.length > 0) {
+        const tsChanged = (maxUpdateTs || 0) > localUpdateTs;
+
+        if (maxId <= localMaxId && !tsChanged && catalog.length > 0) {
             // Nothing new — use cache as-is
-            console.log('[Catalog] ✅ Cache is up to date (no new items)');
+            console.log('[Catalog] ✅ Cache is up to date (no new items or updates)');
             return;
         }
 
-        if (localMaxId === 0 || catalog.length === 0) {
-            // First load: fetch everything
-            console.log('[Catalog] 🔄 First load — fetching full catalog from Railway...');
+        if (localMaxId === 0 || catalog.length === 0 || tsChanged) {
+            // First load or updates found: fetch everything
+            console.log('[Catalog] 🔄 Fetching full catalog from Railway...');
             const res = await fetch(`${RAILWAY_API}/api/catalog`);
             if (!res.ok) throw new Error('full fetch failed');
             const remote = await res.json();
@@ -64,6 +67,7 @@ async function fetchRemoteCatalog() {
                 catalog = remote;
                 localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(catalog));
                 localStorage.setItem(CATALOG_MAX_ID_KEY, String(maxId));
+                localStorage.setItem('cineflix_last_updated_ts', String(maxUpdateTs || 0));
                 console.log(`[Catalog] ✅ Full load: ${catalog.length} series`);
             }
         } else {
@@ -76,6 +80,7 @@ async function fetchRemoteCatalog() {
                 catalog = [...catalog, ...newItems];
                 localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(catalog));
                 localStorage.setItem(CATALOG_MAX_ID_KEY, String(maxId));
+                localStorage.setItem('cineflix_last_updated_ts', String(maxUpdateTs || 0));
                 console.log(`[Catalog] ✅ Delta: +${newItems.length} series nuevas`);
             }
         }

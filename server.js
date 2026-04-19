@@ -443,11 +443,15 @@ app.get('/api/catalog', async (req, res) => {
 
 // Lightweight meta check — returns {count, maxId} so client knows if delta sync is needed
 app.get('/api/catalog/meta', async (req, res) => {
-    if (!db) return res.json({ count: 0, maxId: 0 });
+    if (!db) return res.json({ count: 0, maxId: 0, maxUpdateTs: 0 });
     try {
-        const { rows } = await db.query('SELECT COUNT(*) AS count, MAX(id) AS max_id FROM series WHERE active = true');
-        res.json({ count: parseInt(rows[0].count), maxId: parseInt(rows[0].max_id) || 0 });
-    } catch (err) { res.json({ count: 0, maxId: 0 }); }
+        const { rows } = await db.query('SELECT COUNT(*) AS count, MAX(id) AS max_id, MAX(last_updated) AS max_up FROM series WHERE active = true');
+        res.json({ 
+            count: parseInt(rows[0].count), 
+            maxId: parseInt(rows[0].max_id) || 0,
+            maxUpdateTs: parseInt(rows[0].max_up) || 0
+        });
+    } catch (err) { res.json({ count: 0, maxId: 0, maxUpdateTs: 0 }); }
 });
 
 app.get('/api/catalog/all', requireAuth, async (req, res) => {
