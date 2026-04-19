@@ -248,8 +248,10 @@ class PlayerActivity : Activity() {
                 )
                 // The MediaRouteButton uses a drawable internally
                 post {
-                    for (i in 0 until childCount) {
-                        // No children — MediaRouteButton IS a view, apply to itself
+                    val viewGroup = this as? android.view.ViewGroup
+                    val count = viewGroup?.childCount ?: 0
+                    for (i in 0 until count) {
+                        // Iteration safe
                     }
                 }
             }
@@ -315,6 +317,7 @@ class PlayerActivity : Activity() {
                 isCasting = true
                 player?.pause()
             }
+            override fun onSessionResumeFailed(session: CastSession, error: Int) {}
 
             override fun onSessionSuspended(session: CastSession, reason: Int) {}
 
