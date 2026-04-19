@@ -481,10 +481,12 @@ async function showCatalog() {
         $('search-count').textContent = `${filtered.length} resultado${filtered.length !== 1 ? 's' : ''}`;
     };
 
-    // 1. Últimas actualizaciones (series que han recibido nuevos episodios en el bot)
+    // 1. Últimas actualizaciones
+    // Prioridad: last_updated real (del bot) → fallback: nº de payload del topic de Telegram (más alto = más reciente)
+    const getRecency = s => s.last_updated || parseInt((s.payload || '').replace(/\D/g, '') || '0', 10);
     const recentUpdates = [...catalog]
-        .filter(s => s.last_updated)
-        .sort((a, b) => (b.last_updated || 0) - (a.last_updated || 0))
+        .filter(s => s.last_updated || s.payload)
+        .sort((a, b) => getRecency(b) - getRecency(a))
         .slice(0, getRowLimit());
     if (recentUpdates.length > 0) {
         renderRow('last-updates', '🕐 Últimas actualizaciones', recentUpdates);
