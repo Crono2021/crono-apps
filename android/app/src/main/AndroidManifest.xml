@@ -3,6 +3,7 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Android TV: touchscreen is not available on TV, mark as not required -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />

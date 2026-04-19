@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
         engine = TelegramEngine.getInstance(this)
 
         webView = WebView(this).apply {
+            keepScreenOn = true
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
