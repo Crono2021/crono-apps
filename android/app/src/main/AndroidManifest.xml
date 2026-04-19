@@ -55,7 +55,7 @@
             android:name=".ui.player.PlayerActivity"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale"
             android:screenOrientation="landscape"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:theme="@style/Theme.AppCompat.NoActionBar"
             android:exported="false" />
 
     </application>

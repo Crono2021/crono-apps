@@ -16,18 +16,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.cineflix.android.TelegramEngine
-import kotlinx.coroutines.*
-
-// Cast imports — wrapped in try/catch at runtime for devices without Play Services
-import com.google.android.gms.cast.MediaInfo
-import com.google.android.gms.cast.MediaLoadRequestData
-import com.google.android.gms.cast.MediaMetadata
-import com.google.android.gms.cast.framework.CastButtonFactory
-import com.google.android.gms.cast.framework.CastContext
-import com.google.android.gms.cast.framework.CastSession
-import com.google.android.gms.cast.framework.SessionManager
-import com.google.android.gms.cast.framework.SessionManagerListener
-import androidx.mediarouter.app.MediaRouteButton
+import androidx.appcompat.app.AppCompatActivity
 
 /**
  * Cineflix ExoPlayer fullscreen activity with Chromecast support.
@@ -40,7 +29,7 @@ import androidx.mediarouter.app.MediaRouteButton
  * When the user disconnects Cast:
  *   1. ExoPlayer resumes playback
  */
-class PlayerActivity : Activity() {
+class PlayerActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
     private var playerView: PlayerView? = null
@@ -240,27 +229,34 @@ class PlayerActivity : Activity() {
             castContext = CastContext.getSharedInstance(this)
             sessionManager = castContext?.sessionManager
 
+            // ContextThemeWrapper ensures the button gets the AppCompat styling it needs
             val castButton = MediaRouteButton(this)
+            
+            // Force the button to always show (disabled/grayed if no devices found)
+            castButton.setAlwaysVisible(true)
             
             // Set the cast icon color to white so it's visible on the dark video layout
             val castDrawable = androidx.core.content.ContextCompat.getDrawable(this, androidx.mediarouter.R.drawable.mr_button_light)
             castDrawable?.setTint(android.graphics.Color.WHITE)
             castButton.setRemoteIndicatorDrawable(castDrawable)
-            CastButtonFactory.setUpMediaRouteButton(applicationContext, castButton)
+            CastButtonFactory.setUpMediaRouteButton(this, castButton)
 
             val params = FrameLayout.LayoutParams(
                 dpToPx(48),
                 dpToPx(48)
             ).apply {
                 gravity = Gravity.TOP or Gravity.END
-                setMargins(0, dpToPx(16), dpToPx(16), 0)
+                setMargins(0, dpToPx(24), dpToPx(24), 0)
             }
             rootLayout.addView(castButton, params)
 
             Log.i(TAG, "▶ Cast button added successfully")
         } catch (e: Exception) {
-            // Google Play Services not available — Cast just won't appear
-            Log.w(TAG, "Cast SDK not available: ${e.message}")
+            // Google Play Services not available or crashes rendering Cast button
+            Log.e(TAG, "Cast SDK Error: ${e.message}", e)
+            runOnUiThread {
+                Toast.makeText(this, "Aviso: Cast SDK no cargó (${e.message})", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
