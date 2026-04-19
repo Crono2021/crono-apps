@@ -486,16 +486,7 @@ async function showCatalog() {
         $('search-count').textContent = `${filtered.length} resultado${filtered.length !== 1 ? 's' : ''}`;
     };
 
-    // 1. Últimas actualizaciones — solo aparece cuando el bot ha registrado actividad real
-    const recentUpdates = [...catalog]
-        .filter(s => s.last_updated)
-        .sort((a, b) => (b.last_updated || 0) - (a.last_updated || 0))
-        .slice(0, getRowLimit());
-    if (recentUpdates.length > 0) {
-        renderRow('last-updates', '🕐 Últimas actualizaciones', recentUpdates);
-    }
-
-    // 2. Estrenos recientes (no TMDB needed)
+    // Estrenos recientes y Últimas actualizaciones se manejarán ahora.     // 2. Estrenos recientes (no TMDB needed)
     const recent = [...catalog]
         .filter(s => s.year >= 2023)
         .sort((a, b) => (b.year || 0) - (a.year || 0))
@@ -507,24 +498,24 @@ async function showCatalog() {
         const trendingTmdb = await getTrending();
         const matched = trendingTmdb.map(t => findInCatalog(t)).filter(Boolean);
         if (matched.length > 0) {
-            renderRow('trending', '🔥 En tendencia esta semana', matched, false);
-            
-            // Move it explicitly to guarantee DOM order for spatial nav without flexbox issues
-            const container = $('catalog-rows');
-            const trendingRow = container.querySelector('[data-row="trending"]');
-            const recentRow = container.querySelector('[data-row="recent"]');
-            if (trendingRow && recentRow) {
-                container.insertBefore(trendingRow, recentRow);
-            } else if (trendingRow) {
-                container.prepend(trendingRow);
-            }
-            
+            renderRow('trending', '🔥 En tendencia esta semana', matched, true);
             await setupHero(matched.slice(0, 5));
         } else {
             await setupHero(recent.slice(0, 5));
         }
     } catch {
         await setupHero(recent.slice(0, 5));
+    } finally {
+        // IMPORTANT: Renderizamos Últimas actualizaciones al final con prepend=true.
+        // Como En Tendencia también usó prepend=true, si lo hacemos después, Últimas Actualizaciones
+        // le roba el primer puesto y queda arriba del todo, de forma natural en el DOM.
+        const recentUpdates = [...catalog]
+            .filter(s => s.last_updated)
+            .sort((a, b) => (b.last_updated || 0) - (a.last_updated || 0))
+            .slice(0, getRowLimit());
+        if (recentUpdates.length > 0) {
+            renderRow('last-updates', '🕐 Últimas actualizaciones', recentUpdates, true);
+        }
     }
 
     // 4. Genre rows (background)
