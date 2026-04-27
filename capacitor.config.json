@@ -3,6 +3,7 @@
   "appName": "Cineflix",
   "webDir": "www",
   "server": {
+    "url": "https://cineflix-production-19e3.up.railway.app",
     "cleartext": true
   },
   "android": {

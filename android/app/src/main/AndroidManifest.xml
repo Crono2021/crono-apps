@@ -3,6 +3,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Android TV: touchscreen is not available on TV, mark as not required -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -21,6 +24,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Cineflix"
         android:networkSecurityConfig="@xml/network_security_config">
+
+        <!-- Google Cast Options Provider (Chromecast) -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.cineflix.android.CastOptionsProvider" />
 
         <!-- Main Compose Activity -->
         <activity
@@ -47,7 +55,7 @@
             android:name=".ui.player.PlayerActivity"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale"
             android:screenOrientation="landscape"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:theme="@style/Theme.AppCompat.NoActionBar"
             android:exported="false" />
 
     </application>

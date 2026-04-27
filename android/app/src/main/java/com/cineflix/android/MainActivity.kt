@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
         engine = TelegramEngine.getInstance(this)
 
         webView = WebView(this).apply {
+            keepScreenOn = true
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -96,8 +97,8 @@ class MainActivity : ComponentActivity() {
                 restoreState(savedInstanceState)
                 android.util.Log.d("CineflixMain", "WebView state restored from savedInstanceState")
             } else {
-                loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
-                android.util.Log.d("CineflixMain", "WebView loading fresh URL")
+                loadUrl("https://cineflix-production-19e3.up.railway.app/")
+                android.util.Log.d("CineflixMain", "WebView loading remote catalog URL")
             }
         }
 
