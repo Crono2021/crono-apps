@@ -135,7 +135,16 @@ class TelegramEngine(private val context: Context) {
             is TdApi.AuthorizationStateWaitPhoneNumber -> _authState.value = AuthState.WaitPhone
             is TdApi.AuthorizationStateWaitCode        -> _authState.value = AuthState.WaitCode
             is TdApi.AuthorizationStateWaitPassword    -> _authState.value = AuthState.WaitPassword
-            is TdApi.AuthorizationStateReady           -> _authState.value = AuthState.Ready
+            is TdApi.AuthorizationStateReady           -> {
+                _authState.value = AuthState.Ready
+                // Cleanup stray 2.8GB caches at boot to rescue TV storage
+                try {
+                    val videosDir = java.io.File(context.filesDir, "tdlib_data/videos")
+                    if (videosDir.exists()) videosDir.deleteRecursively()
+                    val docsDir = java.io.File(context.filesDir, "tdlib_data/documents")
+                    if (docsDir.exists()) docsDir.deleteRecursively()
+                } catch (_: Exception) {}
+            }
             is TdApi.AuthorizationStateLoggingOut      -> _authState.value = AuthState.LoggingOut
             is TdApi.AuthorizationStateClosed          -> {
                 client = null
@@ -205,13 +214,12 @@ class TelegramEngine(private val context: Context) {
             }
         }
 
-        // Pre-cache fileId + start download for instant playback
+        // Pre-cache fileId for instant playback
         if (isVideo) {
             val info = extractVideoInfo(msg) ?: return
             val cacheKey = "${msg.chatId}:${msg.id}"
             fileIdCache[cacheKey] = Pair(info.fileId, info.mimeType)
-            // Pre-warm download (full file, low priority 1)
-            client?.send(TdApi.DownloadFile(info.fileId, 1, 0, 0, false)) {}
+            // (Removed buggy DownloadFile pre-warm that saturated Android TV storage and CPU)
         }
     }
 
