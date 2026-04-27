@@ -56,6 +56,7 @@ class PlayerActivity : AppCompatActivity() {
     private var currentTitle: String = ""
     private var castSessionListener: SessionManagerListener<CastSession>? = null
     private var isCasting = false
+    private var castButton: MediaRouteButton? = null
 
     companion object {
         const val EXTRA_FILE_ID   = "file_id"
@@ -168,7 +169,25 @@ class PlayerActivity : AppCompatActivity() {
         playerView = PlayerView(this).apply {
             useController = true
             setShowSubtitleButton(true)
+            
+            // Habilitar el botón de Pantalla Completa nativo de ExoPlayer
+            // Lo usaremos para alternar entre "Ajustar (con bordes)" y "Rellenar/Zoom (sin bordes)"
+            setFullscreenButtonClickListener { isFullScreen ->
+                if (isFullScreen) {
+                    this.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                } else {
+                    this.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                }
+            }
         }
+        
+        // Sincronizar visibilidad de controles con el botón de Chromecast
+        playerView?.setControllerVisibilityListener(
+            androidx.media3.ui.PlayerView.ControllerVisibilityListener { visibility ->
+                castButton?.visibility = visibility
+            }
+        )
+
         rootLayout.addView(playerView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
@@ -242,16 +261,17 @@ class PlayerActivity : AppCompatActivity() {
             sessionManager = castContext?.sessionManager
 
             // ContextThemeWrapper ensures the button gets the AppCompat styling it needs
-            val castButton = MediaRouteButton(this)
+            val btn = MediaRouteButton(this)
+            castButton = btn
             
             // Force the button to always show (disabled/grayed if no devices found)
-            castButton.setAlwaysVisible(true)
+            btn.setAlwaysVisible(true)
             
             // Set the cast icon color to white so it's visible on the dark video layout
             val castDrawable = androidx.core.content.ContextCompat.getDrawable(this, androidx.mediarouter.R.drawable.mr_button_light)
             castDrawable?.setTint(android.graphics.Color.WHITE)
-            castButton.setRemoteIndicatorDrawable(castDrawable)
-            CastButtonFactory.setUpMediaRouteButton(this, castButton)
+            btn.setRemoteIndicatorDrawable(castDrawable)
+            CastButtonFactory.setUpMediaRouteButton(this, btn)
 
             val params = FrameLayout.LayoutParams(
                 dpToPx(48),
@@ -260,7 +280,7 @@ class PlayerActivity : AppCompatActivity() {
                 gravity = Gravity.TOP or Gravity.END
                 setMargins(0, dpToPx(24), dpToPx(24), 0)
             }
-            rootLayout.addView(castButton, params)
+            rootLayout.addView(btn, params)
 
             Log.i(TAG, "▶ Cast button added successfully")
         } catch (e: Exception) {
