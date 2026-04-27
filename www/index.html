@@ -9,9 +9,9 @@
     <title>Cine en Castellano HD</title>
     <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="./assets/index-a3om34wK.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-CqwKBu0h.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script type="module" crossorigin src="./assets/index-DX1sd8ST.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-DL7ieU6I.css">
 </head>
 <body>
     <div id="app">
@@ -65,6 +65,7 @@
                 <div class="topbar-search">
                     <input type="text" id="search-input" placeholder="🔍 Buscar series...">
                 </div>
+                <button id="btn-refresh-catalog" class="btn-icon" title="Refrescar datos" style="margin-right: -5px;">🔄</button>
                 <button id="btn-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
             </header>
 
@@ -115,6 +116,7 @@
                 <div class="topbar-search">
                     <input type="text" id="movies-search-input" placeholder="🔍 Buscar películas...">
                 </div>
+                <button id="btn-movies-refresh" class="btn-icon" title="Refrescar datos" style="margin-right: -5px;">🔄</button>
                 <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
             </header>
 
@@ -135,15 +137,15 @@
                 <div id="movies-grid" class="catalog-grid"></div>
             </div>
 
-            <!-- Netflix-style home -->
+            <!-- Carruseles de películas —­ sin cabecera hero -->
             <div id="movies-content">
-                <!-- Hero -->
+                <!-- Hero: 5 estrenos recientes del catálogo — cero llamadas externas -->
                 <div id="movies-hero" class="hero-section">
                     <div id="movies-hero-backdrop" class="hero-backdrop"></div>
                     <div class="hero-overlay"></div>
                     <div class="hero-content">
-                        <div class="hero-badge">🎬 En cartelera</div>
-                        <h2 id="movies-hero-title" class="hero-title">Cargando...</h2>
+                        <div class="hero-badge">🎬 Estrenos</div>
+                        <h2 id="movies-hero-title" class="hero-title"></h2>
                         <div id="movies-hero-meta" class="hero-meta"></div>
                         <p id="movies-hero-overview" class="hero-overview"></p>
                         <div class="hero-buttons">
@@ -152,10 +154,10 @@
                     </div>
                     <div id="movies-hero-dots" class="hero-dots"></div>
                 </div>
-                <!-- Content rows -->
                 <div id="movies-rows" class="catalog-rows"></div>
             </div>
         </div>
+
 
         <!-- MOVIE FILES MODAL (overlay shown when bot searches) -->
         <div id="movie-files-modal" class="modal-overlay hidden">
@@ -224,7 +226,15 @@
             </div>
             <video id="video-player" controls></video>
         </div>
+        
+        <!-- MPV Loading Overlay -->
+        <div id="mpv-loader" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,10,12,0.95);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:9999;">
+            <div class="spinner" style="width:50px;height:50px;border-width:4px;"></div>
+            <h2 style="margin-top:20px;font-size:1.5rem;font-weight:600;">Cambiando a MPV...</h2>
+            <p style="color:#8b8e96;margin-top:8px;">Aceleración por hardware iniciada</p>
+        </div>
     </div>
-
+
+    <script src="./tv-nav.js" defer></script>
 </body>
 </html>
