@@ -285,10 +285,9 @@ class PlayerActivity : AppCompatActivity() {
             Log.i(TAG, "▶ Cast button added successfully")
         } catch (e: Exception) {
             // Google Play Services not available or crashes rendering Cast button
+            // Typical on Android TV (Receiver only) or stripped-down devices.
+            // Failing silently is perfectly fine as casting from a TV to another TV isn't standard anyway.
             Log.e(TAG, "Cast SDK Error: ${e.message}", e)
-            runOnUiThread {
-                Toast.makeText(this, "Aviso: Cast SDK no cargó (${e.message})", Toast.LENGTH_LONG).show()
-            }
         }
     }
 
