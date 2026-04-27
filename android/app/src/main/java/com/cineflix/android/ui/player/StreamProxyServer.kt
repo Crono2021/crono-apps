@@ -34,6 +34,21 @@ class StreamProxyServer(
         // Each NanoHTTPD request gets this chunk size delivered to ExoPlayer.
         // 2MB balances network round-trips vs. memory pressure.
         private const val PREFETCH_SIZE = 2L * 1024L * 1024L
+        
+        // Wipe local TDLib cache every 450MB to never exceed TV storage capacity
+        private const val ROLLING_GC_THRESHOLD = 450L * 1024L * 1024L
+    }
+
+    @Volatile
+    private var bytesReadSinceLastWipe: Long = 0L
+
+    private fun checkRollingGc(bytesDelivered: Int) {
+        bytesReadSinceLastWipe += bytesDelivered
+        if (bytesReadSinceLastWipe > ROLLING_GC_THRESHOLD) {
+            Log.i(TAG, "🧹 ROLLING GC FIRED: Wiping TV disk, freeing space for next chunk. fileId=$fileId")
+            engine.cancelAndDeleteVideo(fileId)
+            bytesReadSinceLastWipe = 0L
+        }
     }
 
     /**
@@ -99,7 +114,7 @@ class StreamProxyServer(
      *     This blocks until Telegram CDN delivers the bytes, then returns them.
      *  3. Serves bytes from an in-memory prefetch buffer (2MB) to reduce IPC calls.
      */
-    private class DiskFreeInputStream(
+    private inner class DiskFreeInputStream(
         private val engine: TelegramEngine,
         private val fileId: Int,
         private val startOffset: Long,
@@ -133,6 +148,7 @@ class StreamProxyServer(
                 val toRead    = minOf(len, available)
                 System.arraycopy(pb, bufferIdx, b, off, toRead)
                 currentPosition += toRead
+                checkRollingGc(toRead)
                 return toRead
             }
 
@@ -179,6 +195,7 @@ class StreamProxyServer(
             val toRead = minOf(len, chunk.size)
             System.arraycopy(chunk, 0, b, off, toRead)
             currentPosition += toRead
+            checkRollingGc(toRead)
             return toRead
         }
     }
