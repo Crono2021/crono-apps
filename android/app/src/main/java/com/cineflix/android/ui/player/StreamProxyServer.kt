@@ -142,6 +142,11 @@ class StreamProxyServer(
                 endPosition - currentPosition
             )
 
+            // 🚀 AGGRESSIVE MULTIPLEXING (NATIVE) 🚀
+            // Just like the JS frontend, we force TDLib to aggressively download the next 10 Megabytes
+            // in the background. TDLib natively splits this into multiple concurrent socket connections.
+            engine.hintDownloadOffset(fileId, currentPosition, 10L * 1024L * 1024L)
+
             // Try 1: fast ReadFilePart (already in TDLib's internal buffer)
             val fastChunk = engine.readFilePartSync(fileId, currentPosition, toFetch)
             if (fastChunk != null && fastChunk.isNotEmpty()) {
