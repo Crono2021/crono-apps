@@ -16,16 +16,23 @@
 (function () {
   'use strict';
 
+  let bootAttempts = 0;
   function boot() {
-    if (!window._cineflixIsTV) return;
-    console.log('[TV-NAV] Activating D-pad navigation for Android TV');
-    new CineflixTVNav().init();
+    if (window._cineflixIsTV) {
+      console.log('[TV-NAV] Activating D-pad navigation for Android TV');
+      new CineflixTVNav().init();
+    } else if (bootAttempts < 15) {
+      bootAttempts++;
+      setTimeout(boot, 300);
+    } else {
+      console.log('[TV-NAV] Aborting boot, window._cineflixIsTV not set after 15 attempts');
+    }
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(boot, 300));
+    document.addEventListener('DOMContentLoaded', boot);
   } else {
-    setTimeout(boot, 300);
+    boot();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -44,6 +51,9 @@
     injectStyles() {
       const s = document.createElement('style');
       s.textContent = `
+        /* Reduce overall UI scale for TV screens to fix massive elements */
+        body { zoom: 0.82 !important; }
+
         /* D-pad focus ring */
         .tv-focused {
           outline: 3px solid #7c3aed !important;
@@ -215,13 +225,18 @@
       // Zone — Modal (movie quality / file selector)
       const modal = document.querySelector('.modal-overlay:not(.hidden)');
       if (modal) {
+        const modalZones = [];
         const closeBtn = modal.querySelector('#modal-close');
         if (closeBtn && this.visible(closeBtn)) {
-          zones.push({ key: 'modal-close', items: [closeBtn] });
+          modalZones.push({ key: 'modal-close', items: [closeBtn] });
         }
         const fileItems = [...modal.querySelectorAll('.movie-file-item')]
           .filter(el => this.visible(el));
-        if (fileItems.length) zones.push({ key: 'modal-files', items: fileItems });
+        if (fileItems.length) {
+          modalZones.push({ key: 'modal-files', items: fileItems });
+        }
+        // TRAP FOCUS: If modal is open, return ONLY modal zones, ignoring background!
+        return modalZones;
       }
 
       return zones;
@@ -235,24 +250,39 @@
 
       const zone    = zones[this.zoneIndex];
       const prevIdx = Math.min(this.lastRowIndex[zone.key] || 0, zone.items.length - 1);
+      const isVert  = zone.key === 'seasons' || zone.key === 'episodes' || zone.key === 'login' || zone.key === 'modal-files';
 
       if (direction === 'left') {
+        if (isVert) return; // Ignore horizontal moves in vertical lists to avoid jumping erratically
         const next = Math.max(0, prevIdx - 1);
         this.lastRowIndex[zone.key] = next;
         this.setFocus(zone.items[next]);
 
       } else if (direction === 'right') {
+        if (isVert) return;
         const next = Math.min(zone.items.length - 1, prevIdx + 1);
         this.lastRowIndex[zone.key] = next;
         this.setFocus(zone.items[next]);
 
       } else if (direction === 'up') {
+        if (isVert && prevIdx > 0) {
+          const next = prevIdx - 1;
+          this.lastRowIndex[zone.key] = next;
+          this.setFocus(zone.items[next]);
+          return;
+        }
         if (this.zoneIndex === 0) return;
         this.lastRowIndex[zone.key] = prevIdx;
         this.zoneIndex = Math.max(0, this.zoneIndex - 1);
         this.focusCurrentZone(zones);
 
       } else if (direction === 'down') {
+        if (isVert && prevIdx < zone.items.length - 1) {
+          const next = prevIdx + 1;
+          this.lastRowIndex[zone.key] = next;
+          this.setFocus(zone.items[next]);
+          return;
+        }
         if (this.zoneIndex === zones.length - 1) return;
         this.lastRowIndex[zone.key] = prevIdx;
         this.zoneIndex = Math.min(zones.length - 1, this.zoneIndex + 1);
