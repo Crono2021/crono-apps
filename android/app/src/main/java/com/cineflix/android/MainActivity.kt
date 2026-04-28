@@ -97,9 +97,8 @@ class MainActivity : ComponentActivity() {
                 restoreState(savedInstanceState)
                 android.util.Log.d("CineflixMain", "WebView state restored from savedInstanceState")
             } else {
-                // Se fuerza al TV a cargar desde sus propios archivos empaquetados para evadir caídas del servidor
-                loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
-                android.util.Log.d("CineflixMain", "WebView loading local bundled catalog (appassets)")
+                loadUrl("https://cineflix-production-19e3.up.railway.app/")
+                android.util.Log.d("CineflixMain", "WebView loading remote catalog URL")
             }
         }
 
