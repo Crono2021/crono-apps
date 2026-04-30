@@ -32,8 +32,9 @@ class StreamProxyServer(
         private const val TAG = "StreamProxy"
 
         // Each NanoHTTPD request gets this chunk size delivered to ExoPlayer.
-        // 2MB balances network round-trips vs. memory pressure.
-        private const val PREFETCH_SIZE = 2L * 1024L * 1024L
+        // 4MB reduces the frequency of TDLib round-trips, preventing micro-freezes
+        // on slower devices like Fire Stick where WiFi throughput is limited.
+        private const val PREFETCH_SIZE = 4L * 1024L * 1024L
         
         // Wipe local TDLib cache every 450MB to never exceed TV storage capacity
         private const val ROLLING_GC_THRESHOLD = 450L * 1024L * 1024L
@@ -159,9 +160,10 @@ class StreamProxyServer(
             )
 
             // 🚀 AGGRESSIVE MULTIPLEXING (NATIVE) 🚀
-            // Just like the JS frontend, we force TDLib to aggressively download the next 10 Megabytes
-            // in the background. TDLib natively splits this into multiple concurrent socket connections.
-            engine.hintDownloadOffset(fileId, currentPosition, 10L * 1024L * 1024L)
+            // Force TDLib to aggressively download the next 20MB in the background.
+            // TDLib natively splits this into multiple concurrent socket connections.
+            // 20MB gives Fire Stick/low-end devices enough runway to avoid micro-freezes.
+            engine.hintDownloadOffset(fileId, currentPosition, 20L * 1024L * 1024L)
 
             // Try 1: fast ReadFilePart (already in TDLib's internal buffer)
             val fastChunk = engine.readFilePartSync(fileId, currentPosition, toFetch)

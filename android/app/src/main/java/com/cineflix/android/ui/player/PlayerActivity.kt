@@ -150,7 +150,10 @@ class PlayerActivity : AppCompatActivity() {
             try {
                 Log.i(TAG, "▶ Registering fileId=$fileId with TDLib (disk-free mode)...")
                 engine.startDownloadReturnPath(fileId, priority = 32)
-                Log.i(TAG, "▶ TDLib registration complete for fileId=$fileId")
+                // Kick off aggressive pre-fetch immediately — don't wait for ExoPlayer's first request.
+                // This gives TDLib a head start on Fire Stick and other slow devices.
+                engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
+                Log.i(TAG, "▶ TDLib registration complete + 20MB pre-hint sent for fileId=$fileId")
             } catch (e: Exception) {
                 Log.e(TAG, "▶ TDLib registration error: ${e.message}", e)
             }
@@ -201,7 +204,9 @@ class PlayerActivity : AppCompatActivity() {
         // 5. Setup ExoPlayer
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setAllocator(androidx.media3.exoplayer.upstream.DefaultAllocator(true, androidx.media3.common.C.DEFAULT_BUFFER_SEGMENT_SIZE))
-            .setBufferDurationsMs(15000, 50000, 5000, 10000)
+            // minBuffer=30s, maxBuffer=60s, bufferForPlayback=8s, bufferForPlaybackAfterRebuffer=12s
+            // Generous buffers prevent micro-freezes on Fire Stick and low-end devices
+            .setBufferDurationsMs(30000, 60000, 8000, 12000)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
