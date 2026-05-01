@@ -202,11 +202,16 @@ class PlayerActivity : AppCompatActivity() {
         setContentView(rootLayout)
 
         // 5. Setup ExoPlayer
+        // Adaptive buffering: fast start (2s) for good connections,
+        // conservative rebuffer (15s) for slow ones. 120s max ahead buffer.
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setAllocator(androidx.media3.exoplayer.upstream.DefaultAllocator(true, androidx.media3.common.C.DEFAULT_BUFFER_SEGMENT_SIZE))
-            // minBuffer=30s, maxBuffer=60s, bufferForPlayback=8s, bufferForPlaybackAfterRebuffer=12s
-            // Generous buffers prevent micro-freezes on Fire Stick and low-end devices
-            .setBufferDurationsMs(30000, 60000, 8000, 12000)
+            .setBufferDurationsMs(
+                30_000,   // minBufferMs: keep at least 30s in RAM
+                120_000,  // maxBufferMs: prebuffer up to 2 min ahead if connection allows
+                2_000,    // bufferForPlaybackMs: start playing after just 2s (fast start)
+                15_000    // bufferForPlaybackAfterRebufferMs: after a stall, wait 15s before resuming
+            )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
@@ -222,8 +227,10 @@ class PlayerActivity : AppCompatActivity() {
 
         val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
 
+        // PREFER: use FFmpeg software decoding first — avoids MediaCodecVideoRenderer
+        // crashes on devices that claim HEVC/AV1 support but fail mid-decode
         val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(this)
-            .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
 
         val exo = ExoPlayer.Builder(this)
             .setRenderersFactory(renderersFactory)
