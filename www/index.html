@@ -10,7 +10,7 @@
     <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="./assets/index-DG-QzwN9.js"></script>
+  <script type="module" crossorigin src="./assets/index-BuZ-FEet.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index--T_DyWxS.css">
 </head>
 <body>
@@ -18,32 +18,33 @@
         <!-- LOGIN -->
         <div id="view-login" class="view active">
             <div class="login-container">
-                <div class="login-logo">🎥</div>
                 <h1 class="login-title">Cine en Castellano HD</h1>
                 <p class="login-subtitle">Tu videoclub en streaming (v2.1)</p>
 
-                <div id="step-phone" class="login-step active">
+                <!-- QR Section (Visible only on TV) -->
+                <div id="qr-section" style="display:none; margin-top: 24px; text-align: center;">
+                    <div id="qr-canvas" class="qr-container" style="margin: 0 auto; width: 220px; height: 220px; padding: 12px;"></div>
+                    <div id="qr-loading" class="qr-loading" style="padding: 40px 0;">
+                        <div class="spinner"></div>
+                        <p style="font-size: 0.85rem; color: #a1a1aa;">Generando código QR...</p>
+                    </div>
+                    <p id="qr-error" class="error-text"></p>
+                    <p class="hint" style="margin-top: 12px; font-size: 0.85rem;">
+                        <strong>Abre Telegram en tu móvil</strong><br>
+                        Ajustes → Dispositivos → Escanear QR
+                    </p>
+                    <div style="margin: 24px 0 12px; border-top: 1px solid rgba(255,255,255,0.1); position: relative;">
+                        <span style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #1a1a2e; padding: 0 12px; font-size: 0.8rem; color: #71717a; border-radius: 4px;">O USA TU NÚMERO</span>
+                    </div>
+                </div>
+
+                <div id="step-phone" class="login-step active" style="margin-top: 16px;">
                     <label>Número de teléfono</label>
                     <div class="input-row">
                         <input type="tel" id="input-phone" placeholder="+34 600 000 000" value="+34" autocomplete="off">
                         <button id="btn-phone" class="btn-primary">Enviar</button>
                     </div>
                     <p id="phone-error" class="error-text"></p>
-                    <p id="qr-link" class="qr-link" style="display:none">
-                        <a href="#" id="btn-show-qr">📱 Iniciar sesión con QR</a>
-                    </p>
-                </div>
-
-                <div id="step-qr" class="login-step">
-                    <label>Escanea con tu móvil</label>
-                    <p class="hint">Abre Telegram → Ajustes → Dispositivos → Escanear QR</p>
-                    <div id="qr-canvas" class="qr-container"></div>
-                    <div id="qr-loading" class="qr-loading">
-                        <div class="spinner"></div>
-                        <p>Generando código QR...</p>
-                    </div>
-                    <p id="qr-error" class="error-text"></p>
-                    <p class="qr-alt-link"><a href="#" id="btn-use-phone">Usar número de teléfono</a></p>
                 </div>
 
                 <div id="step-otp" class="login-step">

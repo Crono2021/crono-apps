@@ -215,10 +215,10 @@
         });
       }
 
-      // Zone — Login form (phone input + Send button, OTP input + Verify button)
+      // Zone — Login form (phone input + Send button, OTP input + Verify button, QR links)
       const loginStep = view.querySelector('.login-step.active');
       if (loginStep) {
-        const loginEls = [...loginStep.querySelectorAll('input, button')]
+        const loginEls = [...loginStep.querySelectorAll('input, button, a')]
           .filter(el => this.visible(el));
         if (loginEls.length) zones.push({ key: 'login', items: loginEls });
       }
