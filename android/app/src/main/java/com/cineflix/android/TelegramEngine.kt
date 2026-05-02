@@ -276,19 +276,25 @@ class TelegramEngine(private val context: Context) {
 
     fun sendPhone(phone: String, onError: (String) -> Unit) {
         if (_authState.value is AuthState.WaitQrCode) {
-            // TDLib does not have a direct cancel for QR login.
-            // We close the client, let it restart automatically, wait for WaitPhone, then send the number.
+            // TDLib cannot transition from WaitOtherDeviceConfirmation to phone auth directly.
+            // We must Close() the client → handleAuthState recreates it → wait for WaitPhone → send number.
             Log.i(TAG, "Canceling QR login to fallback to phone number...")
+            val oldClient = client
             scope.launch {
-                client?.send(TdApi.Close()) {}
-                val state = withTimeoutOrNull(5000) {
+                oldClient?.send(TdApi.Close()) {}
+                // Wait until the NEW client reaches WaitPhone (initClient runs inside AuthorizationStateClosed)
+                val reached = withTimeoutOrNull(8000) {
                     authState.first { it is AuthState.WaitPhone }
                 }
-                if (state != null) {
-                    client?.send(TdApi.SetAuthenticationPhoneNumber(phone, null)) { result ->
+                if (reached != null) {
+                    // Use this.client — it's the FRESH instance created by initClient()
+                    val freshClient = client
+                    Log.i(TAG, "New client ready, sending phone number...")
+                    freshClient?.send(TdApi.SetAuthenticationPhoneNumber(phone, null)) { result ->
                         if (result is TdApi.Error) onError(result.message)
                     }
                 } else {
+                    Log.e(TAG, "Timeout waiting for new client after QR cancel")
                     onError("No se pudo cancelar el inicio de sesión por QR. Reinicia la app.")
                 }
             }
