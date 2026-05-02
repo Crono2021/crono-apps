@@ -36,11 +36,13 @@ class AndroidBridge(
 
     @JavascriptInterface
     fun requestAuthState() {
-        val state = when (engine.authState.value) {
+        val currentState = engine.authState.value
+        val state = when (currentState) {
             is TelegramEngine.AuthState.Ready         -> "READY"
             is TelegramEngine.AuthState.WaitPhone     -> "WAIT_PHONE"
             is TelegramEngine.AuthState.WaitCode      -> "WAIT_CODE"
             is TelegramEngine.AuthState.WaitPassword  -> "WAIT_PASSWORD"
+            is TelegramEngine.AuthState.WaitQrCode    -> "WAIT_QR|${currentState.link}"
             else                                      -> "UNKNOWN"
         }
         sendAuthState(state)
@@ -112,6 +114,51 @@ class AndroidBridge(
     @JavascriptInterface
     fun logOut() {
         engine.logout { sendAuthState("WAIT_PHONE") }
+    }
+
+    /**
+     * Request QR code login. TDLib will transition to WaitOtherDeviceConfirmation
+     * with a tg://login?token=... link. We send it to JS and keep watching for
+     * the user to scan it (state transitions to Ready or WaitPassword).
+     */
+    @JavascriptInterface
+    fun requestQrLogin() {
+        scope.launch {
+            engine.requestQrLogin { err -> sendAuthError(err) }
+            // Wait for TDLib to emit WaitQrCode (up to 15s)
+            val qrState = kotlinx.coroutines.withTimeoutOrNull(15_000) {
+                engine.authState.first {
+                    it is TelegramEngine.AuthState.WaitQrCode ||
+                    it is TelegramEngine.AuthState.Error
+                }
+            }
+            when (qrState) {
+                is TelegramEngine.AuthState.WaitQrCode -> {
+                    sendAuthState("WAIT_QR|${qrState.link}")
+                    // Keep watching: when user scans, TDLib goes to Ready or WaitPassword
+                    // Also handle QR token refresh (TDLib sends a new WaitQrCode with updated link)
+                    val finalState = kotlinx.coroutines.withTimeoutOrNull(120_000) {
+                        engine.authState.first {
+                            it is TelegramEngine.AuthState.Ready ||
+                            it is TelegramEngine.AuthState.WaitPassword ||
+                            it is TelegramEngine.AuthState.Error ||
+                            it is TelegramEngine.AuthState.WaitPhone
+                        }
+                    }
+                    when (finalState) {
+                        is TelegramEngine.AuthState.Ready        -> sendAuthState("READY")
+                        is TelegramEngine.AuthState.WaitPassword -> sendAuthState("WAIT_PASSWORD")
+                        is TelegramEngine.AuthState.WaitPhone    -> sendAuthState("WAIT_PHONE")
+                        is TelegramEngine.AuthState.Error        -> sendAuthError((finalState as TelegramEngine.AuthState.Error).message)
+                        null -> sendAuthError("QR expirado. Inténtalo de nuevo.")
+                        else -> {}
+                    }
+                }
+                is TelegramEngine.AuthState.Error -> sendAuthError((qrState as TelegramEngine.AuthState.Error).message)
+                null -> sendAuthError("Timeout: TDLib no generó el código QR")
+                else -> sendAuthError("Estado inesperado: $qrState")
+            }
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────

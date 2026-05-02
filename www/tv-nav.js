@@ -20,7 +20,8 @@
   function boot() {
     if (window._cineflixIsTV) {
       console.log('[TV-NAV] Activating D-pad navigation for Android TV');
-      new CineflixTVNav().init();
+      window.cineflixTvNav = new CineflixTVNav();
+      window.cineflixTvNav.init();
     } else if (bootAttempts < 15) {
       bootAttempts++;
       setTimeout(boot, 300);
@@ -160,7 +161,7 @@
     getZones() {
       const view = document.querySelector('.view.active');
       if (!view) return [];
-      const zones = [];
+      let zones = [];
 
       // Zone 1 — Topbar: search box + logout button
       const searchInput = view.querySelector('#search-input, #movies-search-input');
@@ -199,16 +200,19 @@
       )].filter(el => this.visible(el));
       if (gridCards.length) zones.push({ key: 'grid', items: gridCards });
 
-      // Zone — Season list
-      const seasonBtns = [...view.querySelectorAll('.season-btn')].filter(el => this.visible(el));
-      if (seasonBtns.length) zones.push({ key: 'seasons', items: seasonBtns });
+      // Zone — Season list (Vertical)
+      [...view.querySelectorAll('.season-btn')].filter(el => this.visible(el)).forEach((btn, i) => {
+        zones.push({ key: `season-${i}`, items: [btn] });
+      });
 
-      // Zone — Episode list
+      // Zone — Episode list (Vertical)
       const episodeCards = [...view.querySelectorAll('.episode-card')]
         .filter(el => this.visible(el));
       // Only add if not already covered by a .content-row zone
       if (episodeCards.length && !zones.some(z => z.items.some(i => i.classList.contains('episode-card')))) {
-        zones.push({ key: 'episodes', items: episodeCards });
+        episodeCards.forEach((card, i) => {
+          zones.push({ key: `episode-${i}`, items: [card] });
+        });
       }
 
       // Zone — Login form (phone input + Send button, OTP input + Verify button)
@@ -222,13 +226,18 @@
       // Zone — Modal (movie quality / file selector)
       const modal = document.querySelector('.modal-overlay:not(.hidden)');
       if (modal) {
+        // TRAP FOCUS: If modal is open, clear all other zones and ONLY return modal zones
+        zones = [];
+        
         const closeBtn = modal.querySelector('#modal-close');
         if (closeBtn && this.visible(closeBtn)) {
           zones.push({ key: 'modal-close', items: [closeBtn] });
         }
-        const fileItems = [...modal.querySelectorAll('.movie-file-item')]
-          .filter(el => this.visible(el));
-        if (fileItems.length) zones.push({ key: 'modal-files', items: fileItems });
+        // File list is vertical
+        [...modal.querySelectorAll('.movie-file-item')]
+          .filter(el => this.visible(el)).forEach((item, i) => {
+            zones.push({ key: `modal-file-${i}`, items: [item] });
+          });
       }
 
       return zones;
@@ -312,7 +321,7 @@
       if (!zones.length) return;
 
       // Prefer content over chrome
-      const preferred = ['hero', 'row-0', 'seasons', 'episodes', 'login', 'modal-files'];
+      const preferred = ['hero', 'row-0', 'seasons', 'episodes', 'login', 'modal-file-0', 'modal-files'];
       const idx = zones.findIndex(z => preferred.includes(z.key));
       this.zoneIndex = idx >= 0 ? idx : 0;
       this.focusCurrentZone(zones);

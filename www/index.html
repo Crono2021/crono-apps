@@ -10,8 +10,8 @@
     <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="./assets/index-DX1sd8ST.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-DL7ieU6I.css">
+  <script type="module" crossorigin src="./assets/index-DG-QzwN9.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index--T_DyWxS.css">
 </head>
 <body>
     <div id="app">
@@ -29,6 +29,21 @@
                         <button id="btn-phone" class="btn-primary">Enviar</button>
                     </div>
                     <p id="phone-error" class="error-text"></p>
+                    <p id="qr-link" class="qr-link" style="display:none">
+                        <a href="#" id="btn-show-qr">📱 Iniciar sesión con QR</a>
+                    </p>
+                </div>
+
+                <div id="step-qr" class="login-step">
+                    <label>Escanea con tu móvil</label>
+                    <p class="hint">Abre Telegram → Ajustes → Dispositivos → Escanear QR</p>
+                    <div id="qr-canvas" class="qr-container"></div>
+                    <div id="qr-loading" class="qr-loading">
+                        <div class="spinner"></div>
+                        <p>Generando código QR...</p>
+                    </div>
+                    <p id="qr-error" class="error-text"></p>
+                    <p class="qr-alt-link"><a href="#" id="btn-use-phone">Usar número de teléfono</a></p>
                 </div>
 
                 <div id="step-otp" class="login-step">
@@ -60,13 +75,17 @@
 
         <!-- CATALOG (SERIES) -->
         <div id="view-catalog" class="view">
-            <header class="topbar">
-                <h1 class="topbar-title">Cine en Castellano HD</h1>
+            <header class="topbar has-search">
+                <div class="topbar-main">
+                    <h1 class="topbar-title">Cine en Castellano HD</h1>
+                    <div class="topbar-actions">
+                        <button id="btn-refresh-catalog" class="btn-icon" title="Refrescar datos">🔄</button>
+                        <button id="btn-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
+                    </div>
+                </div>
                 <div class="topbar-search">
                     <input type="text" id="search-input" placeholder="🔍 Buscar series...">
                 </div>
-                <button id="btn-refresh-catalog" class="btn-icon" title="Refrescar datos" style="margin-right: -5px;">🔄</button>
-                <button id="btn-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
             </header>
 
             <!-- Main nav tabs: Series / Movies -->
@@ -111,13 +130,17 @@
 
         <!-- MOVIES VIEW — Netflix layout -->
         <div id="view-movies" class="view">
-            <header class="topbar">
-                <h1 class="topbar-title">Cine en Castellano HD</h1>
+            <header class="topbar has-search">
+                <div class="topbar-main">
+                    <h1 class="topbar-title">Cine en Castellano HD</h1>
+                    <div class="topbar-actions">
+                        <button id="btn-movies-refresh" class="btn-icon" title="Refrescar datos">🔄</button>
+                        <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
+                    </div>
+                </div>
                 <div class="topbar-search">
                     <input type="text" id="movies-search-input" placeholder="🔍 Buscar películas...">
                 </div>
-                <button id="btn-movies-refresh" class="btn-icon" title="Refrescar datos" style="margin-right: -5px;">🔄</button>
-                <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
             </header>
 
             <!-- Main nav tabs -->
@@ -234,7 +257,8 @@
             <p style="color:#8b8e96;margin-top:8px;">Aceleración por hardware iniciada</p>
         </div>
     </div>
-
+
+    <script src="./qrcode.min.js"></script>
     <script src="./tv-nav.js" defer></script>
 </body>
 </html>

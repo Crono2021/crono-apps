@@ -39,6 +39,7 @@ class TelegramEngine(private val context: Context) {
         object WaitPhone : AuthState()
         object WaitCode : AuthState()
         object WaitPassword : AuthState()
+        data class WaitQrCode(val link: String) : AuthState()
         object Ready : AuthState()
         object LoggingOut : AuthState()
         data class Error(val message: String) : AuthState()
@@ -133,6 +134,9 @@ class TelegramEngine(private val context: Context) {
                 )) {}
             }
             is TdApi.AuthorizationStateWaitPhoneNumber -> _authState.value = AuthState.WaitPhone
+            is TdApi.AuthorizationStateWaitOtherDeviceConfirmation -> {
+                _authState.value = AuthState.WaitQrCode(state.link)
+            }
             is TdApi.AuthorizationStateWaitCode        -> _authState.value = AuthState.WaitCode
             is TdApi.AuthorizationStateWaitPassword    -> _authState.value = AuthState.WaitPassword
             is TdApi.AuthorizationStateReady           -> {
@@ -263,6 +267,12 @@ class TelegramEngine(private val context: Context) {
     }
 
     // ── Auth Operations ───────────────────────────────────────────────────────
+
+    fun requestQrLogin(onError: (String) -> Unit) {
+        client?.send(TdApi.RequestQrCodeAuthentication(LongArray(0))) { result ->
+            if (result is TdApi.Error) onError(result.message)
+        }
+    }
 
     fun sendPhone(phone: String, onError: (String) -> Unit) {
         client?.send(TdApi.SetAuthenticationPhoneNumber(phone, null)) { result ->
