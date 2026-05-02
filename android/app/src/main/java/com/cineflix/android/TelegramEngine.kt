@@ -276,26 +276,27 @@ class TelegramEngine(private val context: Context) {
 
     fun sendPhone(phone: String, onError: (String) -> Unit) {
         if (_authState.value is AuthState.WaitQrCode) {
-            // TDLib cannot transition from WaitOtherDeviceConfirmation to phone auth directly.
-            // We must Close() the client → handleAuthState recreates it → wait for WaitPhone → send number.
-            Log.i(TAG, "Canceling QR login to fallback to phone number...")
+            // TDLib cannot transition from WaitOtherDeviceConfirmation to phone auth.
+            // Close() preserves the DB so the new client goes BACK to QR state.
+            // Destroy() wipes everything — since user isn't logged in yet, nothing is lost.
+            Log.i(TAG, "Destroying TDLib session to cancel QR and switch to phone login...")
             val oldClient = client
             scope.launch {
-                oldClient?.send(TdApi.Close()) {}
-                // Wait until the NEW client reaches WaitPhone (initClient runs inside AuthorizationStateClosed)
-                val reached = withTimeoutOrNull(8000) {
+                oldClient?.send(TdApi.Destroy()) {}
+                // Destroy → AuthorizationStateClosed → client=null + initClient()
+                // New client with empty DB → WaitTdlibParameters → WaitPhoneNumber
+                val reached = withTimeoutOrNull(10000) {
                     authState.first { it is AuthState.WaitPhone }
                 }
                 if (reached != null) {
-                    // Use this.client — it's the FRESH instance created by initClient()
                     val freshClient = client
-                    Log.i(TAG, "New client ready, sending phone number...")
+                    Log.i(TAG, "Fresh client ready after Destroy, sending phone number...")
                     freshClient?.send(TdApi.SetAuthenticationPhoneNumber(phone, null)) { result ->
                         if (result is TdApi.Error) onError(result.message)
                     }
                 } else {
-                    Log.e(TAG, "Timeout waiting for new client after QR cancel")
-                    onError("No se pudo cancelar el inicio de sesión por QR. Reinicia la app.")
+                    Log.e(TAG, "Timeout waiting for fresh client after Destroy")
+                    onError("Error reiniciando sesión. Cierra la app y ábrela de nuevo.")
                 }
             }
         } else {
