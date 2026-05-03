@@ -7,10 +7,10 @@ android {
     compileSdk 34
     defaultConfig {
         applicationId "com.cineflix.android"
-        minSdkVersion 26
+        minSdkVersion 21
         targetSdkVersion 34
-        versionCode 4
-        versionName "1.4"
+        versionCode 5
+        versionName "1.4.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
