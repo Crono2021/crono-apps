@@ -47,7 +47,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: android/app/src/main/jniLibs/armeabi-v7a/libtdjni.so
-          key: tdlib-armeabi-v7a-v2-${{ hashFiles('android/app/src/main/jniLibs/arm64-v8a/libtdjni.so') }}
+          key: tdlib-armeabi-v7a-v3-noasm-${{ hashFiles('android/app/src/main/jniLibs/arm64-v8a/libtdjni.so') }}
 
       - name: Build TDLib for armeabi-v7a (first-time only, ~40 min)
         if: steps.cache-tdlib-armeabi.outputs.cache-hit != 'true'
@@ -90,8 +90,8 @@ jobs:
           tar -xzf /tmp/openssl.tar.gz -C /tmp
           cd /tmp/openssl-OpenSSL_1_1_1w
 
-          ./Configure android-arm no-shared \
-            -U__ANDROID_API__ -D__ANDROID_API__=$API -D__ARM_MAX_ARCH__=8
+          ./Configure android-arm no-shared no-asm \
+            -U__ANDROID_API__ -D__ANDROID_API__=$API
           make depend -s
           make -j$(nproc) -s
 

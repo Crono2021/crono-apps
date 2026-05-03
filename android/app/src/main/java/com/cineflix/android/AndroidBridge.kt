@@ -430,17 +430,25 @@ class AndroidBridge(
     @JavascriptInterface
     fun showKeyboard() {
         runOnUiThread {
-            webView.requestFocus()
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+            try {
+                webView.requestFocus()
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
     @JavascriptInterface
     fun hideKeyboard() {
         runOnUiThread {
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            imm.hideSoftInputFromWindow(webView.windowToken, 0)
+            try {
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                imm.hideSoftInputFromWindow(webView.windowToken, 0)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
