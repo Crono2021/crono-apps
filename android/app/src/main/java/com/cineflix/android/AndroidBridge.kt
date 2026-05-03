@@ -419,10 +419,11 @@ class AndroidBridge(
     fun getPlatform(): String = "android_tv"
 
     @JavascriptInterface
+    @Suppress("DEPRECATION")
     fun getVersionCode(): Long {
         return try {
-            context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
-        } catch (e: Exception) {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionCode.toLong()
+        } catch (e: Throwable) {
             2L
         }
     }

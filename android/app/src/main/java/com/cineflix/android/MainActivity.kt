@@ -69,7 +69,8 @@ class MainActivity : ComponentActivity() {
                     super.onPageFinished(view, url)
                     // Inject TV flag so tv-nav.js can activate D-pad navigation
                     val tvFlag = if (isAndroidTV) "true" else "false"
-                    val vCode = try { packageManager.getPackageInfo(packageName, 0).longVersionCode } catch (e: Exception) { 2L }
+                    @Suppress("DEPRECATION")
+                    val vCode = try { packageManager.getPackageInfo(packageName, 0).versionCode.toLong() } catch (e: Throwable) { 2L }
                     view.evaluateJavascript(
                         "window._cineflixIsTV = $tvFlag; " +
                         "window.__appPlatform = 'android_tv'; " +
