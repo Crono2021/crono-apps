@@ -172,6 +172,7 @@ class PlayerActivity : AppCompatActivity() {
         playerView = PlayerView(this).apply {
             useController = true
             setShowSubtitleButton(true)
+            controllerShowTimeoutMs = 3000 // Ocultar a los 3s
             
             // Habilitar el botón de Pantalla Completa nativo de ExoPlayer
             // Lo usaremos para alternar entre "Ajustar (con bordes)" y "Rellenar/Zoom (sin bordes)"
@@ -248,6 +249,12 @@ class PlayerActivity : AppCompatActivity() {
         exo.playWhenReady = true
 
         exo.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY && exo.playWhenReady) {
+                    playerView?.hideController()
+                }
+            }
+            
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 Log.e(TAG, "ExoPlayer error: ${error.errorCodeName} — ${error.message}", error)
                 Toast.makeText(
