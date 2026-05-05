@@ -167,21 +167,29 @@ class PlayerActivity : AppCompatActivity() {
         Log.i(TAG, "▶ Cast URL: $castStreamUrl")
 
         // 4. Setup UI: FrameLayout with PlayerView + Cast button overlay
-        val rootLayout = FrameLayout(this)
+        val rootLayout = FrameLayout(this).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+        }
 
         playerView = PlayerView(this).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
             useController = true
             setShowSubtitleButton(true)
             controllerShowTimeoutMs = 3000 // Ocultar a los 3s
             
-            // Habilitar el botón de Pantalla Completa nativo de ExoPlayer
-            // Lo usaremos para alternar entre "Ajustar (con bordes)" y "Rellenar/Zoom (sin bordes)"
-            setFullscreenButtonClickListener { isFullScreen ->
-                if (isFullScreen) {
-                    this.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                } else {
-                    this.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
+            // Ciclar modos de aspecto con el botón de Pantalla Completa
+            var currentMode = 0
+            val modes = intArrayOf(
+                androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT,   // 0: Ajustar (con bordes)
+                androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM,  // 1: Zoom (recorta para llenar)
+                androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL   // 2: Rellenar (estira la imagen)
+            )
+            val modeNames = arrayOf("Modo: Ajustar Original", "Modo: Zoom (Sin bordes)", "Modo: Estirar (16:9)")
+            
+            setFullscreenButtonClickListener { _ ->
+                currentMode = (currentMode + 1) % modes.size
+                this.resizeMode = modes[currentMode]
+                Toast.makeText(this@PlayerActivity, modeNames[currentMode], Toast.LENGTH_SHORT).show()
             }
         }
         
