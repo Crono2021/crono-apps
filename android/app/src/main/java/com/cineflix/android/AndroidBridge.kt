@@ -453,5 +453,62 @@ class AndroidBridge(
         }
     }
 
+    @JavascriptInterface
+    fun showNativeSearchDialog(inputId: String, currentText: String) {
+        runOnUiThread {
+            try {
+                val editText = android.widget.EditText(context).apply {
+                    setText(currentText)
+                    setSelection(currentText.length)
+                    isSingleLine = true
+                    imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+                    setTextColor(android.graphics.Color.BLACK)
+                    setHintTextColor(android.graphics.Color.GRAY)
+                }
+                
+                val container = android.widget.FrameLayout(context)
+                val params = android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                val margin = (20 * context.resources.displayMetrics.density).toInt()
+                params.setMargins(margin, margin, margin, margin)
+                editText.layoutParams = params
+                container.addView(editText)
+
+                val dialog = android.app.AlertDialog.Builder(context)
+                    .setTitle("Buscar")
+                    .setView(container)
+                    .setPositiveButton("Buscar") { _, _ ->
+                        val bytes = editText.text.toString().toByteArray(Charsets.UTF_8)
+                        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                        
+                        // Safely decode UTF-8 base64 in Javascript and set the value
+                        val js = "var el = document.getElementById('$inputId'); if(el) { el.value = decodeURIComponent(escape(atob('$b64'))); el.dispatchEvent(new Event('input')); el.blur(); }"
+                        webView.evaluateJavascript(js, null)
+                        
+                        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                        imm.hideSoftInputFromWindow(editText.windowToken, 0)
+                        webView.requestFocus()
+                    }
+                    .setNegativeButton("Cancelar") { d, _ -> 
+                        d.dismiss() 
+                        webView.requestFocus()
+                    }
+                    .create()
+                    
+                dialog.setOnShowListener {
+                    editText.requestFocus()
+                    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                    imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                }
+                
+                dialog.show()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     fun cleanup() { scope.cancel() }
 }
