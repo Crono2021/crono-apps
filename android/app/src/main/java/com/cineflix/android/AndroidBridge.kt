@@ -306,6 +306,31 @@ class AndroidBridge(
         context.startActivity(intent)
     }
 
+    /**
+     * playVideoWithProgress(...)
+     * Similar to playVideo, but passes progress tracking metadata to PlayerActivity.
+     */
+    @JavascriptInterface
+    fun playVideoWithProgress(
+        chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String
+    ) {
+        val intent = Intent(context, PlayerActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
+            putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
+            putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId.toIntOrNull()    ?: 0)
+            putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
+            putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
+            putExtra(PlayerActivity.EXTRA_TITLE,     title)
+            putExtra(PlayerActivity.EXTRA_PHONE,      phone)
+            putExtra(PlayerActivity.EXTRA_CONTENT_ID, contentId)
+            putExtra(PlayerActivity.EXTRA_SEASON,     season)
+            putExtra(PlayerActivity.EXTRA_EPISODE,    episode)
+        }
+        context.startActivity(intent)
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // OTA Update: Download and install new APK
     // ──────────────────────────────────────────────────────────────────────────

@@ -65,6 +65,11 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_TITLE     = "title"
         const val EXTRA_CHAT_ID   = "chat_id"
         const val EXTRA_MSG_ID    = "msg_id"
+        
+        const val EXTRA_PHONE      = "phone"
+        const val EXTRA_CONTENT_ID = "content_id"
+        const val EXTRA_SEASON     = "season"
+        const val EXTRA_EPISODE    = "episode"
 
         private const val TAG = "PlayerActivity"
     }
@@ -106,12 +111,18 @@ class PlayerActivity : AppCompatActivity() {
         val fileSize = intent.getLongExtra(EXTRA_FILE_SIZE, 0L)
         val mimeType = intent.getStringExtra(EXTRA_MIME_TYPE) ?: "video/mp4"
         val title    = intent.getStringExtra(EXTRA_TITLE) ?: ""
+        
+        val phone      = intent.getStringExtra(EXTRA_PHONE) ?: ""
+        val contentId  = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
+        val season     = intent.getStringExtra(EXTRA_SEASON) ?: ""
+        val episode    = intent.getStringExtra(EXTRA_EPISODE) ?: ""
+        
         val engine   = TelegramEngine.getInstance(this)
 
         currentMimeType = mimeType
         currentTitle = title
 
-        Log.i(TAG, "▶ onCreate — fileId=$fileId fileSize=$fileSize mimeType=$mimeType title=$title")
+        Log.i(TAG, "▶ onCreate — fileId=$fileId fileSize=$fileSize mimeType=$mimeType title=$title contentId=$contentId")
 
         if (fileId <= 0) {
             Log.e(TAG, "INVALID fileId=$fileId — aborting")
@@ -276,6 +287,11 @@ class PlayerActivity : AppCompatActivity() {
 
         // 6. Setup Cast session listener
         setupCastSessionListener()
+
+        // 7. Progress tracking
+        if (phone.isNotEmpty() && contentId.isNotEmpty()) {
+            startProgressTracking(phone, contentId, season, episode)
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -457,6 +473,69 @@ class PlayerActivity : AppCompatActivity() {
         if (fileId > 0) {
             val engine = TelegramEngine.getInstance(this)
             engine.cancelAndDeleteVideo(fileId)
+        }
+
+        // Final ping
+        val phone = intent.getStringExtra(EXTRA_PHONE) ?: ""
+        val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
+        val season = intent.getStringExtra(EXTRA_SEASON) ?: ""
+        val episode = intent.getStringExtra(EXTRA_EPISODE) ?: ""
+        if (phone.isNotEmpty() && contentId.isNotEmpty()) {
+            CoroutineScope(Dispatchers.IO).launch {
+                sendProgressPing(phone, contentId, season, episode)
+            }
+        }
+    }
+
+    private var progressTrackingJob: Job? = null
+
+    private fun startProgressTracking(phone: String, contentId: String, season: String, episode: String) {
+        progressTrackingJob = scope.launch {
+            while (isActive) {
+                delay(30_000) // Every 30 seconds
+                sendProgressPing(phone, contentId, season, episode)
+            }
+        }
+    }
+
+    private fun sendProgressPing(phone: String, contentId: String, season: String, episode: String) {
+        val currentPosition = player?.currentPosition ?: return
+        if (currentPosition <= 0) return
+        
+        val progressSeconds = (currentPosition / 1000).toInt()
+        val durationMs = player?.duration ?: 0
+        val isFinished = durationMs > 0 && currentPosition >= (durationMs - 5000)
+
+        try {
+            val url = java.net.URL("https://cineflix-production-19e3.up.railway.app/api/progress")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            conn.setRequestProperty("x-user-phone", phone)
+            conn.doOutput = true
+
+            val json = org.json.JSONObject().apply {
+                put("content_id", contentId)
+                put("season", if (season.isEmpty()) org.json.JSONObject.NULL else season.toIntOrNull() ?: org.json.JSONObject.NULL)
+                put("episode", if (episode.isEmpty()) org.json.JSONObject.NULL else episode.toIntOrNull() ?: org.json.JSONObject.NULL)
+                put("progress_seconds", progressSeconds)
+                put("is_finished", isFinished)
+            }
+
+            conn.outputStream.use { os ->
+                val input = json.toString().toByteArray(Charsets.UTF_8)
+                os.write(input, 0, input.size)
+            }
+
+            val responseCode = conn.responseCode
+            if (responseCode == 200) {
+                Log.d(TAG, "Watch progress synced: $progressSeconds s")
+            } else {
+                Log.e(TAG, "Watch progress sync failed: HTTP $responseCode")
+            }
+            conn.disconnect()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending watch progress: ${e.message}")
         }
     }
 }
