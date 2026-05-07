@@ -441,7 +441,14 @@ class AndroidBridge(
     }
 
     @JavascriptInterface
-    fun getPlatform(): String = "android_tv"
+    fun getPlatform(): String {
+        val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        return if (uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION) {
+            "android_tv"
+        } else {
+            "android"
+        }
+    }
 
     @JavascriptInterface
     @Suppress("DEPRECATION")
