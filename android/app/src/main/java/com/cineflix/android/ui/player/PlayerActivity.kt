@@ -219,34 +219,6 @@ class PlayerActivity : AppCompatActivity() {
         // Cast button overlay (top-right corner)
         setupCastButton(rootLayout)
 
-        val nextEpisodeBtn = android.widget.Button(this).apply {
-            text = "Siguiente capítulo"
-            visibility = View.GONE
-            isFocusable = true
-            isFocusableInTouchMode = false
-            setBackgroundColor(android.graphics.Color.parseColor("#E50914"))
-            setTextColor(android.graphics.Color.WHITE)
-            setPadding(40, 20, 40, 20)
-            setOnClickListener {
-                val prefs = getSharedPreferences("cineflix_prefs", Context.MODE_PRIVATE)
-                prefs.edit()
-                    .putBoolean("NEXT_EPISODE_REQUESTED", true)
-                    .putString("NEXT_EPISODE_CONTENT_ID", contentId)
-                    .putString("NEXT_EPISODE_SEASON", season)
-                    .putString("NEXT_EPISODE_EPISODE", episode)
-                    .apply()
-                finish()
-            }
-        }
-        val btnParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.END
-            setMargins(0, 0, dpToPx(32), dpToPx(100))
-        }
-        rootLayout.addView(nextEpisodeBtn, btnParams)
-
         setContentView(rootLayout)
 
         // 5. Setup ExoPlayer
@@ -350,31 +322,6 @@ class PlayerActivity : AppCompatActivity() {
         // 7. Progress tracking
         if (phone.isNotEmpty() && contentId.isNotEmpty()) {
             startProgressTracking(phone, contentId, season, episode)
-        }
-
-        // 8. Siguiente Capítulo (Next Episode) Button loop
-        scope.launch {
-            while (isActive) {
-                delay(1000)
-                kotlinx.coroutines.withContext(Dispatchers.Main) {
-                    val p = player ?: return@withContext
-                    val current = p.currentPosition
-                    val duration = p.duration
-                    
-                    // Solo mostramos si es serie y quedan 45s o menos
-                    if (duration > 0 && (duration - current) <= 45000 && contentId.startsWith("tv_")) {
-                        if (nextEpisodeBtn.visibility != View.VISIBLE) {
-                            nextEpisodeBtn.visibility = View.VISIBLE
-                            // Only request focus if on TV
-                            if (!window.decorView.isInTouchMode) {
-                                nextEpisodeBtn.requestFocus()
-                            }
-                        }
-                    } else {
-                        nextEpisodeBtn.visibility = View.GONE
-                    }
-                }
-            }
         }
     }
 

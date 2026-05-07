@@ -150,24 +150,6 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         webView.resumeTimers()
         webView.onResume()
-
-        val prefs = getSharedPreferences("cineflix_prefs", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("NEXT_EPISODE_REQUESTED", false)) {
-            val contentId = prefs.getString("NEXT_EPISODE_CONTENT_ID", "") ?: ""
-            val season = prefs.getString("NEXT_EPISODE_SEASON", "") ?: ""
-            val episode = prefs.getString("NEXT_EPISODE_EPISODE", "") ?: ""
-            
-            prefs.edit().remove("NEXT_EPISODE_REQUESTED").apply()
-            
-            if (contentId.isNotEmpty()) {
-                val s = season.ifEmpty { "1" }
-                val e = episode.ifEmpty { "1" }
-                webView.evaluateJavascript(
-                    "window.playNextEpisodeFromNative && window.playNextEpisodeFromNative('$contentId', $s, $e);",
-                    null
-                )
-            }
-        }
     }
 
     override fun onDestroy() {
