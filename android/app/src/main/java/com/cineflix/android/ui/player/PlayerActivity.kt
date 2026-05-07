@@ -267,10 +267,41 @@ class PlayerActivity : AppCompatActivity() {
         exo.prepare()
         exo.playWhenReady = true
 
+        // Track whether we've already resumed to avoid doing it on every state change
+        var hasResumed = false
+        
         exo.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY && exo.playWhenReady) {
                     playerView?.hideController()
+                    
+                    // Resume from saved progress (only once)
+                    if (!hasResumed && phone.isNotEmpty() && contentId.isNotEmpty()) {
+                        hasResumed = true
+                        scope.launch {
+                            try {
+                                val savedProgress = fetchSavedProgress(phone, contentId)
+                                if (savedProgress > 30) { // Only resume if > 30 seconds in
+                                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                        player?.seekTo(savedProgress * 1000L)
+                                        val mins = savedProgress / 60
+                                        val secs = savedProgress % 60
+                                        val timeStr = if (mins >= 60) {
+                                            val h = mins / 60
+                                            val m = mins % 60
+                                            "$h:${m.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}"
+                                        } else {
+                                            "$mins:${secs.toString().padStart(2, '0')}"
+                                        }
+                                        Toast.makeText(this@PlayerActivity, "Reanudado en $timeStr", Toast.LENGTH_SHORT).show()
+                                        Log.i(TAG, "Resumed playback at ${savedProgress}s ($timeStr)")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error fetching saved progress: ${e.message}")
+                            }
+                        }
+                    }
                 }
             }
             
@@ -559,6 +590,39 @@ class PlayerActivity : AppCompatActivity() {
                 conn.disconnect()
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending watch progress: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun fetchSavedProgress(phone: String, contentId: String): Int {
+        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+            try {
+                val url = java.net.URL("https://cineflix-production-19e3.up.railway.app/api/progress")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("x-user-phone", phone)
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+
+                val responseCode = conn.responseCode
+                if (responseCode == 200) {
+                    val body = conn.inputStream.bufferedReader().readText()
+                    val arr = org.json.JSONArray(body)
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        if (obj.getString("content_id") == contentId) {
+                            val progress = obj.optInt("progress", 0)
+                            Log.d(TAG, "Found saved progress for $contentId: ${progress}s")
+                            conn.disconnect()
+                            return@withContext progress
+                        }
+                    }
+                }
+                conn.disconnect()
+                0
+            } catch (e: Exception) {
+                Log.e(TAG, "fetchSavedProgress error: ${e.message}")
+                0
             }
         }
     }
