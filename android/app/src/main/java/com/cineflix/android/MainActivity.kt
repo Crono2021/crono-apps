@@ -42,6 +42,9 @@ class MainActivity : ComponentActivity() {
                 allowContentAccess = true
                 databaseEnabled = true
                 mediaPlaybackRequiresUserGesture = false
+                setSupportZoom(false)
+                builtInZoomControls = false
+                displayZoomControls = false
                 @Suppress("DEPRECATION")
                 allowFileAccessFromFileURLs = true
                 @Suppress("DEPRECATION")
@@ -151,14 +154,16 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("cineflix_prefs", Context.MODE_PRIVATE)
         if (prefs.getBoolean("NEXT_EPISODE_REQUESTED", false)) {
             val contentId = prefs.getString("NEXT_EPISODE_CONTENT_ID", "") ?: ""
-            val season = prefs.getString("NEXT_EPISODE_SEASON", "") ?: "1"
-            val episode = prefs.getString("NEXT_EPISODE_EPISODE", "") ?: "1"
+            val season = prefs.getString("NEXT_EPISODE_SEASON", "") ?: ""
+            val episode = prefs.getString("NEXT_EPISODE_EPISODE", "") ?: ""
             
             prefs.edit().remove("NEXT_EPISODE_REQUESTED").apply()
             
             if (contentId.isNotEmpty()) {
+                val s = season.ifEmpty { "1" }
+                val e = episode.ifEmpty { "1" }
                 webView.evaluateJavascript(
-                    "window.playNextEpisodeFromNative && window.playNextEpisodeFromNative('$contentId', $season, $episode);",
+                    "window.playNextEpisodeFromNative && window.playNextEpisodeFromNative('$contentId', $s, $e);",
                     null
                 )
             }
