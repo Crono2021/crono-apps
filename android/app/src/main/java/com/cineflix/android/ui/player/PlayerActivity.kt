@@ -457,6 +457,19 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun cleanup() {
+        // Save current progress BEFORE releasing the player
+        val phone = intent.getStringExtra(EXTRA_PHONE) ?: ""
+        val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
+        val season = intent.getStringExtra(EXTRA_SEASON) ?: ""
+        val episode = intent.getStringExtra(EXTRA_EPISODE) ?: ""
+        
+        var finalPosition = -1L
+        var finalDuration = 0L
+        try {
+            finalPosition = player?.currentPosition ?: -1L
+            finalDuration = player?.duration ?: 0L
+        } catch (e: Exception) {}
+
         // Remove Cast listener
         try {
             castSessionListener?.let {
@@ -476,13 +489,9 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         // Final ping
-        val phone = intent.getStringExtra(EXTRA_PHONE) ?: ""
-        val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
-        val season = intent.getStringExtra(EXTRA_SEASON) ?: ""
-        val episode = intent.getStringExtra(EXTRA_EPISODE) ?: ""
-        if (phone.isNotEmpty() && contentId.isNotEmpty()) {
+        if (phone.isNotEmpty() && contentId.isNotEmpty() && finalPosition > 0) {
             CoroutineScope(Dispatchers.IO).launch {
-                sendProgressPing(phone, contentId, season, episode)
+                sendProgressPingDirect(phone, contentId, season, episode, finalPosition, finalDuration)
             }
         }
     }
@@ -493,49 +502,64 @@ class PlayerActivity : AppCompatActivity() {
         progressTrackingJob = scope.launch {
             while (isActive) {
                 delay(30_000) // Every 30 seconds
-                sendProgressPing(phone, contentId, season, episode)
+                try {
+                    sendProgressPing(phone, contentId, season, episode)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in progress tracking loop: ${e.message}")
+                }
             }
         }
     }
 
-    private fun sendProgressPing(phone: String, contentId: String, season: String, episode: String) {
-        val currentPosition = player?.currentPosition ?: return
+    private suspend fun sendProgressPing(phone: String, contentId: String, season: String, episode: String) {
+        // ExoPlayer must be accessed from the Main thread
+        val (currentPosition, durationMs) = kotlinx.coroutines.withContext(Dispatchers.Main) {
+            val p = player ?: return@withContext Pair(-1L, 0L)
+            try { Pair(p.currentPosition, p.duration) } catch (e: Exception) { Pair(-1L, 0L) }
+        }
+        
+        sendProgressPingDirect(phone, contentId, season, episode, currentPosition, durationMs)
+    }
+
+    private suspend fun sendProgressPingDirect(phone: String, contentId: String, season: String, episode: String, currentPosition: Long, durationMs: Long) {
         if (currentPosition <= 0) return
         
         val progressSeconds = (currentPosition / 1000).toInt()
-        val durationMs = player?.duration ?: 0
         val isFinished = durationMs > 0 && currentPosition >= (durationMs - 5000)
 
-        try {
-            val url = java.net.URL("https://cineflix-production-19e3.up.railway.app/api/progress")
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-            conn.setRequestProperty("x-user-phone", phone)
-            conn.doOutput = true
+        // The network request must run on the IO thread
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            try {
+                val url = java.net.URL("https://cineflix-production-19e3.up.railway.app/api/progress")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                conn.setRequestProperty("x-user-phone", phone)
+                conn.doOutput = true
 
-            val json = org.json.JSONObject().apply {
-                put("content_id", contentId)
-                put("season", if (season.isEmpty()) org.json.JSONObject.NULL else season.toIntOrNull() ?: org.json.JSONObject.NULL)
-                put("episode", if (episode.isEmpty()) org.json.JSONObject.NULL else episode.toIntOrNull() ?: org.json.JSONObject.NULL)
-                put("progress_seconds", progressSeconds)
-                put("is_finished", isFinished)
-            }
+                val json = org.json.JSONObject().apply {
+                    put("content_id", contentId)
+                    put("season", if (season.isEmpty()) org.json.JSONObject.NULL else season.toIntOrNull() ?: org.json.JSONObject.NULL)
+                    put("episode", if (episode.isEmpty()) org.json.JSONObject.NULL else episode.toIntOrNull() ?: org.json.JSONObject.NULL)
+                    put("progress_seconds", progressSeconds)
+                    put("is_finished", isFinished)
+                }
 
-            conn.outputStream.use { os ->
-                val input = json.toString().toByteArray(Charsets.UTF_8)
-                os.write(input, 0, input.size)
-            }
+                conn.outputStream.use { os ->
+                    val input = json.toString().toByteArray(Charsets.UTF_8)
+                    os.write(input, 0, input.size)
+                }
 
-            val responseCode = conn.responseCode
-            if (responseCode == 200) {
-                Log.d(TAG, "Watch progress synced: $progressSeconds s")
-            } else {
-                Log.e(TAG, "Watch progress sync failed: HTTP $responseCode")
+                val responseCode = conn.responseCode
+                if (responseCode == 200) {
+                    Log.d(TAG, "Watch progress synced: $progressSeconds s")
+                } else {
+                    Log.e(TAG, "Watch progress sync failed: HTTP $responseCode")
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending watch progress: ${e.message}")
             }
-            conn.disconnect()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error sending watch progress: ${e.message}")
         }
     }
 }
