@@ -308,7 +308,7 @@ class PlayerActivity : AppCompatActivity() {
                         hasResumed = true
                         scope.launch {
                             try {
-                                val savedProgress = fetchSavedProgress(phone, contentId)
+                                val savedProgress = fetchSavedProgress(phone, contentId, season, episode)
                                 if (savedProgress > 30) { // Only resume if > 30 seconds in
                                     kotlinx.coroutines.withContext(Dispatchers.Main) {
                                         player?.seekTo(savedProgress * 1000L)
@@ -647,7 +647,7 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun fetchSavedProgress(phone: String, contentId: String): Int {
+    private suspend fun fetchSavedProgress(phone: String, contentId: String, season: String, episode: String): Int {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
                 val url = java.net.URL("https://cineflix-production-19e3.up.railway.app/api/progress")
@@ -663,9 +663,14 @@ class PlayerActivity : AppCompatActivity() {
                     val arr = org.json.JSONArray(body)
                     for (i in 0 until arr.length()) {
                         val obj = arr.getJSONObject(i)
-                        if (obj.getString("content_id") == contentId) {
+                        
+                        val matchesContent = obj.getString("content_id") == contentId
+                        val objSeason = if (obj.isNull("season")) "" else obj.getInt("season").toString()
+                        val objEpisode = if (obj.isNull("episode")) "" else obj.getInt("episode").toString()
+                        
+                        if (matchesContent && objSeason == season && objEpisode == episode) {
                             val progress = obj.optInt("progress", 0)
-                            Log.d(TAG, "Found saved progress for $contentId: ${progress}s")
+                            Log.d(TAG, "Found saved progress for $contentId s$season e$episode: ${progress}s")
                             conn.disconnect()
                             return@withContext progress
                         }
