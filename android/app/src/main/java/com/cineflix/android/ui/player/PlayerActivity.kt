@@ -541,7 +541,7 @@ class PlayerActivity : AppCompatActivity() {
                     put("content_id", contentId)
                     put("season", if (season.isEmpty()) org.json.JSONObject.NULL else season.toIntOrNull() ?: org.json.JSONObject.NULL)
                     put("episode", if (episode.isEmpty()) org.json.JSONObject.NULL else episode.toIntOrNull() ?: org.json.JSONObject.NULL)
-                    put("progress", progressSeconds)
+                    put("progress_seconds", progressSeconds)
                     put("is_finished", isFinished)
                 }
 
