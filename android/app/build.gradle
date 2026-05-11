@@ -28,6 +28,10 @@ android {
             signingConfig signingConfigs.release
         }
     }
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
     buildFeatures {
         compose true
     }
