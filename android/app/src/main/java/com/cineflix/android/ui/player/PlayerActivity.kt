@@ -399,17 +399,6 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         val audioGroup = android.widget.RadioGroup(this)
         val audioTracks = mp.audioTracks
         val currentAudioId = mp.audioTrack
-        
-        // Disable audio option
-        val rbAudioDisable = android.widget.RadioButton(this).apply {
-            text = "Disable"
-            setTextColor(android.graphics.Color.WHITE)
-            buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
-            isChecked = currentAudioId == -1
-            setPadding(0, dpToPx(8), 0, dpToPx(8))
-            setOnClickListener { mp.audioTrack = -1; bottomSheetDialog.dismiss() }
-        }
-        audioGroup.addView(rbAudioDisable)
 
         if (audioTracks != null) {
             for (track in audioTracks) {
