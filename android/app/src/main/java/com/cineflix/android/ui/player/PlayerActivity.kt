@@ -274,7 +274,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
                     }
                     runOnUiThread { 
                         loadingSpinner.visibility = View.GONE
-                        btnPlayPause.setImageResource(R.drawable.ic_pause) 
+                        btnPlayPause.setImageResource(android.R.drawable.ic_media_pause) 
                     }
                 }
                 MediaPlayer.Event.Paused -> runOnUiThread {
