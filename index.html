@@ -9,19 +9,36 @@
     <title>Cine en Castellano HD</title>
     <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/src/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script type="module" crossorigin src="./assets/index-B5l4Hx3h.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index--T_DyWxS.css">
 </head>
 <body>
     <div id="app">
         <!-- LOGIN -->
         <div id="view-login" class="view active">
             <div class="login-container">
-                <div class="login-logo">🎥</div>
                 <h1 class="login-title">Cine en Castellano HD</h1>
                 <p class="login-subtitle">Tu videoclub en streaming (v2.1)</p>
 
-                <div id="step-phone" class="login-step active">
+                <!-- QR Section (Visible only on TV) -->
+                <div id="qr-section" style="display:none; margin-top: 24px; text-align: center;">
+                    <div id="qr-canvas" class="qr-container" style="margin: 0 auto; width: 220px; height: 220px; padding: 12px;"></div>
+                    <div id="qr-loading" class="qr-loading" style="padding: 40px 0;">
+                        <div class="spinner"></div>
+                        <p style="font-size: 0.85rem; color: #a1a1aa;">Generando código QR...</p>
+                    </div>
+                    <p id="qr-error" class="error-text"></p>
+                    <p class="hint" style="margin-top: 12px; font-size: 0.85rem;">
+                        <strong>Abre Telegram en tu móvil</strong><br>
+                        Ajustes → Dispositivos → Escanear QR
+                    </p>
+                    <div style="margin: 24px 0 12px; border-top: 1px solid rgba(255,255,255,0.1); position: relative;">
+                        <span style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #1a1a2e; padding: 0 12px; font-size: 0.8rem; color: #71717a; border-radius: 4px;">O USA TU NÚMERO</span>
+                    </div>
+                </div>
+
+                <div id="step-phone" class="login-step active" style="margin-top: 16px;">
                     <label>Número de teléfono</label>
                     <div class="input-row">
                         <input type="tel" id="input-phone" placeholder="+34 600 000 000" value="+34" autocomplete="off">
@@ -59,12 +76,23 @@
 
         <!-- CATALOG (SERIES) -->
         <div id="view-catalog" class="view">
-            <header class="topbar">
-                <h1 class="topbar-title">Cine en Castellano HD</h1>
+            <header class="topbar has-search">
+                <div class="topbar-main">
+                    <h1 class="topbar-title">Cine en Castellano HD</h1>
+                    <div class="topbar-actions">
+                        <button id="btn-refresh-catalog" class="btn-icon" title="Refrescar datos">🔄</button>
+                        <button id="btn-logout" class="btn-icon" title="Cerrar sesión">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                                <polyline points="16 17 21 12 16 7"></polyline>
+                                <line x1="21" y1="12" x2="9" y2="12"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
                 <div class="topbar-search">
                     <input type="text" id="search-input" placeholder="🔍 Buscar series...">
                 </div>
-                <button id="btn-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
             </header>
 
             <!-- Main nav tabs: Series / Movies -->
@@ -109,12 +137,23 @@
 
         <!-- MOVIES VIEW — Netflix layout -->
         <div id="view-movies" class="view">
-            <header class="topbar">
-                <h1 class="topbar-title">Cine en Castellano HD</h1>
+            <header class="topbar has-search">
+                <div class="topbar-main">
+                    <h1 class="topbar-title">Cine en Castellano HD</h1>
+                    <div class="topbar-actions">
+                        <button id="btn-movies-refresh" class="btn-icon" title="Refrescar datos">🔄</button>
+                        <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                                <polyline points="16 17 21 12 16 7"></polyline>
+                                <line x1="21" y1="12" x2="9" y2="12"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
                 <div class="topbar-search">
                     <input type="text" id="movies-search-input" placeholder="🔍 Buscar películas...">
                 </div>
-                <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
             </header>
 
             <!-- Main nav tabs -->
@@ -232,7 +271,7 @@
         </div>
     </div>
 
-    <script type="module" src="/src/main.js"></script>
-    <script src="/tv-nav.js" defer></script>
+    <script src="./qrcode.min.js"></script>
+    <script src="./tv-nav.js" defer></script>
 </body>
 </html>
