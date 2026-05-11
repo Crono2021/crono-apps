@@ -1,25 +1,33 @@
 package com.cineflix.android.ui.player
 
-import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
-import android.view.Gravity
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.SurfaceView
 import android.view.View
+import android.view.WindowManager
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.SeekBar
+import android.widget.TextView
 import android.widget.Toast
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
-import com.cineflix.android.TelegramEngine
 import androidx.appcompat.app.AppCompatActivity
-
-import kotlinx.coroutines.*
-
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import com.cineflix.android.TelegramEngine
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
@@ -29,24 +37,44 @@ import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.SessionManager
 import com.google.android.gms.cast.framework.SessionManagerListener
 import androidx.mediarouter.app.MediaRouteButton
+import kotlinx.coroutines.*
+import org.videolan.libvlc.LibVLC
+import org.videolan.libvlc.Media
+import org.videolan.libvlc.MediaPlayer
+import org.videolan.libvlc.interfaces.IVLCVout
+import com.cineflix.android.R
 
-/**
- * Cineflix ExoPlayer fullscreen activity with Chromecast support.
- *
- * When the user taps the Cast button:
- *   1. ExoPlayer pauses
- *   2. The stream URL (using WiFi IP) is sent to the Chromecast
- *   3. The StreamProxyServer stays alive — Chromecast pulls bytes from it
- *
- * When the user disconnects Cast:
- *   1. ExoPlayer resumes playback
- */
-class PlayerActivity : AppCompatActivity() {
+class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
-    private var player: ExoPlayer? = null
-    private var playerView: PlayerView? = null
+    private var libVLC: LibVLC? = null
+    private var mediaPlayer: MediaPlayer? = null
     private var proxyServer: StreamProxyServer? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // UI
+    private lateinit var surfaceView: SurfaceView
+    private lateinit var tvVideoTitle: TextView
+    private lateinit var tvTimeCurrent: TextView
+    private lateinit var tvTimeDuration: TextView
+    private lateinit var seekBar: SeekBar
+    private lateinit var bottomBar: LinearLayout
+    private lateinit var centerControls: LinearLayout
+    private lateinit var btnPlayPause: ImageButton
+    private lateinit var btnRewind: ImageButton
+    private lateinit var btnForward: ImageButton
+    private lateinit var btnResize: Button
+    private lateinit var btnAudioTrack: Button
+    private lateinit var btnSubtitle: Button
+    private lateinit var loadingSpinner: ProgressBar
+    private lateinit var castContainer: FrameLayout
+
+    private val titleHandler = Handler(Looper.getMainLooper())
+    private val controlsHandler = Handler(Looper.getMainLooper())
+    private val seekBarHandler = Handler(Looper.getMainLooper())
+
+    private var controlsVisible = true
+    private var isSeeking = false
+    private var currentScaleIndex = 0
 
     // Cast
     private var castContext: CastContext? = null
@@ -74,38 +102,26 @@ class PlayerActivity : AppCompatActivity() {
         private const val TAG = "PlayerActivity"
     }
 
-    fun start(
-        context: Context,
-        fileId: Int,
-        chatId: Long,
-        msgId: Long,
-        fileSize: Long   = 0L,
-        mimeType: String = "video/mp4",
-        title: String,
-    ) {
-        context.startActivity(Intent(context, PlayerActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            putExtra(EXTRA_FILE_ID,   fileId)
-            putExtra(EXTRA_CHAT_ID,   chatId)
-            putExtra(EXTRA_MSG_ID,    msgId)
-            putExtra(EXTRA_FILE_SIZE, fileSize)
-            putExtra(EXTRA_MIME_TYPE, mimeType)
-            putExtra(EXTRA_TITLE,     title)
-        })
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Fullscreen immersive
-        window.decorView.systemUiVisibility = (
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-            or View.SYSTEM_UI_FLAG_FULLSCREEN
-            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-        )
+        // Pantalla completa extrema
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        window.addFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION)
+        window.addFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
 
-        // Keep screen on during playback
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        hideSystemUI()
+
+        setContentView(R.layout.activity_player)
+        
+        bindViews()
+        setupListeners()
 
         val fileId   = intent.getIntExtra(EXTRA_FILE_ID, -1)
         val fileSize = intent.getLongExtra(EXTRA_FILE_SIZE, 0L)
@@ -125,23 +141,14 @@ class PlayerActivity : AppCompatActivity() {
         Log.i(TAG, "▶ onCreate — fileId=$fileId fileSize=$fileSize mimeType=$mimeType title=$title contentId=$contentId")
 
         if (fileId <= 0) {
-            Log.e(TAG, "INVALID fileId=$fileId — aborting")
             Toast.makeText(this, "Error: fileId inválido ($fileId)", Toast.LENGTH_LONG).show()
             finish()
             return
         }
 
-        // If fileSize is 0, try to get it from TDLib cache
         var effectiveFileSize = fileSize
         if (effectiveFileSize <= 0) {
-            for ((_, pair) in engine.fileIdCache) {
-                if (pair.first == fileId) {
-                    Log.w(TAG, "fileSize was 0, found fileId=$fileId in cache but no size info available")
-                    break
-                }
-            }
             effectiveFileSize = 2_000_000_000L
-            Log.w(TAG, "Using default fileSize=$effectiveFileSize")
         }
 
         // 1. Start StreamProxyServer
@@ -159,12 +166,8 @@ class PlayerActivity : AppCompatActivity() {
         // 2. Register file with TDLib
         scope.launch {
             try {
-                Log.i(TAG, "▶ Registering fileId=$fileId with TDLib (disk-free mode)...")
                 engine.startDownloadReturnPath(fileId, priority = 32)
-                // Kick off aggressive pre-fetch immediately — don't wait for ExoPlayer's first request.
-                // This gives TDLib a head start on Fire Stick and other slow devices.
                 engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
-                Log.i(TAG, "▶ TDLib registration complete + 20MB pre-hint sent for fileId=$fileId")
             } catch (e: Exception) {
                 Log.e(TAG, "▶ TDLib registration error: ${e.message}", e)
             }
@@ -174,193 +177,383 @@ class PlayerActivity : AppCompatActivity() {
         val localStreamUrl = "http://127.0.0.1:$port/stream"
         val wifiIp = getWifiIpAddress()
         castStreamUrl = if (wifiIp != null) "http://$wifiIp:$port/stream" else null
-        Log.i(TAG, "▶ ExoPlayer URL: $localStreamUrl")
-        Log.i(TAG, "▶ Cast URL: $castStreamUrl")
-
-        // 4. Setup UI: FrameLayout with PlayerView + Cast button overlay
-        val rootLayout = FrameLayout(this).apply {
-            setBackgroundColor(android.graphics.Color.BLACK)
-        }
-
-        playerView = PlayerView(this).apply {
-            setBackgroundColor(android.graphics.Color.BLACK)
-            useController = true
-            setShowSubtitleButton(true)
-            controllerShowTimeoutMs = 3000 // Ocultar a los 3s
-            
-            // Ciclar modos de aspecto con el botón de Pantalla Completa
-            var currentMode = 0
-            val modes = intArrayOf(
-                androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT,   // 0: Ajustar (con bordes)
-                androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM,  // 1: Zoom (recorta para llenar)
-                androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL   // 2: Rellenar (estira la imagen)
-            )
-            val modeNames = arrayOf("Modo: Ajustar Original", "Modo: Zoom (Sin bordes)", "Modo: Estirar (16:9)")
-            
-            setFullscreenButtonClickListener { _ ->
-                currentMode = (currentMode + 1) % modes.size
-                this.resizeMode = modes[currentMode]
-                Toast.makeText(this@PlayerActivity, modeNames[currentMode], Toast.LENGTH_SHORT).show()
-            }
-        }
         
-        // Sincronizar visibilidad de controles con el botón de Chromecast
-        playerView?.setControllerVisibilityListener(
-            androidx.media3.ui.PlayerView.ControllerVisibilityListener { visibility ->
-                castButton?.visibility = visibility
-            }
-        )
+        setupCastButton()
 
-        rootLayout.addView(playerView, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
+        // 4. Iniciar VLC
+        initVLC()
+        playUrl(localStreamUrl)
 
-        // Cast button overlay (top-right corner)
-        setupCastButton(rootLayout)
-
-        setContentView(rootLayout)
-
-        // 5. Setup ExoPlayer
-        // Adaptive buffering: fast start (2s) for good connections,
-        // conservative rebuffer (15s) for slow ones. 120s max ahead buffer.
-        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-            .setAllocator(androidx.media3.exoplayer.upstream.DefaultAllocator(true, androidx.media3.common.C.DEFAULT_BUFFER_SEGMENT_SIZE))
-            .setBufferDurationsMs(
-                30_000,   // minBufferMs: keep at least 30s in RAM
-                120_000,  // maxBufferMs: prebuffer up to 2 min ahead if connection allows
-                2_000,    // bufferForPlaybackMs: start playing after just 2s (fast start)
-                15_000    // bufferForPlaybackAfterRebufferMs: after a stall, wait 15s before resuming
-            )
-            .setPrioritizeTimeOverSizeThresholds(true)
-            .build()
-
-        val trackSelector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(this)
-        trackSelector.parameters = trackSelector.buildUponParameters()
-            .setSelectUndeterminedTextLanguage(false)
-            .build()
-
-        val dataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(60000)
-            .setReadTimeoutMs(60000)
-            .setAllowCrossProtocolRedirects(true)
-
-        val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
-
-        // PREFER: use FFmpeg software decoding first — avoids MediaCodecVideoRenderer
-        // crashes on devices that claim HEVC/AV1 support but fail mid-decode
-        val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(this)
-            .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-
-        val exo = ExoPlayer.Builder(this)
-            .setRenderersFactory(renderersFactory)
-            .setMediaSourceFactory(mediaSourceFactory)
-            .setLoadControl(loadControl)
-            .setTrackSelector(trackSelector)
-            .build()
-
-        playerView?.player = exo
-        player = exo
-
-        val mediaItem = MediaItem.fromUri(Uri.parse(localStreamUrl))
-        exo.setMediaItem(mediaItem)
-        exo.prepare()
-        exo.playWhenReady = true
-
-        // Track whether we've already resumed to avoid doing it on every state change
-        var hasResumed = false
-        
-        exo.addListener(object : Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY && exo.playWhenReady) {
-                    playerView?.hideController()
-                    
-                    // Resume from saved progress (only once)
-                    if (!hasResumed && phone.isNotEmpty() && contentId.isNotEmpty()) {
-                        hasResumed = true
-                        scope.launch {
-                            try {
-                                val savedProgress = fetchSavedProgress(phone, contentId, season, episode)
-                                if (savedProgress > 30) { // Only resume if > 30 seconds in
-                                    kotlinx.coroutines.withContext(Dispatchers.Main) {
-                                        player?.seekTo(savedProgress * 1000L)
-                                        val mins = savedProgress / 60
-                                        val secs = savedProgress % 60
-                                        val timeStr = if (mins >= 60) {
-                                            val h = mins / 60
-                                            val m = mins % 60
-                                            "$h:${m.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}"
-                                        } else {
-                                            "$mins:${secs.toString().padStart(2, '0')}"
-                                        }
-                                        Toast.makeText(this@PlayerActivity, "Reanudado en $timeStr", Toast.LENGTH_SHORT).show()
-                                        Log.i(TAG, "Resumed playback at ${savedProgress}s ($timeStr)")
-                                    }
+        // 5. Fetch saved progress y trackear
+        if (phone.isNotEmpty() && contentId.isNotEmpty()) {
+            scope.launch {
+                try {
+                    val savedProgress = fetchSavedProgress(phone, contentId, season, episode)
+                    if (savedProgress > 30) {
+                        withContext(Dispatchers.Main) {
+                            // Delay to ensure buffer starts before seek
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                if (mediaPlayer != null) {
+                                    mediaPlayer?.time = savedProgress * 1000L
+                                    Toast.makeText(this@PlayerActivity, "Reanudado en ${savedProgress/60}m", Toast.LENGTH_SHORT).show()
                                 }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error fetching saved progress: ${e.message}")
-                            }
+                            }, 2500)
                         }
                     }
-                }
+                } catch (e: Exception) {}
             }
-            
-            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                Log.e(TAG, "ExoPlayer error: ${error.errorCodeName} — ${error.message}", error)
-                Toast.makeText(
-                    this@PlayerActivity,
-                    "Error de reproducción: ${error.message}",
-                    Toast.LENGTH_LONG
-                ).show()
-                finish()
+            startProgressTracking(phone, contentId, season, episode)
+        }
+
+        showTitle(title)
+        scheduleHideControls()
+        setupCastSessionListener()
+    }
+
+    private fun bindViews() {
+        surfaceView = findViewById(R.id.video_surface)
+        tvVideoTitle = findViewById(R.id.tv_video_title)
+        tvTimeCurrent = findViewById(R.id.tv_time_current)
+        tvTimeDuration = findViewById(R.id.tv_time_duration)
+        seekBar = findViewById(R.id.seek_bar)
+        bottomBar = findViewById(R.id.bottom_bar)
+        centerControls = findViewById(R.id.center_controls)
+        btnPlayPause = findViewById(R.id.btn_play_pause)
+        btnRewind = findViewById(R.id.btn_rewind)
+        btnForward = findViewById(R.id.btn_forward)
+        btnResize = findViewById(R.id.btn_resize)
+        btnAudioTrack = findViewById(R.id.btn_audio_track)
+        btnSubtitle = findViewById(R.id.btn_subtitle)
+        loadingSpinner = findViewById(R.id.loading_spinner)
+        castContainer = findViewById(R.id.cast_button_container)
+    }
+
+    private fun setupListeners() {
+        btnPlayPause.setOnClickListener { togglePlayPause() }
+        btnRewind.setOnClickListener { seekRelative(-10000); showControls() }
+        btnForward.setOnClickListener { seekRelative(10000); showControls() }
+        btnResize.setOnClickListener { toggleResizeMode() }
+        btnAudioTrack.setOnClickListener { showAudioTrackSelector() }
+        btnSubtitle.setOnClickListener { showSubtitleSelector() }
+
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
+                if (fromUser && mediaPlayer != null) mediaPlayer?.position = progress / 1000f
             }
+            override fun onStartTrackingTouch(bar: SeekBar) { isSeeking = true }
+            override fun onStopTrackingTouch(bar: SeekBar) { isSeeking = false }
         })
 
-        // 6. Setup Cast session listener
-        setupCastSessionListener()
+        surfaceView.setOnClickListener { toggleControls() }
+    }
 
-        // 7. Progress tracking
-        if (phone.isNotEmpty() && contentId.isNotEmpty()) {
-            startProgressTracking(phone, contentId, season, episode)
+    private fun initVLC() {
+        val options = arrayListOf(
+            "--aout=opensles",
+            "--audio-time-stretch",
+            "-vvv",
+            "--avcodec-skiploopfilter=1",
+            "--avcodec-skip-frame=0",
+            "--avcodec-skip-idct=0",
+            "--network-caching=5000" // Aumentado a 5s para Telegram
+        )
+
+        libVLC = LibVLC(this, options)
+        mediaPlayer = MediaPlayer(libVLC)
+
+        val vlcVout = mediaPlayer?.vlcVout
+        vlcVout?.setVideoView(surfaceView)
+        vlcVout?.addCallback(this)
+        vlcVout?.attachViews()
+
+        mediaPlayer?.setEventListener { event ->
+            when (event.type) {
+                MediaPlayer.Event.Playing -> runOnUiThread {
+                    loadingSpinner.visibility = View.GONE
+                    btnPlayPause.setImageResource(android.R.drawable.ic_media_pause)
+                }
+                MediaPlayer.Event.Paused -> runOnUiThread {
+                    btnPlayPause.setImageResource(android.R.drawable.ic_media_play)
+                }
+                MediaPlayer.Event.Buffering -> {
+                    val buf = event.buffering
+                    runOnUiThread { loadingSpinner.visibility = if (buf < 100f) View.VISIBLE else View.GONE }
+                }
+                MediaPlayer.Event.EndReached -> runOnUiThread { finish() }
+                MediaPlayer.Event.EncounteredError -> runOnUiThread {
+                    Toast.makeText(this, "Error de reproducción", Toast.LENGTH_SHORT).show()
+                    finish()
+                }
+                MediaPlayer.Event.Vout -> runOnUiThread { updateVideoSurface() }
+                MediaPlayer.Event.TimeChanged, MediaPlayer.Event.LengthChanged -> runOnUiThread { updateSeekBar() }
+            }
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Cast Integration
-    // ─────────────────────────────────────────────────────────────────────
+    private fun playUrl(url: String) {
+        loadingSpinner.visibility = View.VISIBLE
+        val media = Media(libVLC, Uri.parse(url))
+        media.setHWDecoderEnabled(true, false)
+        media.addOption(":network-caching=5000")
+        media.addOption(":clock-jitter=0")
+        media.addOption(":clock-synchro=0")
+        mediaPlayer?.media = media
+        media.release()
+        mediaPlayer?.play()
+        
+        startSeekBarUpdater()
+    }
 
-    private fun setupCastButton(rootLayout: FrameLayout) {
+    // --- VLC Size/Aspect Ratio ---
+    private fun updateVideoSurface() {
+        val mp = mediaPlayer ?: return
+        val vlcVout = mp.vlcVout
+        var sw = surfaceView.width
+        var sh = surfaceView.height
+        if (sw == 0 || sh == 0) {
+            sw = window.decorView.width
+            sh = window.decorView.height
+        }
+        vlcVout.setWindowSize(sw, sh)
+        mp.aspectRatio = null
+        mp.scale = 0f
+    }
+
+    private fun toggleResizeMode() {
+        val mp = mediaPlayer ?: return
+        val dm = android.util.DisplayMetrics()
+        windowManager.defaultDisplay.getRealMetrics(dm)
+        val sw = dm.widthPixels
+        val sh = dm.heightPixels
+        if (sw == 0 || sh == 0) return
+
+        currentScaleIndex = (currentScaleIndex + 1) % 4
+        var modeName = ""
+
+        when (currentScaleIndex) {
+            0 -> {
+                mp.aspectRatio = null
+                mp.scale = 0f
+                modeName = "Ajustar (Fit)"
+            }
+            1 -> {
+                mp.scale = 0f
+                mp.aspectRatio = "$sw:$sh"
+                modeName = "Llenar (Fill)"
+            }
+            2 -> {
+                mp.aspectRatio = null
+                mp.scale = 2.0f
+                modeName = "Zoom (Cortar bordes)"
+            }
+            3 -> {
+                mp.aspectRatio = "16:9"
+                mp.scale = 0f
+                modeName = "16:9 Forzado"
+            }
+        }
+        Toast.makeText(this, modeName, Toast.LENGTH_SHORT).show()
+        showControls()
+    }
+
+    // --- Audio/Subtitle Track Selectors ---
+    private fun showAudioTrackSelector() {
+        val mp = mediaPlayer ?: return
+        val tracks = mp.audioTracks ?: return
+        if (tracks.isEmpty()) return
+
+        val currentId = mp.audioTrack
+        val names = tracks.map { it.name }.toTypedArray()
+        val checkedIndex = tracks.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog)
+            .setTitle("Pista de Audio")
+            .setSingleChoiceItems(names, checkedIndex) { dialog, which ->
+                mp.audioTrack = tracks[which].id
+                dialog.dismiss()
+            }.setNegativeButton("Cerrar", null).show()
+    }
+
+    private fun showSubtitleSelector() {
+        val mp = mediaPlayer ?: return
+        val tracks = mp.spuTracks
+        if (tracks == null || tracks.isEmpty()) {
+            Toast.makeText(this, "No hay subtítulos disponibles", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val currentId = mp.spuTrack
+        val names = Array(tracks.size + 1) { "" }
+        names[0] = "Desactivar subtítulos"
+        var checkedIndex = 0
+        for (i in tracks.indices) {
+            names[i + 1] = tracks[i].name
+            if (tracks[i].id == currentId) checkedIndex = i + 1
+        }
+
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog)
+            .setTitle("Subtítulos")
+            .setSingleChoiceItems(names, checkedIndex) { dialog, which ->
+                if (which == 0) mp.spuTrack = -1
+                else mp.spuTrack = tracks[which - 1].id
+                dialog.dismiss()
+            }.setNegativeButton("Cerrar", null).show()
+    }
+
+    // --- UI Controls ---
+    private fun togglePlayPause() {
+        val mp = mediaPlayer ?: return
+        if (mp.isPlaying) mp.pause() else mp.play()
+        showControls()
+    }
+
+    private fun toggleControls() {
+        if (controlsVisible) hideControls() else showControls()
+    }
+
+    private fun showControls() {
+        bottomBar.visibility = View.VISIBLE
+        bottomBar.animate().alpha(1f).setDuration(200).start()
+        centerControls.visibility = View.VISIBLE
+        centerControls.animate().alpha(1f).setDuration(200).start()
+        tvVideoTitle.visibility = View.VISIBLE
+        tvVideoTitle.animate().alpha(1f).setDuration(200).start()
+        castContainer.visibility = View.VISIBLE
+        castContainer.animate().alpha(1f).setDuration(200).start()
+        controlsVisible = true
+        scheduleHideControls()
+    }
+
+    private fun hideControls() {
+        bottomBar.animate().alpha(0f).setDuration(300).withEndAction { bottomBar.visibility = View.GONE }.start()
+        centerControls.animate().alpha(0f).setDuration(300).withEndAction { centerControls.visibility = View.GONE }.start()
+        tvVideoTitle.animate().alpha(0f).setDuration(300).withEndAction { tvVideoTitle.visibility = View.GONE }.start()
+        castContainer.animate().alpha(0f).setDuration(300).withEndAction { castContainer.visibility = View.GONE }.start()
+        controlsVisible = false
+    }
+
+    private fun scheduleHideControls() {
+        controlsHandler.removeCallbacksAndMessages(null)
+        controlsHandler.postDelayed({
+            if (mediaPlayer?.isPlaying == true) hideControls()
+        }, 4000)
+    }
+
+    private fun updateSeekBar() {
+        if (mediaPlayer == null || isSeeking) return
+        val time = mediaPlayer!!.time
+        val duration = mediaPlayer!!.length
+        if (duration > 0) {
+            seekBar.max = 1000
+            seekBar.progress = (mediaPlayer!!.position * 1000).toInt()
+            tvTimeCurrent.text = formatTime(time)
+            tvTimeDuration.text = formatTime(duration)
+        }
+    }
+
+    private fun startSeekBarUpdater() {
+        seekBarHandler.removeCallbacksAndMessages(null)
+        val updater = object : Runnable {
+            override fun run() {
+                updateSeekBar()
+                seekBarHandler.postDelayed(this, 1000)
+            }
+        }
+        seekBarHandler.postDelayed(updater, 1000)
+    }
+
+    private fun formatTime(ms: Long): String {
+        val totalSec = ms / 1000
+        val hours = totalSec / 3600
+        val minutes = (totalSec % 3600) / 60
+        val seconds = totalSec % 60
+        return if (hours > 0) String.format("%d:%02d:%02d", hours, minutes, seconds)
+        else String.format("%02d:%02d", minutes, seconds)
+    }
+
+    private fun showTitle(title: String) {
+        if (title.isNotEmpty()) {
+            tvVideoTitle.text = title
+            tvVideoTitle.alpha = 0f
+            tvVideoTitle.visibility = View.VISIBLE
+            tvVideoTitle.animate().alpha(1f).setDuration(400).start()
+        }
+    }
+
+    private fun seekRelative(deltaMs: Long) {
+        val mp = mediaPlayer ?: return
+        val current = mp.time
+        val duration = mp.length
+        if (duration <= 0) return
+        val target = Math.max(0, Math.min(current + deltaMs, duration))
+        mp.time = target
+        updateSeekBar()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val mp = mediaPlayer ?: return super.onKeyDown(keyCode, event)
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                togglePlayPause()
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                seekRelative(10000)
+                showControls()
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                seekRelative(-10000)
+                showControls()
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_UP -> {
+                seekRelative(60000)
+                showControls()
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                seekRelative(-60000)
+                showControls()
+                return true
+            }
+            KeyEvent.KEYCODE_BACK -> {
+                if (controlsVisible) {
+                    hideControls()
+                    return true
+                }
+                finish()
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_DOWN) {
+            toggleControls()
+            return true
+        }
+        return super.onTouchEvent(event)
+    }
+
+    // --- Cast ---
+    private fun setupCastButton() {
         try {
             castContext = CastContext.getSharedInstance(this)
             sessionManager = castContext?.sessionManager
 
-            // ContextThemeWrapper ensures the button gets the AppCompat styling it needs
             val btn = MediaRouteButton(this)
             castButton = btn
-            
-            // Force the button to always show (disabled/grayed if no devices found)
             btn.setAlwaysVisible(true)
             
-            // Set the cast icon color to white so it's visible on the dark video layout
             val castDrawable = androidx.core.content.ContextCompat.getDrawable(this, androidx.mediarouter.R.drawable.mr_button_light)
             castDrawable?.setTint(android.graphics.Color.WHITE)
             btn.setRemoteIndicatorDrawable(castDrawable)
             CastButtonFactory.setUpMediaRouteButton(this, btn)
 
-            val params = FrameLayout.LayoutParams(
-                dpToPx(48),
-                dpToPx(48)
-            ).apply {
-                gravity = Gravity.TOP or Gravity.END
-                setMargins(0, dpToPx(24), dpToPx(24), 0)
-            }
-            rootLayout.addView(btn, params)
-
-            Log.i(TAG, "▶ Cast button added successfully")
+            castContainer.addView(btn, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         } catch (e: Exception) {
-            // Google Play Services not available or crashes rendering Cast button
-            // Typical on Android TV (Receiver only) or stripped-down devices.
-            // Failing silently is perfectly fine as casting from a TV to another TV isn't standard anyway.
             Log.e(TAG, "Cast SDK Error: ${e.message}", e)
         }
     }
@@ -372,18 +565,12 @@ class PlayerActivity : AppCompatActivity() {
         castSessionListener = object : SessionManagerListener<CastSession> {
             override fun onSessionStarting(session: CastSession) {}
             override fun onSessionStartFailed(session: CastSession, error: Int) {
-                Log.e(TAG, "Cast session start failed: $error")
                 Toast.makeText(this@PlayerActivity, "Error al conectar con Chromecast", Toast.LENGTH_SHORT).show()
             }
-
             override fun onSessionStarted(session: CastSession, sessionId: String) {
-                Log.i(TAG, "▶ Cast session started → sending stream to Chromecast")
                 isCasting = true
+                mediaPlayer?.pause()
 
-                // Pause local ExoPlayer
-                player?.pause()
-
-                // Send stream URL to Chromecast
                 val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE).apply {
                     putString(MediaMetadata.KEY_TITLE, currentTitle)
                 }
@@ -396,99 +583,74 @@ class PlayerActivity : AppCompatActivity() {
                 val loadRequest = MediaLoadRequestData.Builder()
                     .setMediaInfo(mediaInfo)
                     .setAutoplay(true)
-                    .setCurrentTime(player?.currentPosition ?: 0L)
+                    .setCurrentTime(mediaPlayer?.time ?: 0L)
                     .build()
 
                 session.remoteMediaClient?.load(loadRequest)
-
-                Toast.makeText(this@PlayerActivity, "📺 Enviando a Chromecast...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@PlayerActivity, "Enviando a Chromecast...", Toast.LENGTH_SHORT).show()
             }
-
             override fun onSessionResuming(session: CastSession, sessionId: String) {}
             override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
                 isCasting = true
-                player?.pause()
+                mediaPlayer?.pause()
             }
             override fun onSessionResumeFailed(session: CastSession, error: Int) {}
-
             override fun onSessionSuspended(session: CastSession, reason: Int) {}
-
             override fun onSessionEnding(session: CastSession) {}
             override fun onSessionEnded(session: CastSession, error: Int) {
-                Log.i(TAG, "▶ Cast session ended → resuming local playback")
                 isCasting = false
-
-                // Resume local ExoPlayer
-                player?.play()
-                Toast.makeText(this@PlayerActivity, "📱 Reproducción local reanudada", Toast.LENGTH_SHORT).show()
+                mediaPlayer?.play()
+                Toast.makeText(this@PlayerActivity, "Reproducción local reanudada", Toast.LENGTH_SHORT).show()
             }
         }
 
         sm.addSessionManagerListener(castSessionListener!!, CastSession::class.java)
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // WiFi IP Helper
-    // ─────────────────────────────────────────────────────────────────────
-
     private fun getWifiIpAddress(): String? {
         return try {
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
             val ip = wifiManager.connectionInfo.ipAddress
             if (ip == 0) return null
-            String.format(
-                "%d.%d.%d.%d",
-                ip and 0xff,
-                ip shr 8 and 0xff,
-                ip shr 16 and 0xff,
-                ip shr 24 and 0xff
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not get WiFi IP: ${e.message}")
-            null
-        }
+            String.format("%d.%d.%d.%d", ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff)
+        } catch (e: Exception) { null }
     }
 
-    private fun dpToPx(dp: Int): Int {
-        return (dp * resources.displayMetrics.density).toInt()
+    // --- Lifecycle & Progress ---
+    override fun onResume() {
+        super.onResume()
+        hideSystemUI()
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Lifecycle
-    // ─────────────────────────────────────────────────────────────────────
-
-    override fun onStop() {
-        super.onStop()
-        if (!isCasting) {
-            cleanup()
-        }
-        // If casting, DON'T cleanup — the proxy must stay alive for the Chromecast
+    private fun hideSystemUI() {
+        val wic = WindowCompat.getInsetsController(window, window.decorView)
+        wic.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        wic.hide(WindowInsetsCompat.Type.systemBars())
+        window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            or View.SYSTEM_UI_FLAG_FULLSCREEN
+        )
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        if (isCasting) {
-            // Disconnect cast session first, then cleanup
-            try {
-                castContext?.sessionManager?.endCurrentSession(true)
-            } catch (_: Exception) {}
-        }
+    override fun onPause() {
+        super.onPause()
+        if (mediaPlayer?.isPlaying == true) mediaPlayer?.pause()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        titleHandler.removeCallbacksAndMessages(null)
+        controlsHandler.removeCallbacksAndMessages(null)
+        seekBarHandler.removeCallbacksAndMessages(null)
+
         cleanup()
-        finish()
-    }
-
-    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK && event.action == android.view.KeyEvent.ACTION_UP) {
-            if (playerView?.isControllerFullyVisible == true) {
-                playerView?.hideController()
-                return true
-            }
-        }
-        return super.dispatchKeyEvent(event)
     }
 
     private fun cleanup() {
-        // Save current progress BEFORE releasing the player
         val phone = intent.getStringExtra(EXTRA_PHONE) ?: ""
         val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
         val season = intent.getStringExtra(EXTRA_SEASON) ?: ""
@@ -497,29 +659,29 @@ class PlayerActivity : AppCompatActivity() {
         var finalPosition = -1L
         var finalDuration = 0L
         try {
-            finalPosition = player?.currentPosition ?: -1L
-            finalDuration = player?.duration ?: 0L
+            finalPosition = mediaPlayer?.time ?: -1L
+            finalDuration = mediaPlayer?.length ?: 0L
         } catch (e: Exception) {}
 
-        // Remove Cast listener
         try {
-            castSessionListener?.let {
-                sessionManager?.removeSessionManagerListener(it, CastSession::class.java)
-            }
+            castSessionListener?.let { sessionManager?.removeSessionManagerListener(it, CastSession::class.java) }
         } catch (_: Exception) {}
 
-        try { player?.release() } catch (_: Exception) {}
+        if (mediaPlayer != null) {
+            mediaPlayer?.stop()
+            mediaPlayer?.vlcVout?.removeCallback(this)
+            mediaPlayer?.release()
+        }
+        libVLC?.release()
+
         try { proxyServer?.stop() } catch (_: Exception) {}
         scope.cancel()
 
-        // Eagerly delete TDLib downloaded video chunks
         val fileId = intent.getIntExtra(EXTRA_FILE_ID, -1)
         if (fileId > 0) {
-            val engine = TelegramEngine.getInstance(this)
-            engine.cancelAndDeleteVideo(fileId)
+            TelegramEngine.getInstance(this).cancelAndDeleteVideo(fileId)
         }
 
-        // Final ping
         if (phone.isNotEmpty() && contentId.isNotEmpty() && finalPosition > 0) {
             CoroutineScope(Dispatchers.IO).launch {
                 sendProgressPingDirect(phone, contentId, season, episode, finalPosition, finalDuration)
@@ -527,39 +689,25 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    private var progressTrackingJob: Job? = null
-
     private fun startProgressTracking(phone: String, contentId: String, season: String, episode: String) {
-        progressTrackingJob = scope.launch {
+        scope.launch {
             while (isActive) {
-                delay(30_000) // Every 30 seconds
+                delay(30_000)
                 try {
-                    sendProgressPing(phone, contentId, season, episode)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error in progress tracking loop: ${e.message}")
-                }
+                    val currentPos = mediaPlayer?.time ?: -1L
+                    val durationMs = mediaPlayer?.length ?: 0L
+                    sendProgressPingDirect(phone, contentId, season, episode, currentPos, durationMs)
+                } catch (e: Exception) {}
             }
         }
     }
 
-    private suspend fun sendProgressPing(phone: String, contentId: String, season: String, episode: String) {
-        // ExoPlayer must be accessed from the Main thread
-        val (currentPosition, durationMs) = kotlinx.coroutines.withContext(Dispatchers.Main) {
-            val p = player ?: return@withContext Pair(-1L, 0L)
-            try { Pair(p.currentPosition, p.duration) } catch (e: Exception) { Pair(-1L, 0L) }
-        }
-        
-        sendProgressPingDirect(phone, contentId, season, episode, currentPosition, durationMs)
-    }
-
     private suspend fun sendProgressPingDirect(phone: String, contentId: String, season: String, episode: String, currentPosition: Long, durationMs: Long) {
         if (currentPosition <= 0) return
-        
         val progressSeconds = (currentPosition / 1000).toInt()
         val isFinished = durationMs > 0 && currentPosition >= (durationMs - 5000)
 
-        // The network request must run on the IO thread
-        kotlinx.coroutines.withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             try {
                 val url = java.net.URL("https://cineflix-production-19e3.up.railway.app/api/progress")
                 val conn = url.openConnection() as java.net.HttpURLConnection
@@ -580,22 +728,13 @@ class PlayerActivity : AppCompatActivity() {
                     val input = json.toString().toByteArray(Charsets.UTF_8)
                     os.write(input, 0, input.size)
                 }
-
-                val responseCode = conn.responseCode
-                if (responseCode == 200) {
-                    Log.d(TAG, "Watch progress synced: $progressSeconds s")
-                } else {
-                    Log.e(TAG, "Watch progress sync failed: HTTP $responseCode")
-                }
                 conn.disconnect()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending watch progress: ${e.message}")
-            }
+            } catch (e: Exception) {}
         }
     }
 
     private suspend fun fetchSavedProgress(phone: String, contentId: String, season: String, episode: String): Int {
-        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+        return withContext(Dispatchers.IO) {
             try {
                 val url = java.net.URL("https://cineflix-production-19e3.up.railway.app/api/progress")
                 val conn = url.openConnection() as java.net.HttpURLConnection
@@ -604,31 +743,24 @@ class PlayerActivity : AppCompatActivity() {
                 conn.connectTimeout = 5000
                 conn.readTimeout = 5000
 
-                val responseCode = conn.responseCode
-                if (responseCode == 200) {
+                if (conn.responseCode == 200) {
                     val body = conn.inputStream.bufferedReader().readText()
                     val arr = org.json.JSONArray(body)
                     for (i in 0 until arr.length()) {
                         val obj = arr.getJSONObject(i)
-                        
                         val matchesContent = obj.getString("content_id") == contentId
                         val objSeason = if (obj.isNull("season")) "" else obj.getInt("season").toString()
                         val objEpisode = if (obj.isNull("episode")) "" else obj.getInt("episode").toString()
-                        
                         if (matchesContent && objSeason == season && objEpisode == episode) {
-                            val progress = obj.optInt("progress", 0)
-                            Log.d(TAG, "Found saved progress for $contentId s$season e$episode: ${progress}s")
-                            conn.disconnect()
-                            return@withContext progress
+                            return@withContext obj.optInt("progress", 0)
                         }
                     }
                 }
-                conn.disconnect()
                 0
-            } catch (e: Exception) {
-                Log.e(TAG, "fetchSavedProgress error: ${e.message}")
-                0
-            }
+            } catch (e: Exception) { 0 }
         }
     }
+
+    override fun onSurfacesCreated(vlcVout: IVLCVout) {}
+    override fun onSurfacesDestroyed(vlcVout: IVLCVout) {}
 }
