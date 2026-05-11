@@ -62,9 +62,8 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
     private lateinit var btnPlayPause: ImageButton
     private lateinit var btnRewind: ImageButton
     private lateinit var btnForward: ImageButton
-    private lateinit var btnResize: Button
-    private lateinit var btnAudioTrack: Button
-    private lateinit var btnSubtitle: Button
+    private lateinit var btnResize: ImageButton
+    private lateinit var btnTracks: ImageButton
     private lateinit var loadingSpinner: ProgressBar
     private lateinit var castContainer: FrameLayout
 
@@ -222,8 +221,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         btnRewind = findViewById(R.id.btn_rewind)
         btnForward = findViewById(R.id.btn_forward)
         btnResize = findViewById(R.id.btn_resize)
-        btnAudioTrack = findViewById(R.id.btn_audio_track)
-        btnSubtitle = findViewById(R.id.btn_subtitle)
+        btnTracks = findViewById(R.id.btn_tracks)
         loadingSpinner = findViewById(R.id.loading_spinner)
         castContainer = findViewById(R.id.cast_button_container)
     }
@@ -233,8 +231,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         btnRewind.setOnClickListener { seekRelative(-10000); showControls() }
         btnForward.setOnClickListener { seekRelative(10000); showControls() }
         btnResize.setOnClickListener { toggleResizeMode() }
-        btnAudioTrack.setOnClickListener { showAudioTrackSelector() }
-        btnSubtitle.setOnClickListener { showSubtitleSelector() }
+        btnTracks.setOnClickListener { showTrackSelectorBottomSheet() }
 
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -356,48 +353,152 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         showControls()
     }
 
-    // --- Audio/Subtitle Track Selectors ---
-    private fun showAudioTrackSelector() {
+    // --- Unified Track Selector ---
+    private fun showTrackSelectorBottomSheet() {
         val mp = mediaPlayer ?: return
-        val tracks = mp.audioTracks ?: return
-        if (tracks.isEmpty()) return
+        
+        val bottomSheetDialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        
+        // Layout principal
+        val mainLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(android.graphics.Color.parseColor("#1A1A1A"))
+            setPadding(0, dpToPx(16), 0, dpToPx(16))
+        }
 
-        val currentId = mp.audioTrack
-        val names = tracks.map { it.name }.toTypedArray()
-        val checkedIndex = tracks.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+        // Layout horizontal para columnas
+        val columnsLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 2f
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
 
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog)
-            .setTitle("Pista de Audio")
-            .setSingleChoiceItems(names, checkedIndex) { dialog, which ->
-                mp.audioTrack = tracks[which].id
-                dialog.dismiss()
-            }.setNegativeButton("Cerrar", null).show()
+        // --- COLUMNA AUDIO ---
+        val audioColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dpToPx(16), 0, dpToPx(8), 0) }
+        }
+        val audioTitle = TextView(this).apply {
+            text = "\uD83D\uDD0A AUDIO"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, 0, 0, dpToPx(16))
+        }
+        audioColumn.addView(audioTitle)
+
+        val audioGroup = android.widget.RadioGroup(this)
+        val audioTracks = mp.audioTracks
+        val currentAudioId = mp.audioTrack
+        
+        // Disable audio option
+        val rbAudioDisable = android.widget.RadioButton(this).apply {
+            text = "Disable"
+            setTextColor(android.graphics.Color.WHITE)
+            buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
+            isChecked = currentAudioId == -1
+            setPadding(0, dpToPx(8), 0, dpToPx(8))
+            setOnClickListener { mp.audioTrack = -1; bottomSheetDialog.dismiss() }
+        }
+        audioGroup.addView(rbAudioDisable)
+
+        if (audioTracks != null) {
+            for (track in audioTracks) {
+                val rb = android.widget.RadioButton(this).apply {
+                    text = track.name
+                    setTextColor(android.graphics.Color.WHITE)
+                    buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
+                    isChecked = track.id == currentAudioId
+                    setPadding(0, dpToPx(8), 0, dpToPx(8))
+                    setOnClickListener { mp.audioTrack = track.id; bottomSheetDialog.dismiss() }
+                }
+                audioGroup.addView(rb)
+            }
+        }
+        audioColumn.addView(audioGroup)
+
+        // Separador central
+        val separator = View(this).apply {
+            setBackgroundColor(android.graphics.Color.parseColor("#333333"))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(1), LinearLayout.LayoutParams.MATCH_PARENT)
+        }
+
+        // --- COLUMNA SUBTÍTULOS ---
+        val subColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dpToPx(8), 0, dpToPx(16), 0) }
+        }
+        val subTitle = TextView(this).apply {
+            text = "\uD83D\uDCAC SUBTÍTULOS"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, 0, 0, dpToPx(16))
+        }
+        subColumn.addView(subTitle)
+
+        val subGroup = android.widget.RadioGroup(this)
+        val spuTracks = mp.spuTracks
+        val currentSpuId = mp.spuTrack
+        
+        // Disable subtitle option
+        val rbSubDisable = android.widget.RadioButton(this).apply {
+            text = "Desactivar"
+            setTextColor(android.graphics.Color.WHITE)
+            buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
+            isChecked = currentSpuId == -1
+            setPadding(0, dpToPx(8), 0, dpToPx(8))
+            setOnClickListener { mp.spuTrack = -1; bottomSheetDialog.dismiss() }
+        }
+        subGroup.addView(rbSubDisable)
+
+        if (spuTracks != null) {
+            for (track in spuTracks) {
+                val rb = android.widget.RadioButton(this).apply {
+                    text = track.name
+                    setTextColor(android.graphics.Color.WHITE)
+                    buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
+                    isChecked = track.id == currentSpuId
+                    setPadding(0, dpToPx(8), 0, dpToPx(8))
+                    setOnClickListener { mp.spuTrack = track.id; bottomSheetDialog.dismiss() }
+                }
+                subGroup.addView(rb)
+            }
+        }
+        subColumn.addView(subGroup)
+
+        columnsLayout.addView(audioColumn)
+        columnsLayout.addView(separator)
+        columnsLayout.addView(subColumn)
+
+        // ScrollView para contenido largo
+        val scrollView = android.widget.ScrollView(this).apply {
+            addView(columnsLayout)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        mainLayout.addView(scrollView)
+
+        // Botón cerrar
+        val btnClose = TextView(this).apply {
+            text = "Cerrar"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, dpToPx(20), 0, dpToPx(8))
+            setOnClickListener { bottomSheetDialog.dismiss() }
+        }
+        mainLayout.addView(btnClose)
+
+        bottomSheetDialog.setContentView(mainLayout)
+        (mainLayout.parent as? View)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        bottomSheetDialog.show()
     }
 
-    private fun showSubtitleSelector() {
-        val mp = mediaPlayer ?: return
-        val tracks = mp.spuTracks
-        if (tracks == null || tracks.isEmpty()) {
-            Toast.makeText(this, "No hay subtítulos disponibles", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val currentId = mp.spuTrack
-        val names = Array(tracks.size + 1) { "" }
-        names[0] = "Desactivar subtítulos"
-        var checkedIndex = 0
-        for (i in tracks.indices) {
-            names[i + 1] = tracks[i].name
-            if (tracks[i].id == currentId) checkedIndex = i + 1
-        }
-
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog)
-            .setTitle("Subtítulos")
-            .setSingleChoiceItems(names, checkedIndex) { dialog, which ->
-                if (which == 0) mp.spuTrack = -1
-                else mp.spuTrack = tracks[which - 1].id
-                dialog.dismiss()
-            }.setNegativeButton("Cerrar", null).show()
+    private fun dpToPx(dp: Int): Int {
+        return (dp * resources.displayMetrics.density).toInt()
     }
 
     // --- UI Controls ---
@@ -416,8 +517,6 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         bottomBar.animate().alpha(1f).setDuration(200).start()
         centerControls.visibility = View.VISIBLE
         centerControls.animate().alpha(1f).setDuration(200).start()
-        tvVideoTitle.visibility = View.VISIBLE
-        tvVideoTitle.animate().alpha(1f).setDuration(200).start()
         castContainer.visibility = View.VISIBLE
         castContainer.animate().alpha(1f).setDuration(200).start()
         controlsVisible = true
@@ -427,7 +526,6 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
     private fun hideControls() {
         bottomBar.animate().alpha(0f).setDuration(300).withEndAction { bottomBar.visibility = View.GONE }.start()
         centerControls.animate().alpha(0f).setDuration(300).withEndAction { centerControls.visibility = View.GONE }.start()
-        tvVideoTitle.animate().alpha(0f).setDuration(300).withEndAction { tvVideoTitle.visibility = View.GONE }.start()
         castContainer.animate().alpha(0f).setDuration(300).withEndAction { castContainer.visibility = View.GONE }.start()
         controlsVisible = false
     }
@@ -477,6 +575,14 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
             tvVideoTitle.alpha = 0f
             tvVideoTitle.visibility = View.VISIBLE
             tvVideoTitle.animate().alpha(1f).setDuration(400).start()
+            
+            // Ocultar título automáticamente después de 2 segundos, independientemente de los controles
+            titleHandler.removeCallbacksAndMessages(null)
+            titleHandler.postDelayed({
+                tvVideoTitle.animate().alpha(0f).setDuration(500).withEndAction { 
+                    tvVideoTitle.visibility = View.GONE 
+                }.start()
+            }, 2000)
         }
     }
 
