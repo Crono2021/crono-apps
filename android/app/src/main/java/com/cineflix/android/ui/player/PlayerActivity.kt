@@ -494,6 +494,17 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
         bottomSheetDialog.setContentView(mainLayout)
         (mainLayout.parent as? View)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        
+        bottomSheetDialog.setOnShowListener { dialog ->
+            val d = dialog as com.google.android.material.bottomsheet.BottomSheetDialog
+            val bottomSheet = d.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            if (bottomSheet != null) {
+                val behavior = com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet)
+                behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+                behavior.skipCollapsed = true
+            }
+        }
+        
         bottomSheetDialog.show()
     }
 
