@@ -405,6 +405,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
         if (audioTracks != null) {
             for (track in audioTracks) {
+                if (track.id == -1 || track.name.equals("Disable", ignoreCase = true)) continue
                 val rb = android.widget.RadioButton(this).apply {
                     text = track.name
                     setTextColor(android.graphics.Color.WHITE)
@@ -456,6 +457,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
         if (spuTracks != null) {
             for (track in spuTracks) {
+                if (track.id == -1 || track.name.equals("Disable", ignoreCase = true)) continue
                 val rb = android.widget.RadioButton(this).apply {
                     text = track.name
                     setTextColor(android.graphics.Color.WHITE)
@@ -753,9 +755,19 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         )
     }
 
+    override fun onStart() {
+        super.onStart()
+        mediaPlayer?.vlcVout?.attachViews()
+    }
+
     override fun onPause() {
         super.onPause()
         if (mediaPlayer?.isPlaying == true) mediaPlayer?.pause()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        mediaPlayer?.vlcVout?.detachViews()
     }
 
     override fun onDestroy() {
