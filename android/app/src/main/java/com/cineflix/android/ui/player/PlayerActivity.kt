@@ -74,6 +74,8 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
     private var controlsVisible = true
     private var isSeeking = false
     private var currentScaleIndex = 0
+    private var wasPlaying = false
+    private var savedPosition = 0L
 
     // Cast
     private var castContext: CastContext? = null
@@ -265,9 +267,15 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
         mediaPlayer?.setEventListener { event ->
             when (event.type) {
-                MediaPlayer.Event.Playing -> runOnUiThread {
-                    loadingSpinner.visibility = View.GONE
-                    btnPlayPause.setImageResource(android.R.drawable.ic_media_pause)
+                MediaPlayer.Event.Playing -> {
+                    if (savedPosition > 0L) {
+                        mediaPlayer?.time = savedPosition
+                        savedPosition = 0L
+                    }
+                    runOnUiThread { 
+                        loadingSpinner.visibility = View.GONE
+                        btnPlayPause.setImageResource(R.drawable.ic_pause) 
+                    }
                 }
                 MediaPlayer.Event.Paused -> runOnUiThread {
                     btnPlayPause.setImageResource(android.R.drawable.ic_media_play)
@@ -739,6 +747,9 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
     override fun onResume() {
         super.onResume()
         hideSystemUI()
+        if (wasPlaying) {
+            mediaPlayer?.play()
+        }
     }
 
     private fun hideSystemUI() {
@@ -755,19 +766,22 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         )
     }
 
-    override fun onStart() {
-        super.onStart()
-        mediaPlayer?.vlcVout?.attachViews()
-    }
-
     override fun onPause() {
         super.onPause()
-        if (mediaPlayer?.isPlaying == true) mediaPlayer?.pause()
+        wasPlaying = mediaPlayer?.isPlaying == true
+        if (wasPlaying) {
+            mediaPlayer?.pause()
+        }
     }
 
-    override fun onStop() {
-        super.onStop()
-        mediaPlayer?.vlcVout?.detachViews()
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putLong("savedPosition", mediaPlayer?.time ?: 0L)
+    }
+
+    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+        super.onRestoreInstanceState(savedInstanceState)
+        savedPosition = savedInstanceState.getLong("savedPosition", 0L)
     }
 
     override fun onDestroy() {
