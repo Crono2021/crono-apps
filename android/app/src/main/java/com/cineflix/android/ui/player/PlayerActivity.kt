@@ -235,8 +235,8 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
     private fun setupListeners() {
         btnPlayPause.setOnClickListener { togglePlayPause() }
-        btnRewind.setOnClickListener { seekRelative(-10000); showControls() }
-        btnForward.setOnClickListener { seekRelative(10000); showControls() }
+        btnRewind.setOnClickListener { seekRelative(-15000); showControls() }
+        btnForward.setOnClickListener { seekRelative(15000); showControls() }
         btnResize.setOnClickListener { toggleResizeMode() }
         btnTracks.setOnClickListener { showTrackSelectorBottomSheet() }
 
@@ -342,24 +342,28 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
         when (currentScaleIndex) {
             0 -> {
+                // Original — Tamaño original del vídeo, sin distorsión
                 mp.aspectRatio = null
                 mp.scale = 0f
-                modeName = "Ajustar (Fit)"
+                modeName = "Original"
             }
             1 -> {
-                mp.scale = 0f
-                mp.aspectRatio = "$sw:$sh"
-                modeName = "Llenar (Fill)"
-            }
-            2 -> {
-                mp.aspectRatio = null
-                mp.scale = 2.0f
-                modeName = "Zoom (Cortar bordes)"
-            }
-            3 -> {
+                // 16:9 — Fuerza relación de aspecto 16:9
                 mp.aspectRatio = "16:9"
                 mp.scale = 0f
-                modeName = "16:9 Forzado"
+                modeName = "16:9"
+            }
+            2 -> {
+                // Ajustar — Rellena toda la pantalla (puede recortar bordes)
+                mp.scale = 0f
+                mp.aspectRatio = "$sw:$sh"
+                modeName = "Ajustar pantalla"
+            }
+            3 -> {
+                // Zoom — Zoom moderado (1.2x)
+                mp.aspectRatio = null
+                mp.scale = 1.2f
+                modeName = "Zoom"
             }
         }
         Toast.makeText(this, modeName, Toast.LENGTH_SHORT).show()
@@ -626,12 +630,12 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
             return true
         }
         if (keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
-            seekRelative(10000)
+            seekRelative(15000)
             showControls()
             return true
         }
         if (keyCode == KeyEvent.KEYCODE_MEDIA_REWIND) {
-            seekRelative(-10000)
+            seekRelative(-15000)
             showControls()
             return true
         }
