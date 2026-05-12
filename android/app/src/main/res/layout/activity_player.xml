@@ -78,7 +78,10 @@
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@drawable/ic_replay_10"
             android:scaleType="fitCenter"
-            android:padding="8dp" />
+            android:padding="8dp"
+            android:focusable="true"
+            android:nextFocusDown="@+id/seek_bar"
+            android:nextFocusRight="@+id/btn_play_pause" />
 
         <ImageButton
             android:id="@+id/btn_play_pause"
@@ -87,7 +90,11 @@
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/ic_media_pause"
             android:scaleType="fitCenter"
-            android:padding="12dp" />
+            android:padding="12dp"
+            android:focusable="true"
+            android:nextFocusDown="@+id/seek_bar"
+            android:nextFocusLeft="@+id/btn_rewind"
+            android:nextFocusRight="@+id/btn_forward" />
 
         <ImageButton
             android:id="@+id/btn_forward"
@@ -97,7 +104,10 @@
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@drawable/ic_forward_10"
             android:scaleType="fitCenter"
-            android:padding="8dp" />
+            android:padding="8dp"
+            android:focusable="true"
+            android:nextFocusDown="@+id/seek_bar"
+            android:nextFocusLeft="@+id/btn_play_pause" />
 
         <ImageButton
             android:id="@+id/btn_next"
@@ -131,7 +141,10 @@
             android:layout_marginBottom="4dp"
             android:progressTint="#7c3aed"
             android:thumbTint="#7c3aed"
-            android:maxHeight="3dp" />
+            android:maxHeight="3dp"
+            android:focusable="true"
+            android:nextFocusUp="@+id/btn_play_pause"
+            android:nextFocusDown="@+id/btn_tracks" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -160,7 +173,10 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_subtitles"
                 android:scaleType="fitCenter"
-                android:padding="8dp" />
+                android:padding="8dp"
+                android:focusable="true"
+                android:nextFocusUp="@+id/seek_bar"
+                android:nextFocusRight="@+id/btn_resize" />
 
             <ImageButton
                 android:id="@+id/btn_resize"
@@ -170,7 +186,10 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_fullscreen"
                 android:scaleType="fitCenter"
-                android:padding="8dp" />
+                android:padding="8dp"
+                android:focusable="true"
+                android:nextFocusUp="@+id/seek_bar"
+                android:nextFocusLeft="@+id/btn_tracks" />
 
             <TextView
                 android:id="@+id/tv_time_duration"
