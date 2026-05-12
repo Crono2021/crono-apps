@@ -640,21 +640,14 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
             return true
         }
 
-        // ── Izquierda / Derecha: SIEMPRE buscan, excepto si estamos en la barra inferior ──
-        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
-            val focusedViewId = window.currentFocus?.id
-            if (focusedViewId == R.id.btn_tracks || focusedViewId == R.id.btn_resize) {
-                // Estamos en la barra inferior, permitir navegación horizontal entre Tracks y Resize
-                scheduleHideControls()
-                return super.onKeyDown(keyCode, event)
-            }
-            
-            // Comportamiento por defecto: buscar en el vídeo
-            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
-                seekRelative(-10000)
-            } else {
-                seekRelative(10000)
-            }
+        // ── Izquierda / Derecha: SIEMPRE buscan en el vídeo (estilo Netflix) ──
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+            seekRelative(-10000)
+            showControls()
+            return true
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            seekRelative(10000)
             showControls()
             return true
         }
