@@ -78,10 +78,24 @@ class MainActivity : ComponentActivity() {
                         "window._cineflixIsTV = $tvFlag; " +
                         "window.__appPlatform = 'android_tv'; " +
                         "window.__appVersion = $vCode; " +
-                        "document.documentElement.classList.toggle('android-tv', $tvFlag);",
+                        "document.documentElement.classList.toggle('android-tv', $tvFlag);" +
+                        "setTimeout(function() { " +
+                        "  ['search-input', 'movies-search-input'].forEach(id => { " +
+                        "    let el = document.getElementById(id); " +
+                        "    if(el) { " +
+                        "      el.readOnly = true; " +
+                        "      el.addEventListener('click', function(e) { " +
+                        "        if (window._cineflixIsTV && window.AndroidBridge && window.AndroidBridge.showNativeSearchDialogFixed) { " +
+                        "          e.preventDefault(); " +
+                        "          window.AndroidBridge.showNativeSearchDialogFixed(id, el.value); " +
+                        "        } " +
+                        "      }); " +
+                        "    } " +
+                        "  }); " +
+                        "}, 500);",
                         null
                     )
-                    android.util.Log.d("CineflixMain", "Injected OTA vars, TV=$tvFlag, v=$vCode")
+                    android.util.Log.d("CineflixMain", "Injected OTA vars and JS fixes, TV=$tvFlag, v=$vCode")
                 }
             }
 

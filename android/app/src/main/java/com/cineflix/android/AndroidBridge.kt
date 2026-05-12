@@ -486,7 +486,7 @@ class AndroidBridge(
     }
 
     @JavascriptInterface
-    fun showNativeSearchDialog(inputId: String, currentText: String) {
+    fun showNativeSearchDialogFixed(inputId: String, currentText: String) {
         runOnUiThread {
             try {
                 val editText = android.widget.EditText(context).apply {
@@ -508,7 +508,9 @@ class AndroidBridge(
                 editText.layoutParams = params
                 container.addView(editText)
 
-                val dialog = android.app.AlertDialog.Builder(context)
+                var dialog: android.app.AlertDialog? = null
+
+                dialog = android.app.AlertDialog.Builder(context)
                     .setTitle("Buscar")
                     .setView(container)
                     .setPositiveButton("Buscar") { _, _ ->
@@ -529,6 +531,17 @@ class AndroidBridge(
                     }
                     .create()
                     
+                editText.setOnEditorActionListener { _, actionId, event ->
+                    if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH || 
+                        actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE || 
+                        (event != null && event.keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_DOWN)) {
+                        dialog?.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.performClick()
+                        true
+                    } else {
+                        false
+                    }
+                }
+
                 dialog.setOnShowListener {
                     editText.requestFocus()
                     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
