@@ -528,6 +528,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
     }
 
     private fun showControls() {
+        val wasHidden = !controlsVisible
         bottomBar.visibility = View.VISIBLE
         bottomBar.animate().alpha(1f).setDuration(200).start()
         centerControls.visibility = View.VISIBLE
@@ -535,6 +536,11 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         castContainer.visibility = View.VISIBLE
         castContainer.animate().alpha(1f).setDuration(200).start()
         controlsVisible = true
+        
+        if (wasHidden) {
+            btnPlayPause.requestFocus()
+        }
+        
         scheduleHideControls()
     }
 
@@ -613,38 +619,45 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         val mp = mediaPlayer ?: return super.onKeyDown(keyCode, event)
-        when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                togglePlayPause()
-                return true
+        
+        // Teclas multimedia dedicadas
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+            togglePlayPause()
+            return true
+        }
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
+            seekRelative(10000)
+            showControls()
+            return true
+        }
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_REWIND) {
+            seekRelative(-10000)
+            showControls()
+            return true
+        }
+
+        if (!controlsVisible) {
+            // Si los controles están ocultos, cualquier botón direccional o central los muestra
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    showControls()
+                    return true
+                }
+                KeyEvent.KEYCODE_BACK -> {
+                    finish()
+                    return true
+                }
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                seekRelative(10000)
-                showControls()
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_LEFT -> {
-                seekRelative(-10000)
-                showControls()
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_UP -> {
-                seekRelative(60000)
-                showControls()
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_DOWN -> {
-                seekRelative(-60000)
-                showControls()
-                return true
-            }
-            KeyEvent.KEYCODE_BACK -> {
-                if (controlsVisible) {
+        } else {
+            // Si están visibles, reseteamos el temporizador y dejamos que Android mueva el foco
+            scheduleHideControls()
+            when (keyCode) {
+                KeyEvent.KEYCODE_BACK -> {
                     hideControls()
                     return true
                 }
-                finish()
-                return true
             }
         }
         return super.onKeyDown(keyCode, event)
