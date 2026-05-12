@@ -623,8 +623,8 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         val mp = mediaPlayer ?: return super.onKeyDown(keyCode, event)
-        
-        // Teclas multimedia dedicadas
+
+        // ── Teclas multimedia dedicadas (mandos con botones físicos) ──
         if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
             togglePlayPause()
             return true
@@ -640,30 +640,51 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
             return true
         }
 
-        if (!controlsVisible) {
-            // Si los controles están ocultos, cualquier botón direccional o central los muestra
-            when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
-                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    showControls()
-                    return true
-                }
-                KeyEvent.KEYCODE_BACK -> {
-                    finish()
-                    return true
-                }
-            }
-        } else {
-            // Si están visibles, reseteamos el temporizador y dejamos que Android mueva el foco
-            scheduleHideControls()
-            when (keyCode) {
-                KeyEvent.KEYCODE_BACK -> {
-                    hideControls()
-                    return true
-                }
-            }
+        // ── Izquierda / Derecha: SIEMPRE buscan en el vídeo (estilo Netflix) ──
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+            seekRelative(-10000)
+            showControls()
+            return true
         }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            seekRelative(10000)
+            showControls()
+            return true
+        }
+
+        // ── OK / Centro: Play/Pause directo si controles ocultos ──
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
+            if (!controlsVisible) {
+                togglePlayPause()
+            } else {
+                // Controles visibles: dejar que Android active el botón enfocado
+                scheduleHideControls()
+                return super.onKeyDown(keyCode, event)
+            }
+            return true
+        }
+
+        // ── Arriba / Abajo: Mostrar controles + navegar entre filas ──
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+            if (!controlsVisible) {
+                showControls()
+                return true
+            }
+            // Controles visibles: dejar que Android mueva el foco entre filas
+            scheduleHideControls()
+            return super.onKeyDown(keyCode, event)
+        }
+
+        // ── Back: ocultar controles o salir ──
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (controlsVisible) {
+                hideControls()
+                return true
+            }
+            finish()
+            return true
+        }
+
         return super.onKeyDown(keyCode, event)
     }
 
