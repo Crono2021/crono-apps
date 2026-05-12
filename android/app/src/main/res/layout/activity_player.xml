@@ -57,7 +57,7 @@
         android:layout_gravity="center"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:visibility="visible">
+        android:visibility="gone">
 
         <ImageButton
             android:id="@+id/btn_prev"
@@ -128,7 +128,7 @@
         android:paddingHorizontal="16dp"
         android:paddingTop="8dp"
         android:paddingBottom="12dp"
-        android:visibility="visible">
+        android:visibility="gone">
 
         <SeekBar
             android:id="@+id/seek_bar"

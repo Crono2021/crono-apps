@@ -71,7 +71,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
     private val controlsHandler = Handler(Looper.getMainLooper())
     private val seekBarHandler = Handler(Looper.getMainLooper())
 
-    private var controlsVisible = true
+    private var controlsVisible = false
     private var isSeeking = false
     private var currentScaleIndex = 0
     private var wasPlaying = false
@@ -496,12 +496,21 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
             setTypeface(null, android.graphics.Typeface.BOLD)
             gravity = android.view.Gravity.CENTER
             setPadding(0, dpToPx(20), 0, dpToPx(8))
+            isFocusable = true
+            isClickable = true
+            setOnFocusChangeListener { view, hasFocus ->
+                view.setBackgroundColor(if (hasFocus) android.graphics.Color.parseColor("#7c3aed") else android.graphics.Color.TRANSPARENT)
+            }
             setOnClickListener { bottomSheetDialog.dismiss() }
         }
         mainLayout.addView(btnClose)
 
         bottomSheetDialog.setContentView(mainLayout)
         (mainLayout.parent as? View)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        
+        bottomSheetDialog.setOnDismissListener {
+            btnPlayPause.requestFocus()
+        }
         
         bottomSheetDialog.setOnShowListener { dialog ->
             val d = dialog as com.google.android.material.bottomsheet.BottomSheetDialog
