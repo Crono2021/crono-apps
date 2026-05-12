@@ -542,7 +542,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         controlsVisible = true
         
         if (wasHidden) {
-            btnPlayPause.requestFocus()
+            btnPlayPause.post { btnPlayPause.requestFocus() }
         }
         
         scheduleHideControls()
