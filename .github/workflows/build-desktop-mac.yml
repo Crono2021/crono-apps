@@ -1,0 +1,10 @@
+name: Build Cineflix Desktop (macOS)
+on:
+  workflow_dispatch:
+  jobs:
+    build-mac:
+        runs-on: macos-latest
+            steps:
+                  - name: Checkout crono-apps
+                          uses: actions/checkout@v4
+                          
