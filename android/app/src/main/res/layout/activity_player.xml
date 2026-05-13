@@ -143,6 +143,7 @@
             android:thumbTint="#7c3aed"
             android:maxHeight="3dp"
             android:focusable="true"
+            android:nextFocusDown="@+id/btn_tracks"
             android:nextFocusUp="@+id/btn_play_pause" />
 
         <!-- Fila: Tiempo izq | espacio | botones derecha | tiempo der -->

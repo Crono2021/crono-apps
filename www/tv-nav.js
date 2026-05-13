@@ -163,11 +163,15 @@
       if (!view) return [];
       let zones = [];
 
-      // Zone 1 — Topbar: search box + logout button
+      // Zone 0 — Topbar Actions: refresh + logout
+      const refreshBtn = view.querySelector('#btn-refresh-catalog, #btn-movies-refresh');
+      const logoutBtn  = view.querySelector('#btn-logout, #btn-movies-logout');
+      const actionItems = [refreshBtn, logoutBtn].filter(Boolean).filter(el => this.visible(el));
+      if (actionItems.length) zones.push({ key: 'topbar-actions', items: actionItems });
+
+      // Zone 1 — Topbar Search: search box
       const searchInput = view.querySelector('#search-input, #movies-search-input');
-      const logoutBtn   = view.querySelector('#btn-logout, #btn-movies-logout');
-      const topbarItems = [searchInput, logoutBtn].filter(Boolean).filter(el => this.visible(el));
-      if (topbarItems.length) zones.push({ key: 'topbar', items: topbarItems });
+      if (searchInput && this.visible(searchInput)) zones.push({ key: 'topbar-search', items: [searchInput] });
 
       // Zone 2 — Main nav (Series / Películas tabs)
       const navBtns = [...view.querySelectorAll('.main-nav-btn')].filter(el => this.visible(el));

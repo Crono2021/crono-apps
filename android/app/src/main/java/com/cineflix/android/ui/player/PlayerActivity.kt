@@ -701,14 +701,22 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
-            seekRelative(-10000)
-            showControls()
-            return true
+            if (!controlsVisible) {
+                seekRelative(-10000)
+                showControls()
+                return true
+            }
+            scheduleHideControls()
+            return super.onKeyDown(keyCode, event)
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
-            seekRelative(10000)
-            showControls()
-            return true
+            if (!controlsVisible) {
+                seekRelative(10000)
+                showControls()
+                return true
+            }
+            scheduleHideControls()
+            return super.onKeyDown(keyCode, event)
         }
 
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
