@@ -1,0 +1,75 @@
+{
+  "name": "cineflix-desktop",
+  "version": "1.0.2",
+  "description": "Cineflix — Cliente de escritorio con reproductor MPV nativo",
+  "main": "out/main/main.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build && electron-builder",
+    "build:dir": "electron-vite build && electron-builder --dir",
+    "preview": "electron-vite preview"
+  },
+  "dependencies": {
+    "big-integer": "^1.6.52",
+    "buffer": "^6.0.3",
+    "telegram": "^2.26.22",
+    "vite-plugin-node-polyfills": "^0.17.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^32.3.3",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "vite": "^6.0.0"
+  },
+  "build": {
+    "appId": "com.cineflix.desktop",
+    "productName": "Cineflix",
+    "copyright": "Copyright © 2025 Cineflix",
+    "artifactName": "Cineflix-Setup-${version}.${ext}",
+    "npmRebuild": false,
+    "compression": "maximum",
+    "win": {
+      "target": ["nsis"],
+      "extraResources": [
+        {
+          "from": "resources/mpv.exe",
+          "to": "mpv.exe"
+        }
+      ]
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.entertainment",
+      "identity": null,
+      "extraResources": [
+        {
+          "from": "resources/mpv",
+          "to": "mpv"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Cineflix"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Crono2021",
+        "repo": "cineflix-catalog"
+      }
+    ],
+    "asar": true
+  }
+}

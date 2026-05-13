@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Cineflix Player</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: transparent;
+    width: 100vw; height: 100vh;
+    overflow: hidden;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    user-select: none;
+  }
+
+  /* ── Invisible middle area — clicks pass through to playerWindow ── */
+  #video-passthrough {
+    position: fixed;
+    top: 80px;    /* below top bar */
+    left: 0; right: 0;
+    bottom: 90px; /* above controls */
+    pointer-events: none;  /* clicks fall through to MPV window */
+    background: transparent;
+  }
+
+  /* ── Top bar ───────────────────────────────────────────────────── */
+  #top-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    padding: 14px 18px 50px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.88) 0%, transparent 100%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 10;
+    transition: opacity 0.5s;
+  }
+  #btn-back {
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #fff;
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.2s, transform 0.15s;
+    flex-shrink: 0;
+  }
+  #btn-back:hover { background: rgba(255,255,255,0.28); transform: scale(1.1); }
+  #player-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.9);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ── Bottom controls ───────────────────────────────────────────── */
+  #controls {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    padding: 50px 20px 16px;
+    background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, transparent 100%);
+    z-index: 10;
+    transition: opacity 0.5s;
+  }
+
+  /* Seek */
+  #seek-wrap {
+    position: relative;
+    height: 4px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 12px;
+    transition: height 0.15s;
+  }
+  #seek-wrap:hover { height: 7px; }
+  #seek-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #e50914, #ff6b6b);
+    border-radius: 4px;
+    width: 0%;
+    pointer-events: none;
+    position: relative;
+  }
+  #seek-fill::after {
+    content: '';
+    position: absolute;
+    right: -6px; top: 50%;
+    transform: translateY(-50%) scale(0);
+    width: 14px; height: 14px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.15s;
+  }
+  #seek-wrap:hover #seek-fill::after { transform: translateY(-50%) scale(1); }
+
+  /* Buttons */
+  #btn-row {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .ctrl-btn {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 18px;
+    width: 38px; height: 38px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s, transform 0.12s;
+    flex-shrink: 0;
+  }
+  .ctrl-btn:hover  { background: rgba(255,255,255,0.15); transform: scale(1.1); }
+  .ctrl-btn:active { transform: scale(0.93); }
+  #btn-playpause { font-size: 22px; }
+
+  #time-disp {
+    color: rgba(255,255,255,0.8);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    min-width: 95px;
+    margin-left: 2px;
+  }
+  .spacer { flex: 1; }
+
+  /* Volume */
+  #vol-group { display: flex; align-items: center; gap: 6px; }
+  #vol-slider {
+    -webkit-appearance: none;
+    width: 72px; height: 4px;
+    background: rgba(255,255,255,0.25);
+    border-radius: 4px;
+    outline: none;
+    cursor: pointer;
+  }
+  #vol-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    background: #fff;
+    border-radius: 50%;
+  }
+
+  /* Auto-hide */
+  .hidden-ui #top-bar,
+  .hidden-ui #controls { opacity: 0; pointer-events: none; }
+  .hidden-ui { cursor: none; }
+
+  /* Loading spinner over everything */
+  #spinner {
+    position: fixed;
+    inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px;
+    background: rgba(0,0,0,0.4);
+    z-index: 20;
+    pointer-events: none;
+    transition: opacity 0.4s;
+  }
+  #spinner.gone { opacity: 0; }
+  .ring {
+    width: 52px; height: 52px;
+    border: 4px solid rgba(255,255,255,0.1);
+    border-top-color: #e50914;
+    border-radius: 50%;
+    animation: spin 0.75s linear infinite;
+  }
+  #spinner-label {
+    color: rgba(255,255,255,0.7);
+    font-size: 13px;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+  <!-- Spinner while MPV connects -->
+  <div id="spinner">
+    <div class="ring"></div>
+    <div id="spinner-label">Conectando con el reproductor...</div>
+  </div>
+
+  <!-- Click-through zone (video area) -->
+  <div id="video-passthrough"></div>
+
+  <!-- Top bar -->
+  <div id="top-bar">
+    <button id="btn-back">←</button>
+    <div id="player-title">Cargando...</div>
+  </div>
+
+  <!-- Bottom controls -->
+  <div id="controls">
+    <div id="seek-wrap">
+      <div id="seek-fill"></div>
+    </div>
+    <div id="btn-row">
+      <button class="ctrl-btn" id="btn-playpause">⏸</button>
+      <button class="ctrl-btn" id="btn-back10" title="-10s">⏮</button>
+      <button class="ctrl-btn" id="btn-fwd30"  title="+30s">⏭</button>
+      <span id="time-disp">0:00 / 0:00</span>
+      <div class="spacer"></div>
+      <div id="vol-group">
+        <button class="ctrl-btn" id="btn-mute">🔊</button>
+        <input type="range" id="vol-slider" min="0" max="100" value="100">
+      </div>
+    </div>
+  </div>
+
+<script>
+  const api = window.cineflix;
+  let dur = 0, paused = false, muted = false;
+  let hideTimer = null;
+
+  const $ = id => document.getElementById(id);
+  const fmt = s => {
+    if (!s || isNaN(s)) return '0:00';
+    const m = Math.floor(s / 60);
+    return `${m}:${Math.floor(s % 60).toString().padStart(2,'0')}`;
+  };
+
+  function resetHideTimer() {
+    document.body.classList.remove('hidden-ui');
+    clearTimeout(hideTimer);
+    if (!paused) {
+      hideTimer = setTimeout(() => document.body.classList.add('hidden-ui'), 3500);
+    }
+  }
+  document.addEventListener('mousemove', resetHideTimer);
+
+  // MPV events
+  if (api) {
+    api.mpv.onEvent(evt => {
+      console.log('[MPV evt]', evt.type, evt);
+      switch (evt.type) {
+        case 'started':
+          $('spinner').classList.add('gone');
+          $('player-title').textContent = evt.title || 'Reproduciendo';
+          resetHideTimer();
+          break;
+        case 'timepos':
+          dur = evt.duration || dur;
+          const pct = dur > 0 ? (evt.pos / dur * 100) : 0;
+          $('seek-fill').style.width = pct + '%';
+          $('time-disp').textContent = `${fmt(evt.pos)} / ${fmt(dur)}`;
+          break;
+        case 'pause':
+          paused = evt.paused;
+          $('btn-playpause').textContent = paused ? '▶' : '⏸';
+          if (paused) { document.body.classList.remove('hidden-ui'); clearTimeout(hideTimer); }
+          else resetHideTimer();
+          break;
+        case 'stopped':
+        case 'ended':
+          console.log('[OVERLAY] ignoring stopped/ended to debug player early exit');
+          // api.player.back(); // COMMENTED OUT: avoid auto-killing MPV loop
+          break;
+        case 'error':
+          $('spinner-label').textContent = '⚠ ' + evt.message;
+          $('spinner').classList.remove('gone');
+          break;
+      }
+    });
+  } else {
+    console.error('[Overlay] window.cineflix not available — preload not loaded!');
+    $('spinner-label').textContent = '⚠ Error: preload no cargado';
+  }
+
+  // Controls
+  $('btn-back').onclick = () => { api?.mpv.quit(); api?.player.back(); };
+  $('btn-playpause').onclick = () => api?.mpv.command(['cycle', 'pause']);
+  $('btn-back10').onclick   = () => api?.mpv.command(['seek', '-10', 'relative']);
+  $('btn-fwd30').onclick    = () => api?.mpv.command(['seek',  '30', 'relative']);
+  $('btn-mute').onclick     = () => {
+    muted = !muted;
+    api?.mpv.command(['set_property', 'mute', muted ? 'yes' : 'no']);
+    $('btn-mute').textContent = muted ? '🔇' : '🔊';
+  };
+  $('vol-slider').oninput = e => api?.mpv.command(['set_property', 'volume', +e.target.value]);
+
+  $('seek-wrap').addEventListener('click', e => {
+    if (!dur) return;
+    const r = $('seek-wrap').getBoundingClientRect();
+    api?.mpv.command(['seek', ((e.clientX - r.left) / r.width) * dur, 'absolute']);
+  });
+</script>
+</body>
+</html>

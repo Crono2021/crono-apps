@@ -1,0 +1,11 @@
+node_modules/
+out/
+release/
+dist/
+*.log
+
+# mpv.exe is bundled but heavy – keep out of git
+# Download from: https://mpv.io/installation/ (Windows portable build)
+# Rename to mpv.exe and place in resources/
+resources/mpv.exe
+resources/mpv
