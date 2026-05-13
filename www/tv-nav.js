@@ -299,9 +299,11 @@
       if (!this.focused) { this.focusFirst(); return; }
 
       if (this.focused.tagName === 'INPUT' || this.focused.tagName === 'TEXTAREA') {
-        // Focus the input → triggers enterInputMode → shows system keyboard on TV
-        this.focused.focus();
-        // enterInputMode is called by the 'focus' event listener automatically
+        if (this.focused.readOnly) {
+          this.focused.click();
+        } else {
+          this.focused.focus();
+        }
       } else {
         this.focused.click();
       }

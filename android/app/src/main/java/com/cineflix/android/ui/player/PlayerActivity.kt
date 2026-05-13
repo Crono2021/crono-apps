@@ -1,6 +1,5 @@
 package com.cineflix.android.ui.player
 
-import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -12,10 +11,8 @@ import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
@@ -28,6 +25,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.cineflix.android.TelegramEngine
+import com.cineflix.android.R
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
@@ -38,21 +36,26 @@ import com.google.android.gms.cast.framework.SessionManager
 import com.google.android.gms.cast.framework.SessionManagerListener
 import androidx.mediarouter.app.MediaRouteButton
 import kotlinx.coroutines.*
-import org.videolan.libvlc.LibVLC
-import org.videolan.libvlc.Media
-import org.videolan.libvlc.MediaPlayer
-import org.videolan.libvlc.interfaces.IVLCVout
-import com.cineflix.android.R
 
-class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
+// Media3
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 
-    private var libVLC: LibVLC? = null
-    private var mediaPlayer: MediaPlayer? = null
+class PlayerActivity : AppCompatActivity() {
+
+    private var player: ExoPlayer? = null
     private var proxyServer: StreamProxyServer? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // UI
-    private lateinit var surfaceView: SurfaceView
+    private lateinit var playerView: PlayerView
     private lateinit var tvVideoTitle: TextView
     private lateinit var tvTimeCurrent: TextView
     private lateinit var tvTimeDuration: TextView
@@ -181,8 +184,8 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         
         setupCastButton()
 
-        // 4. Iniciar VLC
-        initVLC()
+        // 4. Iniciar ExoPlayer
+        initExoPlayer()
         playUrl(localStreamUrl)
 
         // 5. Fetch saved progress y trackear
@@ -194,11 +197,11 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
                         withContext(Dispatchers.Main) {
                             // Delay to ensure buffer starts before seek
                             Handler(Looper.getMainLooper()).postDelayed({
-                                if (mediaPlayer != null) {
-                                    mediaPlayer?.time = savedProgress * 1000L
+                                player?.let {
+                                    it.seekTo(savedProgress * 1000L)
                                     Toast.makeText(this@PlayerActivity, "Reanudado en ${savedProgress/60}m", Toast.LENGTH_SHORT).show()
                                 }
-                            }, 2500)
+                            }, 1000)
                         }
                     }
                 } catch (e: Exception) {}
@@ -209,15 +212,10 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         showTitle(title)
         scheduleHideControls()
         setupCastSessionListener()
-
-        // 7. Progress tracking
-        if (phone.isNotEmpty() && contentId.isNotEmpty()) {
-            startProgressTracking(phone, contentId, season, episode)
-        }
     }
 
     private fun bindViews() {
-        surfaceView = findViewById(R.id.video_surface)
+        playerView = findViewById(R.id.video_surface)
         tvVideoTitle = findViewById(R.id.tv_video_title)
         tvTimeCurrent = findViewById(R.id.tv_time_current)
         tvTimeDuration = findViewById(R.id.tv_time_duration)
@@ -235,144 +233,133 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
     private fun setupListeners() {
         btnPlayPause.setOnClickListener { togglePlayPause() }
-        btnRewind.setOnClickListener { seekRelative(-15000); showControls() }
-        btnForward.setOnClickListener { seekRelative(15000); showControls() }
+        btnRewind.setOnClickListener { seekRelative(-10000); showControls() }
+        btnForward.setOnClickListener { seekRelative(10000); showControls() }
         btnResize.setOnClickListener { toggleResizeMode() }
         btnTracks.setOnClickListener { showTrackSelectorBottomSheet() }
 
+        setupFocusAnimation(btnPlayPause)
+        setupFocusAnimation(btnRewind)
+        setupFocusAnimation(btnForward)
+        setupFocusAnimation(btnResize)
+        setupFocusAnimation(btnTracks)
+
+        seekBar.setOnFocusChangeListener { v, hasFocus ->
+            if (hasFocus) {
+                v.animate().scaleX(1.05f).scaleY(1.05f).setDuration(150).start()
+            } else {
+                v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(150).start()
+            }
+        }
+
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
-                if (fromUser && mediaPlayer != null) mediaPlayer?.position = progress / 1000f
+                if (fromUser && player != null) player?.seekTo(progress.toLong())
             }
             override fun onStartTrackingTouch(bar: SeekBar) { isSeeking = true }
             override fun onStopTrackingTouch(bar: SeekBar) { isSeeking = false }
         })
 
-        surfaceView.setOnClickListener { toggleControls() }
+        playerView.setOnClickListener { toggleControls() }
     }
 
-    private fun initVLC() {
-        val options = arrayListOf(
-            "--aout=opensles",
-            "--audio-time-stretch",
-            "-vvv",
-            "--avcodec-skiploopfilter=1",
-            "--avcodec-skip-frame=0",
-            "--avcodec-skip-idct=0",
-            "--network-caching=5000" // Aumentado a 5s para Telegram
-        )
-
-        libVLC = LibVLC(this, options)
-        mediaPlayer = MediaPlayer(libVLC)
-
-        val vlcVout = mediaPlayer?.vlcVout
-        vlcVout?.setVideoView(surfaceView)
-        vlcVout?.addCallback(this)
-        vlcVout?.attachViews()
-
-        mediaPlayer?.setEventListener { event ->
-            when (event.type) {
-                MediaPlayer.Event.Playing -> {
-                    if (savedPosition > 0L) {
-                        mediaPlayer?.time = savedPosition
-                        savedPosition = 0L
-                    }
-                    runOnUiThread { 
-                        loadingSpinner.visibility = View.GONE
-                        btnPlayPause.setImageResource(android.R.drawable.ic_media_pause) 
-                    }
+    private fun setupFocusAnimation(view: View) {
+        view.setOnFocusChangeListener { v, hasFocus ->
+            if (hasFocus) {
+                v.animate().scaleX(1.2f).scaleY(1.2f).setDuration(150).start()
+                if (v is ImageButton) {
+                    v.setColorFilter(android.graphics.Color.parseColor("#7c3aed"))
                 }
-                MediaPlayer.Event.Paused -> runOnUiThread {
-                    btnPlayPause.setImageResource(android.R.drawable.ic_media_play)
+            } else {
+                v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(150).start()
+                if (v is ImageButton) {
+                    v.clearColorFilter()
                 }
-                MediaPlayer.Event.Buffering -> {
-                    val buf = event.buffering
-                    runOnUiThread { loadingSpinner.visibility = if (buf < 100f) View.VISIBLE else View.GONE }
-                }
-                MediaPlayer.Event.EndReached -> runOnUiThread { finish() }
-                MediaPlayer.Event.EncounteredError -> runOnUiThread {
-                    Toast.makeText(this, "Error de reproducción", Toast.LENGTH_SHORT).show()
-                    finish()
-                }
-                MediaPlayer.Event.Vout -> runOnUiThread { updateVideoSurface() }
-                MediaPlayer.Event.TimeChanged, MediaPlayer.Event.LengthChanged -> runOnUiThread { updateSeekBar() }
             }
         }
     }
 
+    private fun initExoPlayer() {
+        val renderersFactory = DefaultRenderersFactory(this)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+
+        player = ExoPlayer.Builder(this)
+            .setRenderersFactory(renderersFactory)
+            .build()
+            
+        playerView.player = player
+        playerView.useController = false
+
+        player?.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_BUFFERING) {
+                    loadingSpinner.visibility = View.VISIBLE
+                } else {
+                    loadingSpinner.visibility = View.GONE
+                }
+
+                if (playbackState == Player.STATE_ENDED) {
+                    finish()
+                }
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) {
+                    btnPlayPause.setImageResource(android.R.drawable.ic_media_pause)
+                    scheduleHideControls()
+                } else {
+                    btnPlayPause.setImageResource(android.R.drawable.ic_media_play)
+                }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                Toast.makeText(this@PlayerActivity, "Error de reproducción", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+        })
+    }
+
     private fun playUrl(url: String) {
         loadingSpinner.visibility = View.VISIBLE
-        val media = Media(libVLC, Uri.parse(url))
-        media.setHWDecoderEnabled(true, false)
-        media.addOption(":network-caching=5000")
-        media.addOption(":clock-jitter=0")
-        media.addOption(":clock-synchro=0")
-        mediaPlayer?.media = media
-        media.release()
-        mediaPlayer?.play()
+        val mediaItem = MediaItem.fromUri(Uri.parse(url))
+        player?.setMediaItem(mediaItem)
+        player?.prepare()
+        player?.play()
         
         startSeekBarUpdater()
     }
 
-    // --- VLC Size/Aspect Ratio ---
-    private fun updateVideoSurface() {
-        val mp = mediaPlayer ?: return
-        val vlcVout = mp.vlcVout
-        var sw = surfaceView.width
-        var sh = surfaceView.height
-        if (sw == 0 || sh == 0) {
-            sw = window.decorView.width
-            sh = window.decorView.height
-        }
-        vlcVout.setWindowSize(sw, sh)
-        mp.aspectRatio = null
-        mp.scale = 0f
-    }
-
+    // --- Video Scaling ---
     private fun toggleResizeMode() {
-        val mp = mediaPlayer ?: return
-        val dm = android.util.DisplayMetrics()
-        windowManager.defaultDisplay.getRealMetrics(dm)
-        val sw = dm.widthPixels
-        val sh = dm.heightPixels
-        if (sw == 0 || sh == 0) return
-
         currentScaleIndex = (currentScaleIndex + 1) % 4
         var modeName = ""
 
         when (currentScaleIndex) {
             0 -> {
-                // Original — Tamaño original del vídeo, sin distorsión
-                mp.aspectRatio = null
-                mp.scale = 0f
+                playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 modeName = "Original"
             }
             1 -> {
-                // 16:9 — Fuerza relación de aspecto 16:9
-                mp.aspectRatio = "16:9"
-                mp.scale = 0f
-                modeName = "16:9"
+                playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH
+                modeName = "Ajustar Ancho"
             }
             2 -> {
-                // Ajustar — Rellena toda la pantalla (puede recortar bordes)
-                mp.scale = 0f
-                mp.aspectRatio = "$sw:$sh"
-                modeName = "Ajustar pantalla"
+                playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
+                modeName = "Llenar Pantalla"
             }
             3 -> {
-                // Zoom — Zoom moderado (1.2x)
-                mp.aspectRatio = null
-                mp.scale = 1.2f
+                playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 modeName = "Zoom"
             }
         }
+
         Toast.makeText(this, modeName, Toast.LENGTH_SHORT).show()
         showControls()
     }
 
     // --- Unified Track Selector ---
     private fun showTrackSelectorBottomSheet() {
-        val mp = mediaPlayer ?: return
+        val p = player ?: return
         
         val bottomSheetDialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
         
@@ -406,21 +393,35 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         audioColumn.addView(audioTitle)
 
         val audioGroup = android.widget.RadioGroup(this)
-        val audioTracks = mp.audioTracks
-        val currentAudioId = mp.audioTrack
+        val tracks = p.currentTracks
 
-        if (audioTracks != null) {
-            for (track in audioTracks) {
-                if (track.id == -1 || track.name.equals("Disable", ignoreCase = true)) continue
-                val rb = android.widget.RadioButton(this).apply {
-                    text = track.name
-                    setTextColor(android.graphics.Color.WHITE)
-                    buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
-                    isChecked = track.id == currentAudioId
-                    setPadding(0, dpToPx(8), 0, dpToPx(8))
-                    setOnClickListener { mp.audioTrack = track.id; bottomSheetDialog.dismiss() }
+        var audioIdCounter = 0
+        for (trackGroup in tracks.groups) {
+            if (trackGroup.type == C.TRACK_TYPE_AUDIO) {
+                for (i in 0 until trackGroup.length) {
+                    val format = trackGroup.getTrackFormat(i)
+                    var name = format.language ?: "Pista ${audioIdCounter + 1}"
+                    if (format.label != null) {
+                        name = format.label!!
+                    }
+                    val isSelected = trackGroup.isTrackSelected(i)
+
+                    val rb = android.widget.RadioButton(this).apply {
+                        text = name
+                        setTextColor(android.graphics.Color.WHITE)
+                        buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
+                        isChecked = isSelected
+                        setPadding(0, dpToPx(8), 0, dpToPx(8))
+                        setOnClickListener { 
+                            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                                .setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, i))
+                                .build()
+                            bottomSheetDialog.dismiss() 
+                        }
+                    }
+                    audioGroup.addView(rb)
+                    audioIdCounter++
                 }
-                audioGroup.addView(rb)
             }
         }
         audioColumn.addView(audioGroup)
@@ -447,32 +448,53 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         subColumn.addView(subTitle)
 
         val subGroup = android.widget.RadioGroup(this)
-        val spuTracks = mp.spuTracks
-        val currentSpuId = mp.spuTrack
         
-        // Disable subtitle option
+        val hasSelectedSub = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT && it.isSelected }
+
         val rbSubDisable = android.widget.RadioButton(this).apply {
             text = "Desactivar"
             setTextColor(android.graphics.Color.WHITE)
             buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
-            isChecked = currentSpuId == -1
+            isChecked = !hasSelectedSub
             setPadding(0, dpToPx(8), 0, dpToPx(8))
-            setOnClickListener { mp.spuTrack = -1; bottomSheetDialog.dismiss() }
+            setOnClickListener { 
+                p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .build()
+                bottomSheetDialog.dismiss() 
+            }
         }
         subGroup.addView(rbSubDisable)
 
-        if (spuTracks != null) {
-            for (track in spuTracks) {
-                if (track.id == -1 || track.name.equals("Disable", ignoreCase = true)) continue
-                val rb = android.widget.RadioButton(this).apply {
-                    text = track.name
-                    setTextColor(android.graphics.Color.WHITE)
-                    buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
-                    isChecked = track.id == currentSpuId
-                    setPadding(0, dpToPx(8), 0, dpToPx(8))
-                    setOnClickListener { mp.spuTrack = track.id; bottomSheetDialog.dismiss() }
+        var subIdCounter = 0
+        for (trackGroup in tracks.groups) {
+            if (trackGroup.type == C.TRACK_TYPE_TEXT) {
+                for (i in 0 until trackGroup.length) {
+                    val format = trackGroup.getTrackFormat(i)
+                    var name = format.language ?: "Sub ${subIdCounter + 1}"
+                    if (format.label != null) {
+                        name = format.label!!
+                    }
+                    val isSelected = trackGroup.isTrackSelected(i)
+
+                    val rb = android.widget.RadioButton(this).apply {
+                        text = name
+                        setTextColor(android.graphics.Color.WHITE)
+                        buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
+                        isChecked = isSelected
+                        setPadding(0, dpToPx(8), 0, dpToPx(8))
+                        setOnClickListener { 
+                            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                .setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, i))
+                                .build()
+                            bottomSheetDialog.dismiss() 
+                        }
+                    }
+                    subGroup.addView(rb)
+                    subIdCounter++
                 }
-                subGroup.addView(rb)
             }
         }
         subColumn.addView(subGroup)
@@ -531,8 +553,8 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
     // --- UI Controls ---
     private fun togglePlayPause() {
-        val mp = mediaPlayer ?: return
-        if (mp.isPlaying) mp.pause() else mp.play()
+        val p = player ?: return
+        if (p.isPlaying) p.pause() else p.play()
         showControls()
     }
 
@@ -567,17 +589,17 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
     private fun scheduleHideControls() {
         controlsHandler.removeCallbacksAndMessages(null)
         controlsHandler.postDelayed({
-            if (mediaPlayer?.isPlaying == true) hideControls()
+            if (player?.isPlaying == true) hideControls()
         }, 4000)
     }
 
     private fun updateSeekBar() {
-        if (mediaPlayer == null || isSeeking) return
-        val time = mediaPlayer!!.time
-        val duration = mediaPlayer!!.length
-        if (duration > 0) {
-            seekBar.max = 1000
-            seekBar.progress = (mediaPlayer!!.position * 1000).toInt()
+        if (player == null || isSeeking) return
+        val time = player!!.currentPosition
+        val duration = player!!.duration
+        if (duration > 0 && duration != C.TIME_UNSET) {
+            seekBar.max = duration.toInt()
+            seekBar.progress = time.toInt()
             tvTimeCurrent.text = formatTime(time)
             tvTimeDuration.text = formatTime(duration)
         }
@@ -610,7 +632,6 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
             tvVideoTitle.visibility = View.VISIBLE
             tvVideoTitle.animate().alpha(1f).setDuration(400).start()
             
-            // Ocultar título automáticamente después de 2 segundos, independientemente de los controles
             titleHandler.removeCallbacksAndMessages(null)
             titleHandler.postDelayed({
                 tvVideoTitle.animate().alpha(0f).setDuration(500).withEndAction { 
@@ -621,35 +642,33 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
     }
 
     private fun seekRelative(deltaMs: Long) {
-        val mp = mediaPlayer ?: return
-        val current = mp.time
-        val duration = mp.length
-        if (duration <= 0) return
+        val p = player ?: return
+        val current = p.currentPosition
+        val duration = p.duration
+        if (duration <= 0 || duration == C.TIME_UNSET) return
         val target = Math.max(0, Math.min(current + deltaMs, duration))
-        mp.time = target
+        p.seekTo(target)
         updateSeekBar()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        val mp = mediaPlayer ?: return super.onKeyDown(keyCode, event)
+        val p = player ?: return super.onKeyDown(keyCode, event)
 
-        // ── Teclas multimedia dedicadas (mandos con botones físicos) ──
         if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
             togglePlayPause()
             return true
         }
         if (keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
-            seekRelative(15000)
+            seekRelative(10000)
             showControls()
             return true
         }
         if (keyCode == KeyEvent.KEYCODE_MEDIA_REWIND) {
-            seekRelative(-15000)
+            seekRelative(-10000)
             showControls()
             return true
         }
 
-        // ── Izquierda / Derecha: SIEMPRE buscan en el vídeo (estilo Netflix) ──
         if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
             seekRelative(-10000)
             showControls()
@@ -661,30 +680,25 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
             return true
         }
 
-        // ── OK / Centro: Play/Pause directo si controles ocultos ──
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
             if (!controlsVisible) {
                 togglePlayPause()
             } else {
-                // Controles visibles: dejar que Android active el botón enfocado
                 scheduleHideControls()
                 return super.onKeyDown(keyCode, event)
             }
             return true
         }
 
-        // ── Arriba / Abajo: Mostrar controles + navegar entre filas ──
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
             if (!controlsVisible) {
                 showControls()
                 return true
             }
-            // Controles visibles: dejar que Android mueva el foco entre filas
             scheduleHideControls()
             return super.onKeyDown(keyCode, event)
         }
 
-        // ── Back: ocultar controles o salir ──
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             if (controlsVisible) {
                 hideControls()
@@ -737,7 +751,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
             }
             override fun onSessionStarted(session: CastSession, sessionId: String) {
                 isCasting = true
-                mediaPlayer?.pause()
+                player?.pause()
 
                 val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE).apply {
                     putString(MediaMetadata.KEY_TITLE, currentTitle)
@@ -751,7 +765,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
                 val loadRequest = MediaLoadRequestData.Builder()
                     .setMediaInfo(mediaInfo)
                     .setAutoplay(true)
-                    .setCurrentTime(mediaPlayer?.time ?: 0L)
+                    .setCurrentTime(player?.currentPosition ?: 0L)
                     .build()
 
                 session.remoteMediaClient?.load(loadRequest)
@@ -760,14 +774,14 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
             override fun onSessionResuming(session: CastSession, sessionId: String) {}
             override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
                 isCasting = true
-                mediaPlayer?.pause()
+                player?.pause()
             }
             override fun onSessionResumeFailed(session: CastSession, error: Int) {}
             override fun onSessionSuspended(session: CastSession, reason: Int) {}
             override fun onSessionEnding(session: CastSession) {}
             override fun onSessionEnded(session: CastSession, error: Int) {
                 isCasting = false
-                mediaPlayer?.play()
+                player?.play()
                 Toast.makeText(this@PlayerActivity, "Reproducción local reanudada", Toast.LENGTH_SHORT).show()
             }
         }
@@ -789,7 +803,7 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         super.onResume()
         hideSystemUI()
         if (wasPlaying) {
-            mediaPlayer?.play()
+            player?.play()
         }
     }
 
@@ -809,15 +823,15 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
 
     override fun onPause() {
         super.onPause()
-        wasPlaying = mediaPlayer?.isPlaying == true
+        wasPlaying = player?.isPlaying == true
         if (wasPlaying) {
-            mediaPlayer?.pause()
+            player?.pause()
         }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putLong("savedPosition", mediaPlayer?.time ?: 0L)
+        outState.putLong("savedPosition", player?.currentPosition ?: 0L)
     }
 
     override fun onRestoreInstanceState(savedInstanceState: Bundle) {
@@ -843,20 +857,16 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         var finalPosition = -1L
         var finalDuration = 0L
         try {
-            finalPosition = mediaPlayer?.time ?: -1L
-            finalDuration = mediaPlayer?.length ?: 0L
+            finalPosition = player?.currentPosition ?: -1L
+            finalDuration = player?.duration ?: 0L
         } catch (e: Exception) {}
 
         try {
             castSessionListener?.let { sessionManager?.removeSessionManagerListener(it, CastSession::class.java) }
         } catch (_: Exception) {}
 
-        if (mediaPlayer != null) {
-            mediaPlayer?.stop()
-            mediaPlayer?.vlcVout?.removeCallback(this)
-            mediaPlayer?.release()
-        }
-        libVLC?.release()
+        player?.release()
+        player = null
 
         try { proxyServer?.stop() } catch (_: Exception) {}
         scope.cancel()
@@ -873,15 +883,13 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
         }
     }
 
-
-
     private fun startProgressTracking(phone: String, contentId: String, season: String, episode: String) {
         scope.launch {
             while (isActive) {
                 delay(30_000)
                 try {
-                    val currentPos = mediaPlayer?.time ?: -1L
-                    val durationMs = mediaPlayer?.length ?: 0L
+                    val currentPos = player?.currentPosition ?: -1L
+                    val durationMs = player?.duration ?: 0L
                     sendProgressPingDirect(phone, contentId, season, episode, currentPos, durationMs)
                 } catch (e: Exception) {}
             }
@@ -948,7 +956,4 @@ class PlayerActivity : AppCompatActivity(), IVLCVout.Callback {
             } catch (e: Exception) { 0 }
         }
     }
-
-    override fun onSurfacesCreated(vlcVout: IVLCVout) {}
-    override fun onSurfacesDestroyed(vlcVout: IVLCVout) {}
 }

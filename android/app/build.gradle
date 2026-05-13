@@ -54,10 +54,10 @@ android {
     
     splits {
         abi {
-            enable true
+            enable false
             reset()
             include 'armeabi-v7a', 'arm64-v8a'
-            universalApk false
+            universalApk true
         }
     }
 }
@@ -104,8 +104,12 @@ dependencies {
     // Coil (image loading)
     implementation "io.coil-kt:coil-compose:2.5.0"
 
-    // VLC Media Player (all codecs included, replaces ExoPlayer)
-    implementation 'org.videolan.android:libvlc-all:3.6.0'
+    // ExoPlayer (Media3)
+    implementation "androidx.media3:media3-exoplayer:1.2.0"
+    implementation "androidx.media3:media3-ui:1.2.0"
+    
+    // Jellyfin FFmpeg Extension for Software Audio Decoding (DTS, AC3, TrueHD)
+    implementation "org.jellyfin.media3:media3-ffmpeg-decoder:1.2.0+1"
 
     // HTTP (for GitHub catalog + TMDB — NOT for streaming)
     implementation "com.squareup.okhttp3:okhttp:4.12.0"

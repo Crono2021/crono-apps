@@ -90,6 +90,12 @@ class MainActivity : ComponentActivity() {
                         "          window.AndroidBridge.showNativeSearchDialogFixed(id, el.value); " +
                         "        } " +
                         "      }); " +
+                        "      el.addEventListener('focus', function(e) { " +
+                        "        if (window._cineflixIsTV && window.AndroidBridge && window.AndroidBridge.showNativeSearchDialogFixed) { " +
+                        "          e.preventDefault(); " +
+                        "          window.AndroidBridge.showNativeSearchDialogFixed(id, el.value); " +
+                        "        } " +
+                        "      }); " +
                         "    } " +
                         "  }); " +
                         "}, 500);",

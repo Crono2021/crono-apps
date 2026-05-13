@@ -1,18 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000"
     android:fitsSystemWindows="false"
-    android:focusable="true"
-    android:focusableInTouchMode="true">
+    android:descendantFocusability="afterDescendants">
 
-    <!-- VLC Video Surface -->
-    <SurfaceView
+    <!-- ExoPlayer Video Surface -->
+    <androidx.media3.ui.PlayerView
         android:id="@+id/video_surface"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_gravity="center" />
+        android:layout_gravity="center"
+        app:use_controller="false"
+        app:surface_type="surface_view" />
 
     <!-- Título Flotante (arriba centro) -->
     <TextView
@@ -38,18 +40,7 @@
         android:maxLines="2"
         android:ellipsize="end" />
 
-    <!-- Contenedor para el botón de Chromecast (arriba a la derecha) -->
-    <FrameLayout
-        android:id="@+id/cast_button_container"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|end"
-        android:layout_marginTop="24dp"
-        android:layout_marginEnd="24dp"
-        android:elevation="10dp"
-        android:translationZ="10dp" />
-
-    <!-- Controles centrales (play/pause, skip, rewind/forward) -->
+    <!-- ═══ Controles centrales (play/pause, skip, rewind/forward) ═══ -->
     <LinearLayout
         android:id="@+id/center_controls"
         android:layout_width="wrap_content"
@@ -59,6 +50,7 @@
         android:gravity="center_vertical"
         android:visibility="gone">
 
+        <!-- Capítulo anterior -->
         <ImageButton
             android:id="@+id/btn_prev"
             android:layout_width="52dp"
@@ -68,20 +60,25 @@
             android:src="@android:drawable/ic_media_previous"
             android:scaleType="fitCenter"
             android:padding="10dp"
+            android:contentDescription="Previous"
+            android:focusable="true"
             android:visibility="gone" />
 
+        <!-- Retroceder 10s -->
         <ImageButton
             android:id="@+id/btn_rewind"
             android:layout_width="56dp"
             android:layout_height="56dp"
             android:layout_marginEnd="20dp"
-            android:background="?attr/selectableItemBackground"
+            android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/ic_media_rew"
             android:scaleType="fitCenter"
             android:padding="8dp"
+            android:contentDescription="Rewind 10s"
             android:focusable="true"
-            android:nextFocusDown="@+id/btn_tracks" />
+            android:nextFocusDown="@+id/seek_bar" />
 
+        <!-- Play / Pause (grande, protagonista) -->
         <ImageButton
             android:id="@+id/btn_play_pause"
             android:layout_width="72dp"
@@ -90,21 +87,25 @@
             android:src="@android:drawable/ic_media_pause"
             android:scaleType="fitCenter"
             android:padding="12dp"
+            android:contentDescription="Play/Pause"
             android:focusable="true"
-            android:nextFocusDown="@+id/btn_tracks" />
+            android:nextFocusDown="@+id/seek_bar" />
 
+        <!-- Avanzar 10s -->
         <ImageButton
             android:id="@+id/btn_forward"
             android:layout_width="56dp"
             android:layout_height="56dp"
             android:layout_marginStart="20dp"
-            android:background="?attr/selectableItemBackground"
+            android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/ic_media_ff"
             android:scaleType="fitCenter"
             android:padding="8dp"
+            android:contentDescription="Forward 10s"
             android:focusable="true"
-            android:nextFocusDown="@+id/btn_resize" />
+            android:nextFocusDown="@+id/seek_bar" />
 
+        <!-- Capítulo siguiente -->
         <ImageButton
             android:id="@+id/btn_next"
             android:layout_width="52dp"
@@ -114,10 +115,12 @@
             android:src="@android:drawable/ic_media_next"
             android:scaleType="fitCenter"
             android:padding="10dp"
+            android:contentDescription="Next"
+            android:focusable="true"
             android:visibility="gone" />
     </LinearLayout>
 
-    <!-- Barra inferior -->
+    <!-- ═══ Barra inferior (seekbar + tiempo + botones derecha) ═══ -->
     <LinearLayout
         android:id="@+id/bottom_bar"
         android:layout_width="match_parent"
@@ -130,6 +133,7 @@
         android:paddingBottom="12dp"
         android:visibility="gone">
 
+        <!-- SeekBar -->
         <SeekBar
             android:id="@+id/seek_bar"
             android:layout_width="match_parent"
@@ -138,14 +142,17 @@
             android:progressTint="#7c3aed"
             android:thumbTint="#7c3aed"
             android:maxHeight="3dp"
-            android:focusable="false" />
+            android:focusable="true"
+            android:nextFocusUp="@+id/btn_play_pause" />
 
+        <!-- Fila: Tiempo izq | espacio | botones derecha | tiempo der -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
+            <!-- Tiempo actual -->
             <TextView
                 android:id="@+id/tv_time_current"
                 android:layout_width="wrap_content"
@@ -154,11 +161,13 @@
                 android:textSize="13sp"
                 android:text="00:00" />
 
+            <!-- Espacio flexible -->
             <View
                 android:layout_width="0dp"
                 android:layout_height="0dp"
                 android:layout_weight="1" />
 
+            <!-- Pistas (Audio / Subtítulos) -->
             <ImageButton
                 android:id="@+id/btn_tracks"
                 android:layout_width="40dp"
@@ -168,10 +177,12 @@
                 android:src="@drawable/ic_subtitles"
                 android:scaleType="fitCenter"
                 android:padding="8dp"
+                android:contentDescription="Tracks"
                 android:focusable="true"
-                android:nextFocusUp="@+id/btn_play_pause"
-                android:nextFocusRight="@+id/btn_resize" />
+                android:nextFocusRight="@+id/btn_resize"
+                android:nextFocusUp="@+id/seek_bar" />
 
+            <!-- Pantalla completa -->
             <ImageButton
                 android:id="@+id/btn_resize"
                 android:layout_width="40dp"
@@ -181,10 +192,12 @@
                 android:src="@drawable/ic_fullscreen"
                 android:scaleType="fitCenter"
                 android:padding="8dp"
+                android:contentDescription="Fullscreen"
                 android:focusable="true"
-                android:nextFocusUp="@+id/btn_play_pause"
-                android:nextFocusLeft="@+id/btn_tracks" />
+                android:nextFocusLeft="@+id/btn_tracks"
+                android:nextFocusUp="@+id/seek_bar" />
 
+            <!-- Duración -->
             <TextView
                 android:id="@+id/tv_time_duration"
                 android:layout_width="wrap_content"
@@ -195,6 +208,17 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- Contenedor Chromecast (añadido para Cineflix) -->
+    <FrameLayout
+        android:id="@+id/cast_button_container"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="32dp"
+        android:layout_marginEnd="32dp"
+        android:visibility="gone" />
+
+    <!-- Loading spinner -->
     <ProgressBar
         android:id="@+id/loading_spinner"
         android:layout_width="64dp"

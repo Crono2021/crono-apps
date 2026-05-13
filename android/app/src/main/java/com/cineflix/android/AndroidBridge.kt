@@ -489,63 +489,89 @@ class AndroidBridge(
     fun showNativeSearchDialogFixed(inputId: String, currentText: String) {
         runOnUiThread {
             try {
+                // Tema oscuro a pantalla completa
+                val dialog = android.app.Dialog(context, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen)
+                
+                val root = android.widget.LinearLayout(context)
+                root.orientation = android.widget.LinearLayout.VERTICAL
+                root.gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+                root.setBackgroundColor(android.graphics.Color.parseColor("#E6000000")) // 90% negro
+                
+                val title = android.widget.TextView(context).apply {
+                    text = "Buscar en Cineflix"
+                    textSize = 24f
+                    setTextColor(android.graphics.Color.WHITE)
+                }
+                val titleParams = android.widget.LinearLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, 100, 0, 40) }
+                root.addView(title, titleParams)
+
                 val editText = android.widget.EditText(context).apply {
                     setText(currentText)
                     setSelection(currentText.length)
                     isSingleLine = true
                     imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
-                    setTextColor(android.graphics.Color.BLACK)
-                    setHintTextColor(android.graphics.Color.GRAY)
+                    setTextColor(android.graphics.Color.WHITE)
+                    setHintTextColor(android.graphics.Color.LTGRAY)
+                    hint = "Escribe aquí..."
+                    textSize = 20f
+                    background = null // Sin línea inferior fea
                 }
                 
-                val container = android.widget.FrameLayout(context)
-                val params = android.widget.FrameLayout.LayoutParams(
+                val etContainer = android.widget.FrameLayout(context).apply {
+                    setBackgroundColor(android.graphics.Color.parseColor("#33FFFFFF"))
+                }
+                val etInnerParams = android.widget.FrameLayout.LayoutParams(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                     android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-                val margin = (20 * context.resources.displayMetrics.density).toInt()
-                params.setMargins(margin, margin, margin, margin)
-                editText.layoutParams = params
-                container.addView(editText)
+                ).apply { setMargins(40, 40, 40, 40) }
+                etContainer.addView(editText, etInnerParams)
+                
+                val etOuterParams = android.widget.LinearLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(100, 0, 100, 0) }
+                root.addView(etContainer, etOuterParams)
 
-                var dialog: android.app.AlertDialog? = null
-
-                dialog = android.app.AlertDialog.Builder(context)
-                    .setTitle("Buscar")
-                    .setView(container)
-                    .setPositiveButton("Buscar") { _, _ ->
-                        val bytes = editText.text.toString().toByteArray(Charsets.UTF_8)
-                        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                        
-                        // Safely decode UTF-8 base64 in Javascript and set the value
-                        val js = "var el = document.getElementById('$inputId'); if(el) { el.value = decodeURIComponent(escape(atob('$b64'))); el.dispatchEvent(new Event('input')); el.blur(); }"
-                        webView.evaluateJavascript(js, null)
-                        
-                        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                        imm.hideSoftInputFromWindow(editText.windowToken, 0)
-                        webView.requestFocus()
-                    }
-                    .setNegativeButton("Cancelar") { d, _ -> 
-                        d.dismiss() 
-                        webView.requestFocus()
-                    }
-                    .create()
+                dialog.setContentView(root)
+                
+                val performSearch = {
+                    val bytes = editText.text.toString().toByteArray(Charsets.UTF_8)
+                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                     
+                    val js = "var el = document.getElementById('$inputId'); if(el) { el.value = decodeURIComponent(escape(atob('$b64'))); el.dispatchEvent(new Event('input')); el.blur(); }"
+                    webView.evaluateJavascript(js, null)
+                    
+                    dialog.dismiss()
+                }
+
                 editText.setOnEditorActionListener { _, actionId, event ->
                     if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH || 
                         actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE || 
                         (event != null && event.keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_DOWN)) {
-                        dialog?.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.performClick()
+                        performSearch()
                         true
                     } else {
                         false
                     }
                 }
 
+                dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+
                 dialog.setOnShowListener {
-                    editText.requestFocus()
+                    editText.postDelayed({
+                        editText.requestFocus()
+                        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                        imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_FORCED)
+                    }, 150)
+                }
+                
+                dialog.setOnDismissListener {
                     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                    imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                    imm.hideSoftInputFromWindow(editText.windowToken, 0)
+                    webView.requestFocus()
                 }
                 
                 dialog.show()
