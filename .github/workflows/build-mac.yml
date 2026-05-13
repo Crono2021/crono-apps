@@ -27,7 +27,7 @@ jobs:
           chmod +x resources/mpv
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build Electron app for macOS
         run: npx electron-vite build && npx electron-builder --mac
