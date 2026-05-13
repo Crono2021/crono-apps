@@ -82,16 +82,16 @@ class MainActivity : ComponentActivity() {
                         "setTimeout(function() { " +
                         "  ['search-input', 'movies-search-input'].forEach(id => { " +
                         "    let el = document.getElementById(id); " +
-                        "    if(el) { " +
+                        "    if(el && window._cineflixIsTV) { " +
                         "      el.readOnly = true; " +
                         "      el.addEventListener('click', function(e) { " +
-                        "        if (window._cineflixIsTV && window.AndroidBridge && window.AndroidBridge.showNativeSearchDialogFixed) { " +
+                        "        if (window.AndroidBridge && window.AndroidBridge.showNativeSearchDialogFixed) { " +
                         "          e.preventDefault(); " +
                         "          window.AndroidBridge.showNativeSearchDialogFixed(id, el.value); " +
                         "        } " +
                         "      }); " +
                         "      el.addEventListener('focus', function(e) { " +
-                        "        if (window._cineflixIsTV && window.AndroidBridge && window.AndroidBridge.showNativeSearchDialogFixed) { " +
+                        "        if (window.AndroidBridge && window.AndroidBridge.showNativeSearchDialogFixed) { " +
                         "          e.preventDefault(); " +
                         "          window.AndroidBridge.showNativeSearchDialogFixed(id, el.value); " +
                         "        } " +
