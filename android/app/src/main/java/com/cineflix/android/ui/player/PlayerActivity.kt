@@ -280,8 +280,13 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun initExoPlayer() {
+        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+        val forceSoftware = prefs.getBoolean("force_software_audio", false)
+        val mode = if (forceSoftware) DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER 
+                   else DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+
         val renderersFactory = DefaultRenderersFactory(this)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            .setExtensionRendererMode(mode)
 
         player = ExoPlayer.Builder(this)
             .setRenderersFactory(renderersFactory)
@@ -388,9 +393,35 @@ class PlayerActivity : AppCompatActivity() {
             textSize = 14f
             setTypeface(null, android.graphics.Typeface.BOLD)
             gravity = android.view.Gravity.CENTER
-            setPadding(0, 0, 0, dpToPx(16))
+            setPadding(0, 0, 0, dpToPx(8))
         }
         audioColumn.addView(audioTitle)
+
+        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+        val forceSoftware = prefs.getBoolean("force_software_audio", false)
+
+        val cbForceSoftware = android.widget.CheckBox(this).apply {
+            text = "Compatibilidad Estéreo"
+            setTextColor(android.graphics.Color.LTGRAY)
+            textSize = 12f
+            buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
+            isChecked = forceSoftware
+            setPadding(0, 0, 0, dpToPx(8))
+            setOnClickListener {
+                val newState = isChecked
+                prefs.edit().putBoolean("force_software_audio", newState).apply()
+                val currentPos = player?.currentPosition ?: 0L
+                player?.release()
+                player = null
+                initExoPlayer()
+                val port = proxyServer?.listeningPort ?: 8080
+                playUrl("http://127.0.0.1:$port/stream")
+                player?.seekTo(currentPos)
+                bottomSheetDialog.dismiss()
+                Toast.makeText(this@PlayerActivity, if (newState) "Audio por software forzado" else "Passthrough activado", Toast.LENGTH_SHORT).show()
+            }
+        }
+        audioColumn.addView(cbForceSoftware)
 
         val audioGroup = android.widget.RadioGroup(this)
         val tracks = p.currentTracks
