@@ -36,8 +36,8 @@ class StreamProxyServer(
         // on slower devices like Fire Stick where WiFi throughput is limited.
         private const val PREFETCH_SIZE = 4L * 1024L * 1024L
         
-        // Wipe local TDLib cache every 450MB to never exceed TV storage capacity
-        private const val ROLLING_GC_THRESHOLD = 450L * 1024L * 1024L
+        // Wipe local TDLib cache every 250MB to never exceed TV storage capacity
+        private const val ROLLING_GC_THRESHOLD = 250L * 1024L * 1024L
     }
 
     @Volatile
