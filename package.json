@@ -47,6 +47,10 @@
         {
           "from": "resources/mpv",
           "to": "mpv"
+        },
+        {
+          "from": "resources/libs",
+          "to": "libs"
         }
       ]
     },

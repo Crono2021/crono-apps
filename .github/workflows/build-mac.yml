@@ -19,12 +19,14 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install mpv (macOS)
+      - name: Install mpv and bundle libraries (macOS)
         run: |
           brew install mpv
-          mkdir -p resources
+          brew install dylibbundler
+          mkdir -p resources/libs
           cp $(which mpv) resources/mpv
           chmod +x resources/mpv
+          dylibbundler -od -b -x resources/mpv -d resources/libs -p @executable_path/libs
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
