@@ -1,0 +1,45 @@
+name: Build Cineflix Desktop (macOS)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - desktop-app
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install mpv (macOS)
+        run: |
+          brew install mpv
+          mkdir -p resources
+          cp $(which mpv) resources/mpv
+          chmod +x resources/mpv
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Electron app for macOS
+        run: npx electron-vite build && npx electron-builder --mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cineflix-macOS
+          path: |
+            release/*.dmg
+            release/*.zip
+          retention-days: 14
