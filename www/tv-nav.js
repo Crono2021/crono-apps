@@ -151,7 +151,17 @@
         case 39: e.preventDefault(); this.move('right'); break; // →
         case 38: e.preventDefault(); this.move('up');    break; // ↑
         case 40: e.preventDefault(); this.move('down');  break; // ↓
-        case 13: e.preventDefault(); this.confirm();     break; // OK / Enter
+        case 13: 
+          if (this.focused && (this.focused.tagName === 'INPUT' || this.focused.tagName === 'TEXTAREA')) {
+            // DO NOT preventDefault on inputs! This allows the native Android WebView 
+            // to correctly process the hardware 'Enter' key and reliably open the system 
+            // on-screen keyboard, completely fixing the bug on TCL TVs natively.
+            this.confirm();
+          } else {
+            e.preventDefault(); 
+            this.confirm();     
+          }
+          break; // OK / Enter
         case 27:                                               // Escape
         case 4:  e.preventDefault(); this.back();        break; // Android Back
       }
@@ -303,11 +313,7 @@
       if (!this.focused) { this.focusFirst(); return; }
 
       if (this.focused.tagName === 'INPUT' || this.focused.tagName === 'TEXTAREA') {
-        if (this.focused.readOnly) {
-          this.focused.click();
-        } else {
-          this.focused.focus();
-        }
+        this.focused.focus();
       } else {
         this.focused.click();
       }

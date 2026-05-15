@@ -80,24 +80,7 @@ class MainActivity : ComponentActivity() {
                         "window.__appVersion = $vCode; " +
                         "document.documentElement.classList.toggle('android-tv', $tvFlag);" +
                         "setTimeout(function() { " +
-                        "  ['search-input', 'movies-search-input'].forEach(id => { " +
-                        "    let el = document.getElementById(id); " +
-                        "    if(el && window._cineflixIsTV) { " +
-                        "      el.readOnly = true; " +
-                        "      el.addEventListener('click', function(e) { " +
-                        "        if (window.AndroidBridge && window.AndroidBridge.showNativeSearchDialogFixed) { " +
-                        "          e.preventDefault(); " +
-                        "          window.AndroidBridge.showNativeSearchDialogFixed(id, el.value); " +
-                        "        } " +
-                        "      }); " +
-                        "      el.addEventListener('focus', function(e) { " +
-                        "        if (window.AndroidBridge && window.AndroidBridge.showNativeSearchDialogFixed) { " +
-                        "          e.preventDefault(); " +
-                        "          window.AndroidBridge.showNativeSearchDialogFixed(id, el.value); " +
-                        "        } " +
-                        "      }); " +
-                        "    } " +
-                        "  }); " +
+                        "  // Native UI injection removed per user request " +
                         "}, 500);",
                         null
                     )
