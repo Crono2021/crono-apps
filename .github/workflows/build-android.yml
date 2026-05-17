@@ -140,8 +140,8 @@ jobs:
       - name: Rename APKs
         run: |
           cd android/app/build/outputs/apk/release/
-          mv app-arm64-v8a-release.apk "Cineflix Android Universal 1.3.3 arm64-v8a.apk" || true
-          mv app-armeabi-v7a-release.apk "Cineflix Android Universal 1.3.3 armeabi-v7a.apk" || true
+          # The build now produces a single universal APK when abi splitting is disabled
+          mv app-release.apk "Cineflix.Android.Universal.${{ github.ref_name }}.apk" || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
