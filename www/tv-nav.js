@@ -84,12 +84,7 @@
       // Capture phase so we intercept before anything else
       document.addEventListener('keydown', (e) => this.onKey(e), true);
 
-      // Detect when user focuses/blurs an input (system keyboard appears/disappears)
-      document.addEventListener('focus', (e) => {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-          this.enterInputMode(e.target);
-        }
-      }, true);
+      // Removed automatic focus listener that kidnapped the D-pad when hovering an input.
 
       document.addEventListener('blur', (e) => {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
@@ -128,6 +123,9 @@
       if (this.focused) {
         this.focused.classList.add('tv-focused');
       }
+      if (window.AndroidBridge && window.AndroidBridge.hideKeyboard) {
+          window.AndroidBridge.hideKeyboard();
+      }
       console.log('[TV-NAV] Input mode OFF');
     }
 
@@ -137,12 +135,19 @@
 
       // ── INPUT MODE: only Back/Escape exits; everything else passes through ──
       if (this.inputMode) {
-        if (key === 27 || key === 4 /* Android KEYCODE_BACK */) {
-          e.preventDefault();
-          if (this.focused) this.focused.blur(); // triggers exitInputMode via blur event
+        // SAFEGUARD: If the native system somehow dropped focus without firing blur, rescue the D-pad
+        if (this.focused && document.activeElement !== this.focused) {
+            console.log('[TV-NAV] Rescuing trapped D-pad: activeElement lost focus');
+            this.exitInputMode(this.focused);
+        } else {
+            if (key === 27 || key === 4 /* Android KEYCODE_BACK */) {
+              e.preventDefault();
+              this.exitInputMode(this.focused); // Forzamos salida explícita
+              if (this.focused) this.focused.blur(); 
+            }
+            // Arrow keys, letters, Enter all pass through to on-screen keyboard / input
+            return;
         }
-        // Arrow keys, letters, Enter all pass through to on-screen keyboard / input
-        return;
       }
 
       // ── NORMAL D-PAD MODE ─────────────────────────────────────────────
@@ -152,16 +157,14 @@
         case 38: e.preventDefault(); this.move('up');    break; // ↑
         case 40: e.preventDefault(); this.move('down');  break; // ↓
         case 13: 
-          if (this.focused && (this.focused.tagName === 'INPUT' || this.focused.tagName === 'TEXTAREA')) {
-            // DO NOT preventDefault on inputs! This allows the native Android WebView 
-            // to correctly process the hardware 'Enter' key and reliably open the system 
-            // on-screen keyboard, completely fixing the bug on TCL TVs natively.
-            this.confirm();
-          } else {
-            e.preventDefault(); 
-            this.confirm();     
-          }
-          break; // OK / Enter
+            if (this.focused && (this.focused.tagName === 'INPUT' || this.focused.tagName === 'TEXTAREA')) {
+                // DO NOT preventDefault! Let Fire OS see the hardware Enter key to natively trigger its keyboard.
+                this.confirm(); 
+            } else {
+                e.preventDefault(); 
+                this.confirm();     
+            }
+            break; // OK / Enter
         case 27:                                               // Escape
         case 4:  e.preventDefault(); this.back();        break; // Android Back
       }
@@ -173,18 +176,15 @@
       if (!view) return [];
       let zones = [];
 
-      // Zone 0 — Topbar Actions: refresh + logout
-      const refreshBtn = view.querySelector('#btn-refresh-catalog, #btn-movies-refresh');
-      const logoutBtn  = view.querySelector('#btn-logout, #btn-movies-logout');
-      const actionItems = [refreshBtn, logoutBtn].filter(Boolean).filter(el => this.visible(el));
-      if (actionItems.length) zones.push({ key: 'topbar-actions', items: actionItems });
-
-      // Zone 1 — Topbar Search: search box
+      // Zone 1 — Topbar: search box + refresh button + logout button
       const searchInput = view.querySelector('#search-input, #movies-search-input');
-      if (searchInput && this.visible(searchInput)) zones.push({ key: 'topbar-search', items: [searchInput] });
+      const refreshTopBtn = view.querySelector('.btn-refresh-top');
+      const logoutBtn   = view.querySelector('#btn-logout, #btn-movies-logout');
+      const topbarItems = [searchInput, refreshTopBtn, logoutBtn].filter(Boolean).filter(el => this.visible(el));
+      if (topbarItems.length) zones.push({ key: 'topbar', items: topbarItems });
 
-      // Zone 2 — Main nav (Series / Películas tabs)
-      const navBtns = [...view.querySelectorAll('.main-nav-btn')].filter(el => this.visible(el));
+      // Zone 2 — Main nav (Series / Películas tabs + Refresh)
+      const navBtns = [...view.querySelectorAll('.main-nav-btn, .btn-refresh-nav')].filter(el => this.visible(el));
       if (navBtns.length) zones.push({ key: 'main-nav', items: navBtns });
 
       // Zone 3 — Genre tabs
@@ -306,6 +306,11 @@
       this.focused = el;
       el.classList.add('tv-focused');
       el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      
+      // Prevent native focus from trapping the D-pad until user presses OK
+      if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+          document.activeElement.blur();
+      }
     }
 
     // ── OK / Enter pressed ────────────────────────────────────────────────
@@ -313,7 +318,20 @@
       if (!this.focused) { this.focusFirst(); return; }
 
       if (this.focused.tagName === 'INPUT' || this.focused.tagName === 'TEXTAREA') {
+        // Focus the input → triggers system keyboard on some TVs
         this.focused.focus();
+        
+        // EXPLÍCITAMENTE activamos el modo input solo si el input retuvo el foco.
+        // Si main.js interceptó el foco para abrir un diálogo nativo y llamó a blur(), 
+        // document.activeElement NO será este input, evitando que nos quedemos atrapados.
+        if (document.activeElement === this.focused) {
+            this.enterInputMode(this.focused);
+        }
+        
+        // Forzar la apertura del teclado nativo en Android TV (si existe el puente)
+        if (window.AndroidBridge && window.AndroidBridge.showKeyboard) {
+            window.AndroidBridge.showKeyboard();
+        }
       } else {
         this.focused.click();
       }

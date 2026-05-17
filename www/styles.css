@@ -892,3 +892,15 @@ input, button {
         grid-template-columns: 1fr;
     }
 }
+
+/* --- ANDROID TV SPECIFIC OPTIMIZATIONS --- */
+.android-tv {
+    /* Reduce general UI scale to prevent it from looking gigantic on 1080p TVs */
+    zoom: 0.85; 
+    /* Force completely hidden scrollbars */
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+}
+.android-tv ::-webkit-scrollbar {
+    display: none !important;
+}

@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
@@ -10,8 +10,8 @@
     <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="./assets/index-B5l4Hx3h.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index--T_DyWxS.css">
+  <script type="module" crossorigin src="./assets/index-Cwjxep72.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CK17JwxH.css">
 </head>
 <body>
     <div id="app">
@@ -80,14 +80,9 @@
                 <div class="topbar-main">
                     <h1 class="topbar-title">Cine en Castellano HD</h1>
                     <div class="topbar-actions">
-                        <button id="btn-refresh-catalog" class="btn-icon" title="Refrescar datos">🔄</button>
-                        <button id="btn-logout" class="btn-icon" title="Cerrar sesión">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                                <polyline points="16 17 21 12 16 7"></polyline>
-                                <line x1="21" y1="12" x2="9" y2="12"></line>
-                            </svg>
-                        </button>
+                        <button id="btn-admin-toggle-payload" class="btn-icon" style="display:none; color: #22c55e; font-size: 0.9rem;" title="Modo Dios: Fuente MP4">🎬 MP4</button>
+                        <button id="btn-refresh-catalog-top" class="btn-icon btn-refresh-top" title="Actualizar catálogo">🔄</button>
+                        <button id="btn-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
                     </div>
                 </div>
                 <div class="topbar-search">
@@ -95,10 +90,15 @@
                 </div>
             </header>
 
-            <!-- Main nav tabs: Series / Movies -->
+            <!-- Main nav tabs: Series / Movies + Refresh -->
             <nav class="main-nav">
-                <button id="nav-series" class="main-nav-btn active">📺 Series</button>
-                <button id="nav-movies" class="main-nav-btn">🎬 Películas</button>
+                <div class="nav-tabs">
+                    <button id="nav-series" class="main-nav-btn active">📺 Series</button>
+                    <button id="nav-movies" class="main-nav-btn">🎬 Películas</button>
+                </div>
+                <button id="btn-refresh-catalog" class="btn-refresh-nav tv-only" title="Actualizar catálogo">
+                    🔄 <span class="hide-mobile">Actualizar catálogo</span>
+                </button>
             </nav>
 
             <!-- Genre tabs — always visible -->
@@ -131,6 +131,7 @@
                 </div>
 
                 <!-- Content rows -->
+                <div id="continue-watching-series" class="catalog-rows"></div>
                 <div id="catalog-rows" class="catalog-rows"></div>
             </div>
         </div>
@@ -141,14 +142,8 @@
                 <div class="topbar-main">
                     <h1 class="topbar-title">Cine en Castellano HD</h1>
                     <div class="topbar-actions">
-                        <button id="btn-movies-refresh" class="btn-icon" title="Refrescar datos">🔄</button>
-                        <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                                <polyline points="16 17 21 12 16 7"></polyline>
-                                <line x1="21" y1="12" x2="9" y2="12"></line>
-                            </svg>
-                        </button>
+                        <button id="btn-movies-refresh-top" class="btn-icon btn-refresh-top" title="Actualizar catálogo">🔄</button>
+                        <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
                     </div>
                 </div>
                 <div class="topbar-search">
@@ -158,8 +153,13 @@
 
             <!-- Main nav tabs -->
             <nav class="main-nav">
-                <button id="nav-series-from-movies" class="main-nav-btn">📺 Series</button>
-                <button id="nav-movies-active" class="main-nav-btn active">🎬 Películas</button>
+                <div class="nav-tabs">
+                    <button id="nav-series-from-movies" class="main-nav-btn">📺 Series</button>
+                    <button id="nav-movies-active" class="main-nav-btn active">🎬 Películas</button>
+                </div>
+                <button id="btn-movies-refresh" class="btn-refresh-nav tv-only" title="Actualizar catálogo">
+                    🔄 <span class="hide-mobile">Actualizar catálogo</span>
+                </button>
             </nav>
 
             <!-- Genre tabs -->
@@ -190,6 +190,7 @@
                     </div>
                     <div id="movies-hero-dots" class="hero-dots"></div>
                 </div>
+                <div id="continue-watching-movies" class="catalog-rows"></div>
                 <div id="movies-rows" class="catalog-rows"></div>
             </div>
         </div>
@@ -212,6 +213,35 @@
                 </div>
                 <div id="modal-files-list" class="modal-files-list hidden"></div>
                 <div id="modal-error" class="modal-error hidden"></div>
+            </div>
+        </div>
+
+        <!-- MOVIE RESUME MODAL (prompt to resume specific file or select another) -->
+        <div id="movie-resume-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <div class="modal-header-info">
+                        <h2 id="resume-movie-title" class="modal-title"></h2>
+                        <p class="modal-year">Continuar reproducción</p>
+                    </div>
+                    <button id="resume-modal-close" class="btn-icon modal-close-btn">✕</button>
+                </div>
+                <div class="resume-options">
+                    <button id="btn-resume-file" class="movie-file-item resume-btn primary">
+                        <div class="movie-file-icon">▶</div>
+                        <div class="movie-file-info">
+                            <div class="movie-file-name" id="resume-file-name"></div>
+                            <div class="movie-file-meta">Continuar viendo</div>
+                        </div>
+                    </button>
+                    <button id="btn-resume-other" class="movie-file-item resume-btn secondary">
+                        <div class="movie-file-icon">📂</div>
+                        <div class="movie-file-info">
+                            <div class="movie-file-name">Elegir otro archivo</div>
+                            <div class="movie-file-meta">Empezar de cero con otra versión</div>
+                        </div>
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -250,17 +280,21 @@
                     <p id="player-subtitle" class="topbar-sub"></p>
                 </div>
             </header>
-            <div id="player-download" class="download-overlay">
-                <div class="download-card">
-                    <div class="spinner"></div>
-                    <p id="download-text">Preparando vídeo...</p>
-                    <div class="progress-bar">
-                        <div id="download-progress" class="progress-fill"></div>
+            <div id="player-container" style="position: relative; width: 100%; flex: 1; background: #000; display: flex; flex-direction: column;">
+                <div id="player-download" class="download-overlay">
+                    <div class="download-card">
+                        <div class="spinner"></div>
+                        <p id="download-text">Preparando vídeo...</p>
+                        <div class="progress-bar">
+                            <div id="download-progress" class="progress-fill"></div>
+                        </div>
+                        <p id="download-percent">0%</p>
                     </div>
-                    <p id="download-percent">0%</p>
                 </div>
+                <video id="video-player" controls></video>
+                <button id="btn-skip-intro" class="skip-btn hidden">Saltar Intro</button>
+                <button id="btn-next-episode" class="skip-btn hidden">▶ Siguiente Capítulo</button>
             </div>
-            <video id="video-player" controls></video>
         </div>
         
         <!-- MPV Loading Overlay -->
@@ -268,6 +302,39 @@
             <div class="spinner" style="width:50px;height:50px;border-width:4px;"></div>
             <h2 style="margin-top:20px;font-size:1.5rem;font-weight:600;">Cambiando a MPV...</h2>
             <p style="color:#8b8e96;margin-top:8px;">Aceleración por hardware iniciada</p>
+        </div>
+
+        <!-- ADMIN EDIT MODAL -->
+        <div id="admin-edit-modal" class="hidden">
+            <div class="admin-edit-card">
+                <h2>✏️ Editar Ficha</h2>
+                <input type="hidden" id="admin-edit-id">
+                <input type="hidden" id="admin-edit-type">
+                <div class="admin-form-group">
+                    <label>Título</label>
+                    <input type="text" id="admin-edit-title">
+                </div>
+                <div class="admin-form-group">
+                    <label>Search Title (Bot)</label>
+                    <input type="text" id="admin-edit-search-title" placeholder="Ej: matrix 1999">
+                </div>
+                <div class="admin-form-group">
+                    <label>Año TMDB</label>
+                    <input type="number" id="admin-edit-year" min="1900" max="2030">
+                </div>
+                <div class="admin-form-group">
+                    <label>TMDB ID (Forzar metadata)</label>
+                    <input type="number" id="admin-edit-tmdb-id" placeholder="Ej: 12345">
+                </div>
+                <div class="admin-form-group" id="admin-edit-payload-group">
+                    <label>Payload (solo bot)</label>
+                    <input type="text" id="admin-edit-payload">
+                </div>
+                <div class="admin-modal-actions">
+                    <button class="btn-admin-cancel" id="admin-btn-cancel">Cancelar</button>
+                    <button class="btn-admin-save" id="admin-btn-save">💾 Guardar</button>
+                </div>
+            </div>
         </div>
     </div>
 
