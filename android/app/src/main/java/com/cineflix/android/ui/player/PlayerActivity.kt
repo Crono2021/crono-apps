@@ -69,6 +69,9 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var btnTracks: ImageButton
     private lateinit var loadingSpinner: ProgressBar
     private lateinit var castContainer: FrameLayout
+    private lateinit var layoutNextEpisode: LinearLayout
+    private lateinit var tvNextEpisodeCountdown: TextView
+    private lateinit var layoutSkipIntro: LinearLayout
 
     private val titleHandler = Handler(Looper.getMainLooper())
     private val controlsHandler = Handler(Looper.getMainLooper())
@@ -102,6 +105,12 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_CONTENT_ID = "content_id"
         const val EXTRA_SEASON     = "season"
         const val EXTRA_EPISODE    = "episode"
+        const val EXTRA_CREDITS_START = "credits_start"
+
+        // TheIntroDB extras
+        const val EXTRA_INTRO_START_MS       = "intro_start_ms"
+        const val EXTRA_INTRO_END_MS         = "intro_end_ms"
+        const val EXTRA_INTRODB_CREDITS_MS   = "introdb_credits_ms"
 
         private const val TAG = "PlayerActivity"
     }
@@ -143,6 +152,12 @@ class PlayerActivity : AppCompatActivity() {
         currentTitle = title
 
         Log.i(TAG, "▶ onCreate — fileId=$fileId fileSize=$fileSize mimeType=$mimeType title=$title contentId=$contentId")
+        // ── Diagnostic: dump ALL TheIntroDB extras ──
+        val dbgIntroStart = intent.getStringExtra(EXTRA_INTRO_START_MS) ?: "(null)"
+        val dbgIntroEnd   = intent.getStringExtra(EXTRA_INTRO_END_MS)   ?: "(null)"
+        val dbgCreditsMs  = intent.getStringExtra(EXTRA_INTRODB_CREDITS_MS) ?: "(null)"
+        val dbgCreditsStart = intent.getStringExtra(EXTRA_CREDITS_START) ?: "(null)"
+        Log.w(TAG, "🎬 DIAG IntroDB extras — introStart='$dbgIntroStart' introEnd='$dbgIntroEnd' introDbCredits='$dbgCreditsMs' creditsStart='$dbgCreditsStart' contentId='$contentId' season='$season' episode='$episode'")
 
         if (fileId <= 0) {
             Toast.makeText(this, "Error: fileId inválido ($fileId)", Toast.LENGTH_LONG).show()
@@ -229,6 +244,9 @@ class PlayerActivity : AppCompatActivity() {
         btnTracks = findViewById(R.id.btn_tracks)
         loadingSpinner = findViewById(R.id.loading_spinner)
         castContainer = findViewById(R.id.cast_button_container)
+        layoutNextEpisode = findViewById(R.id.layout_next_episode)
+        tvNextEpisodeCountdown = findViewById(R.id.tv_next_episode_countdown)
+        layoutSkipIntro = findViewById(R.id.layout_skip_intro)
     }
 
     private fun setupListeners() {
@@ -261,6 +279,37 @@ class PlayerActivity : AppCompatActivity() {
         })
 
         playerView.setOnClickListener { toggleControls() }
+        
+        layoutNextEpisode.setOnClickListener {
+            triggerNextEpisode()
+        }
+        
+        layoutNextEpisode.setOnFocusChangeListener { v, hasFocus ->
+            if (hasFocus) {
+                v.animate().scaleX(1.05f).scaleY(1.05f).setDuration(150).start()
+                v.setBackgroundResource(R.drawable.bg_next_episode)
+            } else {
+                v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(150).start()
+            }
+        }
+
+        // Skip Intro button
+        layoutSkipIntro.setOnClickListener {
+            val introEndMs = (intent.getStringExtra(EXTRA_INTRO_END_MS) ?: "").toLongOrNull()
+            if (introEndMs != null && introEndMs > 0) {
+                player?.seekTo(introEndMs)
+                layoutSkipIntro.visibility = View.GONE
+                Log.i(TAG, "⏭ Skip Intro → seekTo($introEndMs ms)")
+            }
+        }
+
+        layoutSkipIntro.setOnFocusChangeListener { v, hasFocus ->
+            if (hasFocus) {
+                v.animate().scaleX(1.05f).scaleY(1.05f).setDuration(150).start()
+            } else {
+                v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(150).start()
+            }
+        }
     }
 
     private fun setupFocusAnimation(view: View) {
@@ -304,7 +353,7 @@ class PlayerActivity : AppCompatActivity() {
                 }
 
                 if (playbackState == Player.STATE_ENDED) {
-                    finish()
+                    triggerNextEpisode()
                 }
             }
 
@@ -624,6 +673,8 @@ class PlayerActivity : AppCompatActivity() {
         }, 4000)
     }
 
+    private var _diagLoggedOnce = false
+
     private fun updateSeekBar() {
         if (player == null || isSeeking) return
         val time = player!!.currentPosition
@@ -633,6 +684,88 @@ class PlayerActivity : AppCompatActivity() {
             seekBar.progress = time.toInt()
             tvTimeCurrent.text = formatTime(time)
             tvTimeDuration.text = formatTime(duration)
+
+            // ── Skip Intro overlay ──────────────────────────────────────
+            val introStartMs = (intent.getStringExtra(EXTRA_INTRO_START_MS) ?: "").toLongOrNull()
+            val introEndMs   = (intent.getStringExtra(EXTRA_INTRO_END_MS)   ?: "").toLongOrNull()
+
+            // ── DIAGNOSTIC LOG (once per session) ──
+            if (!_diagLoggedOnce && time > 1000) {
+                _diagLoggedOnce = true
+                val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
+                val creditsStr = intent.getStringExtra(EXTRA_CREDITS_START) ?: "(null)"
+                val introDbCr = intent.getStringExtra(EXTRA_INTRODB_CREDITS_MS) ?: "(null)"
+                Log.w(TAG, "🔍 DIAG updateSeekBar — time=$time dur=$duration introStartMs=$introStartMs introEndMs=$introEndMs contentId='$contentId' creditsStart='$creditsStr' introDbCreditsMs='$introDbCr' isTvPrefix=${contentId.startsWith("tv_")}")
+            }
+
+            if (introStartMs != null && introEndMs != null && introEndMs > introStartMs) {
+                val inIntro = time in introStartMs..introEndMs
+                if (inIntro) {
+                    if (layoutSkipIntro.visibility != View.VISIBLE) {
+                        layoutSkipIntro.visibility = View.VISIBLE
+                        layoutSkipIntro.alpha = 0f
+                        layoutSkipIntro.animate().alpha(1f).setDuration(300).start()
+                        Log.i(TAG, "🎬 SHOWING Skip Intro overlay (time=$time in $introStartMs..$introEndMs)")
+                        // Only steal focus if Next Episode is NOT already visible
+                        if (layoutNextEpisode.visibility != View.VISIBLE) {
+                            layoutSkipIntro.requestFocus()
+                        }
+                    }
+                } else {
+                    if (layoutSkipIntro.visibility == View.VISIBLE) {
+                        layoutSkipIntro.animate().alpha(0f).setDuration(200).withEndAction {
+                            layoutSkipIntro.visibility = View.GONE
+                        }.start()
+                    }
+                }
+            }
+
+            // ── Next Episode overlay ────────────────────────────────────
+            val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
+            if (contentId.startsWith("tv_")) {
+                val creditsStartStr = intent.getStringExtra(EXTRA_CREDITS_START) ?: ""
+                val creditsStartSeconds = creditsStartStr.toIntOrNull()
+                // TheIntroDB credits fallback (already in ms)
+                val introDbCreditsMs = (intent.getStringExtra(EXTRA_INTRODB_CREDITS_MS) ?: "").toLongOrNull()
+
+                val shouldShow: Boolean
+                val secondsLeft: Int
+
+                if (creditsStartSeconds != null) {
+                    // Priority 1: Manual credits trigger (value is in seconds)
+                    val creditsStartMs = creditsStartSeconds * 1000L
+                    shouldShow = time >= creditsStartMs
+                    secondsLeft = if (time < duration) ((duration - time) / 1000).toInt() else 0
+                } else if (introDbCreditsMs != null && introDbCreditsMs > 0) {
+                    // Priority 2: TheIntroDB credits (value is in ms)
+                    shouldShow = time >= introDbCreditsMs
+                    secondsLeft = if (time < duration) ((duration - time) / 1000).toInt() else 0
+                } else {
+                    // Fallback: last 30 seconds
+                    val timeLeft = duration - time
+                    shouldShow = timeLeft in 1000..30000
+                    secondsLeft = (timeLeft / 1000).toInt()
+                }
+
+                if (shouldShow) {
+                    if (layoutNextEpisode.visibility != View.VISIBLE) {
+                        layoutNextEpisode.visibility = View.VISIBLE
+                        layoutNextEpisode.alpha = 0f
+                        layoutNextEpisode.animate().alpha(1f).setDuration(300).start()
+                        layoutNextEpisode.requestFocus()
+                        Log.i(TAG, "🎬 SHOWING Next Episode overlay (time=$time, secondsLeft=$secondsLeft)")
+                        // Hide skip intro if next episode appears (avoid visual clash)
+                        if (layoutSkipIntro.visibility == View.VISIBLE) {
+                            layoutSkipIntro.visibility = View.GONE
+                        }
+                    }
+                    tvNextEpisodeCountdown.text = "Siguiente en ${secondsLeft}s"
+                } else {
+                    if (layoutNextEpisode.visibility == View.VISIBLE) {
+                        layoutNextEpisode.visibility = View.GONE
+                    }
+                }
+            }
         }
     }
 
@@ -670,6 +803,23 @@ class PlayerActivity : AppCompatActivity() {
                 }.start()
             }, 2000)
         }
+    }
+
+    private fun triggerNextEpisode() {
+        val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
+        val season = intent.getStringExtra(EXTRA_SEASON) ?: ""
+        val episode = intent.getStringExtra(EXTRA_EPISODE) ?: ""
+
+        if (contentId.startsWith("tv_")) {
+            val resultIntent = Intent().apply {
+                putExtra("next_episode", true)
+                putExtra("content_id", contentId)
+                putExtra("season", season.toIntOrNull() ?: 1)
+                putExtra("episode", episode.toIntOrNull() ?: 1)
+            }
+            setResult(RESULT_OK, resultIntent)
+        }
+        finish()
     }
 
     private fun seekRelative(deltaMs: Long) {

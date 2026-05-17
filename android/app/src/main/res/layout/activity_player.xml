@@ -219,6 +219,80 @@
         android:layout_marginEnd="32dp"
         android:visibility="gone" />
 
+    <!-- Botón de Saltar Intro (Aparece durante intro/recap) -->
+    <LinearLayout
+        android:id="@+id/layout_skip_intro"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="32dp"
+        android:layout_marginBottom="90dp"
+        android:background="@drawable/bg_next_episode"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:focusable="true"
+        android:clickable="true"
+        android:visibility="gone"
+        android:elevation="10dp"
+        android:translationZ="10dp">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="center_vertical"
+            android:src="@android:drawable/ic_media_ff"
+            android:contentDescription="Skip Intro"
+            app:tint="#FFFFFF" />
+
+        <TextView
+            android:id="@+id/tv_skip_intro_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_gravity="center_vertical"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:text="Saltar Intro" />
+    </LinearLayout>
+
+    <!-- Botón de Siguiente Episodio (Aparece al final) -->
+    <LinearLayout
+        android:id="@+id/layout_next_episode"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="32dp"
+        android:layout_marginBottom="90dp"
+        android:background="@drawable/bg_next_episode"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:focusable="true"
+        android:clickable="true"
+        android:visibility="gone"
+        android:elevation="10dp"
+        android:translationZ="10dp">
+        
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="center_vertical"
+            android:src="@android:drawable/ic_media_next"
+            android:contentDescription="Next"
+            app:tint="#FFFFFF" />
+            
+        <TextView
+            android:id="@+id/tv_next_episode_countdown"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_gravity="center_vertical"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:text="Siguiente Episodio" />
+    </LinearLayout>
+
     <!-- Loading spinner -->
     <ProgressBar
         android:id="@+id/loading_spinner"

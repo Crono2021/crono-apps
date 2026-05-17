@@ -607,4 +607,11 @@ class TelegramEngine(private val context: Context) {
         client?.send(TdApi.CancelDownloadFile(fileId, false)) {}
         client?.send(TdApi.DeleteFile(fileId)) {}
     }
+
+    /**
+     * Returns the app's files directory for direct disk access.
+     */
+    fun getAppFilesDir(): java.io.File {
+        return context.filesDir
+    }
 }

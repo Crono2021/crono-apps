@@ -295,7 +295,6 @@ class AndroidBridge(
     @JavascriptInterface
     fun playVideo(chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String) {
         val intent = Intent(context, PlayerActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
             putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
             putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId.toIntOrNull()    ?: 0)
@@ -304,6 +303,12 @@ class AndroidBridge(
             putExtra(PlayerActivity.EXTRA_TITLE,     title)
         }
         context.startActivity(intent)
+    }
+
+    private var launcher: ((Intent) -> Unit)? = null
+
+    fun setPlayerLauncher(l: (Intent) -> Unit) {
+        launcher = l
     }
 
     /**
@@ -316,7 +321,6 @@ class AndroidBridge(
         phone: String, contentId: String, season: String, episode: String
     ) {
         val intent = Intent(context, PlayerActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
             putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
             putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId.toIntOrNull()    ?: 0)
@@ -328,7 +332,53 @@ class AndroidBridge(
             putExtra(PlayerActivity.EXTRA_SEASON,     season)
             putExtra(PlayerActivity.EXTRA_EPISODE,    episode)
         }
-        context.startActivity(intent)
+        launcher?.invoke(intent) ?: context.startActivity(intent)
+    }
+
+    @JavascriptInterface
+    fun playVideoWithCredits(
+        chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String, creditsStart: String
+    ) {
+        val intent = Intent(context, PlayerActivity::class.java).apply {
+            putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
+            putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
+            putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId.toIntOrNull()    ?: 0)
+            putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
+            putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
+            putExtra(PlayerActivity.EXTRA_TITLE,     title)
+            putExtra(PlayerActivity.EXTRA_PHONE,      phone)
+            putExtra(PlayerActivity.EXTRA_CONTENT_ID, contentId)
+            putExtra(PlayerActivity.EXTRA_SEASON,     season)
+            putExtra(PlayerActivity.EXTRA_EPISODE,    episode)
+            putExtra(PlayerActivity.EXTRA_CREDITS_START, creditsStart)
+        }
+        launcher?.invoke(intent) ?: context.startActivity(intent)
+    }
+
+    @JavascriptInterface
+    fun playVideoWithIntroDB(
+        chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String,
+        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String
+    ) {
+        val intent = Intent(context, PlayerActivity::class.java).apply {
+            putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
+            putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
+            putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId.toIntOrNull()    ?: 0)
+            putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
+            putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
+            putExtra(PlayerActivity.EXTRA_TITLE,     title)
+            putExtra(PlayerActivity.EXTRA_PHONE,      phone)
+            putExtra(PlayerActivity.EXTRA_CONTENT_ID, contentId)
+            putExtra(PlayerActivity.EXTRA_SEASON,     season)
+            putExtra(PlayerActivity.EXTRA_EPISODE,    episode)
+            putExtra(PlayerActivity.EXTRA_CREDITS_START, creditsStart)
+            putExtra(PlayerActivity.EXTRA_INTRO_START_MS, introStart)
+            putExtra(PlayerActivity.EXTRA_INTRO_END_MS, introEnd)
+            putExtra(PlayerActivity.EXTRA_INTRODB_CREDITS_MS, introDbCreditsMs)
+        }
+        launcher?.invoke(intent) ?: context.startActivity(intent)
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -460,8 +510,11 @@ class AndroidBridge(
         }
     }
 
+    private var lastShowKeyboardTime = 0L
+
     @JavascriptInterface
     fun showKeyboard() {
+        lastShowKeyboardTime = System.currentTimeMillis()
         runOnUiThread {
             try {
                 webView.requestFocus()
@@ -475,6 +528,20 @@ class AndroidBridge(
 
     @JavascriptInterface
     fun hideKeyboard() {
+        val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        val isTv = uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+        val isAmazon = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true)
+        
+        if (isTv && !isAmazon) {
+            // En Android TV, al abrir el teclado el WebView pierde el foco de ventana.
+            // Esto dispara un evento 'blur' en JS que hace que tv-nav.js llame a hideKeyboard() al instante.
+            // Si la llamada ocurre justo después de abrirlo (menos de 1.5s), la ignoramos.
+            if (System.currentTimeMillis() - lastShowKeyboardTime < 1500) {
+                android.util.Log.d("CineflixMain", "Ignored hideKeyboard() due to TV window focus blur")
+                return
+            }
+        }
+
         runOnUiThread {
             try {
                 val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
@@ -485,7 +552,41 @@ class AndroidBridge(
         }
     }
 
-    // Native input dialog removed per user request
+    @JavascriptInterface
+    fun requestSearchKeyboard(currentText: String?, targetInputId: String) {
+        runOnUiThread {
+            val activity = context as? android.app.Activity ?: return@runOnUiThread
+            val editText = android.widget.EditText(activity)
+            editText.setText(currentText ?: "")
+            editText.setSelection(editText.text.length)
+            editText.isSingleLine = true
+            
+            val dialog = android.app.AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Buscar")
+                .setView(editText)
+                .setPositiveButton("Buscar") { _, _ ->
+                    val query = editText.text.toString().replace("'", "\\'")
+                    webView.evaluateJavascript("""
+                        (function() {
+                            var input = document.getElementById('$targetInputId');
+                            if(input) {
+                                input.value = '$query';
+                                input.dispatchEvent(new Event('input', { bubbles: true }));
+                            }
+                        })();
+                    """.trimIndent(), null)
+                }
+                .setNegativeButton("Cancelar", null)
+                .create()
+                
+            dialog.setOnShowListener {
+                editText.requestFocus()
+                val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+            }
+            dialog.show()
+        }
+    }
 
     fun cleanup() { scope.cancel() }
 }
