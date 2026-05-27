@@ -92,15 +92,18 @@ function handleRequest(req, res) {
     })
   }
 
-  // Stream data in 2MB chunks using the renderer cache
-  const CHUNK_SIZE = 2 * 1024 * 1024;
+  // Dynamic chunk sizing (TCP Slow Start)
+  // Start small (512KB) so that ffmpeg's initial probing seeks are lightning fast.
+  // Double the size on successful contiguous reads up to 4MB to maximize bandwidth during playback.
+  let currentChunkSize = 512 * 1024; 
+  const MAX_CHUNK_SIZE = 4 * 1024 * 1024;
   let currentStart = start;
 
   const streamLoop = async () => {
     while (currentStart <= end) {
       if (req.destroyed || res.destroyed) break;
       
-      const fetchSize = Math.min(CHUNK_SIZE, end - currentStart + 1);
+      const fetchSize = Math.min(currentChunkSize, end - currentStart + 1);
       try {
         const buf = await fetchRange(streamId, currentStart, fetchSize);
         if (!buf || buf.byteLength === 0) break; // EOF or error
@@ -123,6 +126,11 @@ function handleRequest(req, res) {
             res.once('drain', onDrain);
             res.once('close', onClose);
           });
+        }
+        
+        // Increase chunk size if we successfully wrote without dropping the connection
+        if (!req.destroyed && !res.destroyed && currentChunkSize < MAX_CHUNK_SIZE) {
+          currentChunkSize = Math.min(currentChunkSize * 2, MAX_CHUNK_SIZE);
         }
       } catch (err) {
         console.error('[StreamServer] fetch error:', err);

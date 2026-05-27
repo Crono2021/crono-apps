@@ -637,11 +637,13 @@ export function initElectronStreamHandler() {
         }
         try {
             _reqCount++;
-            const blockIdx = Math.floor(start / CACHE_BLOCK);
-            const wasCached = _blockCache.has(`${streamId}:${blockIdx}`);
-            if (wasCached) _cacheHits++;
-
-            const chunk = await _cachedFetch(info.client, info.doc, streamId, start, size);
+            let chunk;
+            try {
+                chunk = await fetchTelegramRangeAndroid(info.client, info.doc, start, size);
+            } catch (e) {
+                console.warn('[Electron] fetchTelegramRangeAndroid failed directly, falling back', e);
+                chunk = await fetchTelegramRange(info.client, info.doc, start, size);
+            }
             window.cineflix.stream.replyRange(requestId, chunk.buffer);
 
             // Show stats every 10 requests
