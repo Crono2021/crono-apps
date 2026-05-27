@@ -106,8 +106,24 @@ function handleRequest(req, res) {
         if (!buf || buf.byteLength === 0) break; // EOF or error
         
         if (req.destroyed || res.destroyed) break;
-        res.write(buf);
+        
+        const canWrite = res.write(buf);
         currentStart += buf.byteLength;
+        
+        if (!canWrite) {
+          await new Promise(resolve => {
+            const onDrain = () => {
+              res.removeListener('close', onClose);
+              resolve();
+            };
+            const onClose = () => {
+              res.removeListener('drain', onDrain);
+              resolve();
+            };
+            res.once('drain', onDrain);
+            res.once('close', onClose);
+          });
+        }
       } catch (err) {
         console.error('[StreamServer] fetch error:', err);
         break;
