@@ -60,33 +60,47 @@ function handleRequest(req, res) {
   const mimeType  = info.mimeType || 'video/mp4'
 
   // Parse Range header: "bytes=X-Y"
-  let rangeHeader = req.headers['range']
-  if (!rangeHeader) {
-    // ffmpeg only considers a stream seekable when it gets a 206 response.
-    // Convert the initial probe into a Range request for the first chunk.
-    rangeHeader = 'bytes=0-'
-  }
-
+  const rangeHeader = req.headers['range'] || 'bytes=0-'
   const [, startStr, endStr] = rangeHeader.match(/bytes=(\d+)-(\d*)/) || []
+  
   if (startStr === undefined) { res.writeHead(400); res.end(); return }
 
   const start = parseInt(startStr)
-  // Default 2MB chunks. This perfectly matches the 2MB read-ahead cache in the Electron
-  // renderer (telegram.js). If we request more, the renderer returns 2MB anyway and
-  // ffmpeg throws 'Stream ends prematurely' errors.
-  const end   = endStr ? parseInt(endStr) : Math.min(start + 2 * 1024 * 1024 - 1, totalSize - 1)
-  const chunkSize = end - start + 1
+  const end = (endStr && endStr !== '') ? parseInt(endStr) : totalSize - 1
+  const responseSize = end - start + 1
 
   res.writeHead(206, {
     'Content-Type': mimeType,
     'Content-Range': `bytes ${start}-${end}/${totalSize}`,
-    'Content-Length': chunkSize,
+    'Content-Length': responseSize,
     'Accept-Ranges': 'bytes',
   })
 
-  fetchRange(streamId, start, chunkSize)
-    .then(buf => res.end(buf))
-    .catch(err => { console.error('[StreamServer] range error:', err); res.end() })
+  // Stream data in 2MB chunks using the renderer cache
+  const CHUNK_SIZE = 2 * 1024 * 1024;
+  let currentStart = start;
+
+  const streamLoop = async () => {
+    while (currentStart <= end) {
+      if (req.destroyed || res.destroyed) break;
+      
+      const fetchSize = Math.min(CHUNK_SIZE, end - currentStart + 1);
+      try {
+        const buf = await fetchRange(streamId, currentStart, fetchSize);
+        if (!buf || buf.byteLength === 0) break; // EOF or error
+        
+        if (req.destroyed || res.destroyed) break;
+        res.write(buf);
+        currentStart += buf.byteLength;
+      } catch (err) {
+        console.error('[StreamServer] fetch error:', err);
+        break;
+      }
+    }
+    res.end();
+  };
+  
+  streamLoop();
 }
 
 async function streamChunked(streamId, start, end, totalSize, mimeType, res) {
