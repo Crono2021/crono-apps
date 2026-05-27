@@ -265,6 +265,8 @@ async function playEmbedded(streamInfo, overlayWin) {
     '--ytdl=no',
     '--demuxer-max-bytes=100MiB',
     '--cache=yes',
+    '--demuxer-lavf-probesize=1000000',            // Limit probe to 1MB to prevent excessive seeking on badly interleaved MP4s
+    '--demuxer-lavf-analyzeduration=2',            // Limit duration analysis to 2 seconds
     `--script=${uiLuaTmp}`
   ]
 
