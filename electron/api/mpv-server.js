@@ -1,21 +1,3 @@
-/**
- * MPV Streaming Server — Cineflix Desktop
- *
- * A local HTTP server that MPV can stream from.
- * MPV requests bytes via HTTP Range requests to:
- *   http://127.0.0.1:<port>/stream/<streamId>
- *
- * The server asks the renderer (via IPC) for the actual bytes,
- * which the renderer fetches from Telegram using GramJS.
- *
- * Flow:
- *   MPV → HTTP Range Request
- *     → mpv-server.js receives it
- *     → sends 'stream:fetchRange' to renderer via mainWindow.webContents.send
- *     → renderer calls fetchTelegramRange() via GramJS
- *     → renderer responds with 'stream:rangeReply' via ipcMain.on
- *     → server completes the HTTP response to MPV
- */
 
 const http = require('http')
 const net  = require('net')
@@ -30,13 +12,8 @@ const streamRegistry = new Map()
 const pendingRequests = new Map()
 let reqCounter = 0
 
-// ── Public API ────────────────────────────────────────────────────────────────
 
-/**
- * Starts the server on a random free port.
- * @returns {number} The port the server is listening on
- */
-/** Set the function that returns the current main window (used for IPC). */
+
 function setWindowGetter(fn) { _getWindow = fn }
 
 function start() {
@@ -55,16 +32,10 @@ function stop() {
   if (_server) { _server.close(); _server = null }
 }
 
-/**
- * Register a stream. Called when renderer is about to open a file.
- */
 function registerStream(streamId, docInfo) {
   streamRegistry.set(streamId, docInfo)
 }
 
-/**
- * Called by ipcMain when the renderer delivers byte data.
- */
 function handleRangeReply(requestId, buffer) {
   const pending = pendingRequests.get(requestId)
   if (!pending) return
@@ -73,7 +44,7 @@ function handleRangeReply(requestId, buffer) {
   pending.resolve(Buffer.from(buffer))
 }
 
-// ── HTTP request handler ──────────────────────────────────────────────────────
+
 
 function handleRequest(req, res) {
   // Use URL parsing to drop query params and split the path
@@ -91,14 +62,15 @@ function handleRequest(req, res) {
   // Parse Range header: "bytes=X-Y"
   const rangeHeader = req.headers['range']
   if (!rangeHeader) {
-    // Full file request (MPV initial probe)
+    // Initial probe — tell MPV the file size and that we support Range requests.
+    // Do NOT stream the whole file here; MPV will follow up with Range requests
+    // to jump directly to the moov atom (usually at the end of the file).
     res.writeHead(200, {
       'Content-Type': mimeType,
       'Content-Length': totalSize,
       'Accept-Ranges': 'bytes',
     })
-    // Stream the whole thing in chunks
-    streamChunked(streamId, 0, totalSize - 1, totalSize, mimeType, res)
+    res.end()
     return
   }
 
@@ -137,7 +109,7 @@ async function streamChunked(streamId, start, end, totalSize, mimeType, res) {
   if (!res.writableEnded) res.end()
 }
 
-// ── Byte fetching via IPC to renderer ─────────────────────────────────────────
+
 
 function fetchRange(streamId, start, size) {
   return new Promise((resolve, reject) => {
