@@ -1,17 +1,3 @@
-/**
- * MPV Controller — Cineflix Desktop (Embedded mode)
- *
- * Plays video by rendering MPV into a native window (--wid) instead of
- * opening a separate standalone MPV window.  The renderer window handle
- * is obtained from a dedicated black BrowserWindow and passed to MPV as
- * the --wid argument so MPV paints into it directly.
- *
- * Architecture:
- *   playerWindow (black BrowserWindow)  ← MPV renders here via --wid
- *   overlayWindow (transparent BW)      ← HTML controls sit on top
- *
- * IPC control via Named Pipe (Windows) or Unix socket (macOS/Linux).
- */
 
 const { spawn } = require('child_process')
 const net        = require('net')
@@ -32,8 +18,18 @@ let pipeClient   = null
 let _overlayWin  = null  // to forward events
 let _streamPort  = null
 let _state       = { playing: false, paused: false, pos: 0, duration: 0, title: '' }
+let _currentPlaylist = []
+let _currentPlaylistIndex = 0
+let _buttonState = '' // 'intro', 'next', or ''
 
-// ── Find mpv binary (cross-platform) ──────────────────────────────────────────
+function dlog(...args) {
+  try {
+    fs.appendFileSync(path.join(os.tmpdir(), 'cineflix_debug.log'), new Date().toISOString() + ' ' + args.join(' ') + '\n');
+  } catch(e){}
+}
+dlog('MPV JS MODULE LOADED');
+
+
 function findMpv() {
   const candidates = [
     // Dev mode: project root / resources / mpv[.exe]
@@ -68,7 +64,7 @@ function findMpv() {
 
 function setStreamPort(port) { _streamPort = port }
 
-// ── Named Pipe ────────────────────────────────────────────────────────────────
+
 function sendRaw(payload) {
   if (!pipeClient || pipeClient.destroyed) return false
   try { pipeClient.write(JSON.stringify(payload) + '\n'); return true } catch { return false }
@@ -110,6 +106,7 @@ function setupObservers() {
   sendRaw({ command: ['observe_property', 1, 'time-pos'] })
   sendRaw({ command: ['observe_property', 2, 'duration'] })
   sendRaw({ command: ['observe_property', 3, 'pause'] })
+  sendRaw({ command: ['observe_property', 4, 'playlist-pos'] })
 }
 
 function emit(evt) {
@@ -122,16 +119,57 @@ function handleEvent(msg) {
   if (!msg) return
   if (msg.event === 'property-change') {
     switch (msg.name) {
-      case 'time-pos':
+      case 'time-pos': {
         _state.pos = msg.data || 0
         emit({ type: 'timepos', pos: _state.pos, duration: _state.duration })
+        
+        // Handle skip buttons
+        const currentItem = _currentPlaylist[_currentPlaylistIndex]
+        if (currentItem) {
+            const timeMs = _state.pos * 1000
+            let shouldShow = ''
+            let targetTime = 0
+            
+            // Check intro
+            if (currentItem.introStartMs && currentItem.introEndMs && 
+                timeMs >= currentItem.introStartMs && timeMs <= currentItem.introEndMs) {
+                shouldShow = 'intro'
+                targetTime = currentItem.introEndMs / 1000
+            } 
+            // Check credits
+            else if (currentItem.creditsStartMs && timeMs >= currentItem.creditsStartMs) {
+                shouldShow = 'next'
+            }
+
+            // dlog('timeMs:', timeMs, 'introStart:', currentItem.introStartMs, 'introEnd:', currentItem.introEndMs, 'shouldShow:', shouldShow, 'btnState:', _buttonState);
+
+            // Update UI state if changed
+            if (shouldShow !== _buttonState) {
+                dlog('Button state changed to:', shouldShow, 'targetTime:', targetTime);
+                _buttonState = shouldShow
+                if (shouldShow) {
+                    sendCommand(['script-message', 'show_button', shouldShow, targetTime.toString()])
+                    emit({ type: 'button_state', state: shouldShow, targetTime })
+                } else {
+                    sendCommand(['script-message', 'hide_button'])
+                    emit({ type: 'button_state', state: '' })
+                }
+            }
+        }
         break
+      }
       case 'duration':
         _state.duration = msg.data || 0
         break
       case 'pause':
         _state.paused = !!msg.data
         emit({ type: 'pause', paused: _state.paused })
+        break
+      case 'playlist-pos':
+        _currentPlaylistIndex = msg.data || 0
+        _buttonState = '' // reset button on track change
+        sendCommand(['script-message', 'hide_button'])
+        emit({ type: 'button_state', state: '' })
         break
     }
   }
@@ -141,7 +179,7 @@ function handleEvent(msg) {
   }
 }
 
-// ── Get native window handle from a BrowserWindow (cross-platform) ───────────
+
 function getHwnd(win) {
   const buf = win.getNativeWindowHandle()
   if (isWin) {
@@ -153,11 +191,19 @@ function getHwnd(win) {
   return BigInt(buf.readUInt32LE(0))
 }
 
-// ── Launch standalone MPV but tie it to our main app flow ──
-async function playEmbedded(streamInfo) {
+
+async function playEmbedded(streamInfo, overlayWin) {
   const { playlist, startIndex = 0, seriesTitle } = streamInfo
+  dlog('playEmbedded called! seriesTitle:', seriesTitle, 'startIndex:', startIndex);
   if (!playlist || playlist.length === 0) return { ok: false, error: 'No media' }
 
+  _currentPlaylist = playlist
+  _currentPlaylistIndex = startIndex
+  _buttonState = ''
+  
+  dlog('First playlist item introStartMs:', playlist[startIndex]?.introStartMs);
+
+  _overlayWin = overlayWin
   _state = { playing: true, title: seriesTitle || playlist[startIndex].title, pos: 0, duration: 0, paused: false }
 
   // Kill any existing MPV
@@ -180,22 +226,38 @@ async function playEmbedded(streamInfo) {
   const m3uPath = path.join(os.tmpdir(), `cineflix_playlist_${Date.now()}.m3u`)
   let m3uContent = '#EXTM3U\n'
   playlist.forEach(item => {
-    const rawTitle = item.title || 'Video';
-    m3uContent += `#EXTINF:-1,${rawTitle}\n`
-    m3uContent += `http://127.0.0.1:${_streamPort}/stream/${item.streamId}/${encodeURIComponent(rawTitle)}.mp4\n`
+    // Sanitize title: strip newlines (Telegram captions include synopses),
+    // limit length, and remove characters that break URLs/filenames
+    const rawTitle = (item.title || 'Video').split('\n')[0].trim().substring(0, 120);
+    const safeTitle = rawTitle.replace(/[<>:"/\\|?*]/g, '');
+    m3uContent += `#EXTINF:-1,${safeTitle}\n`
+    m3uContent += `http://127.0.0.1:${_streamPort}/stream/${item.streamId}/${encodeURIComponent(safeTitle)}.mp4\n`
   })
   fs.writeFileSync(m3uPath, m3uContent)
+
+  // Copy ui.lua to tmpdir because external MPV cannot read inside app.asar
+  const uiLuaSrc = path.join(__dirname, 'ui.lua')
+  const uiLuaTmp = path.join(os.tmpdir(), 'cineflix_ui.lua')
+  try {
+    const luaContent = fs.readFileSync(uiLuaSrc)
+    fs.writeFileSync(uiLuaTmp, luaContent)
+  } catch (e) {
+    fs.writeFileSync(path.join(os.tmpdir(), 'cineflix_ui_error.log'), 'Error copying: ' + uiLuaSrc + '\n' + e.message)
+    console.error('[MPV] Error copying ui.lua to tmp:', e)
+  }
 
   const args = [
     `--playlist=${m3uPath}`,
     `--playlist-start=${startIndex}`,
     `--input-ipc-server=${PIPE_PATH}`,
+    `--log-file=${path.join(os.tmpdir(), 'mpv_debug.log')}`,
     '--force-window=yes',
     '--fs=yes',                                    // Always force full screen
     `--title=Cineflix - ${seriesTitle || 'Reproductor'}`, // Window title
     '--hwdec=auto-safe',                           // Force hardware acceleration for video
     '--vo=gpu',                                    // GPU video out
-    '--script-opts=osc-windowcontrols=yes,osc-layout=bottombar', // Show minimize/close X button
+    '--osc=no',                                    // Disable default OSC
+    `--config-dir=${path.join(process.resourcesPath, 'uosc')}`, // Load uosc
     '--keep-open=yes',
     '--sub-auto=fuzzy',
     '--slang=spa,es,en',
@@ -203,6 +265,7 @@ async function playEmbedded(streamInfo) {
     '--ytdl=no',
     '--demuxer-max-bytes=100MiB',
     '--cache=yes',
+    `--script=${uiLuaTmp}`
   ]
 
   mpvProcess = spawn(mpvExe, args, { detached: false, stdio: 'pipe' })
@@ -246,6 +309,7 @@ async function playEmbedded(streamInfo) {
 
   try {
     await connectPipe(25)
+    emit({ type: 'started', title: _state.title })
   } catch (e) {
     console.warn('[MPV] IPC pipe connection failed:', e.message)
     if (!hasFailed && mpvProcess === currentProcess) {
@@ -257,7 +321,7 @@ async function playEmbedded(streamInfo) {
   return { ok: true }
 }
 
-// ── Standalone play (fallback — separate MPV window) ─────────────────────────
+
 async function play(mainWindow, streamInfo) {
   const { streamId, title, startTime = 0, size } = streamInfo
   _overlayWin = mainWindow
@@ -287,7 +351,10 @@ async function play(mainWindow, streamInfo) {
   mpvProcess.on('error', e => emit({ type: 'error', message: e.message }))
   mpvProcess.on('exit', () => { _state.playing = false; emit({ type: 'stopped' }) })
 
-  try { await connectPipe(20) } catch {}
+  try { 
+    await connectPipe(20) 
+    emit({ type: 'started', title: _state.title })
+  } catch {}
   return { ok: true }
 }
 
