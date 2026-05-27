@@ -71,10 +71,10 @@ function handleRequest(req, res) {
   if (startStr === undefined) { res.writeHead(400); res.end(); return }
 
   const start = parseInt(startStr)
-  // Default 4MB chunks (was 512KB). Large chunks minimize round-trips through the
-  // IPC→GramJS→Telegram pipeline (~0.7s each). A 250MB moov atom now needs ~36
-  // requests instead of ~144, cutting parse time from ~100s to ~25s.
-  const end   = endStr ? parseInt(endStr) : Math.min(start + 4 * 1024 * 1024 - 1, totalSize - 1)
+  // Default 2MB chunks. This perfectly matches the 2MB read-ahead cache in the Electron
+  // renderer (telegram.js). If we request more, the renderer returns 2MB anyway and
+  // ffmpeg throws 'Stream ends prematurely' errors.
+  const end   = endStr ? parseInt(endStr) : Math.min(start + 2 * 1024 * 1024 - 1, totalSize - 1)
   const chunkSize = end - start + 1
 
   res.writeHead(206, {
