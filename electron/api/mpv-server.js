@@ -59,22 +59,38 @@ function handleRequest(req, res) {
   const totalSize = info.size
   const mimeType  = info.mimeType || 'video/mp4'
 
-  // Parse Range header: "bytes=X-Y"
-  const rangeHeader = req.headers['range'] || 'bytes=0-'
-  const [, startStr, endStr] = rangeHeader.match(/bytes=(\d+)-(\d*)/) || []
-  
-  if (startStr === undefined) { res.writeHead(400); res.end(); return }
+  const rangeHeader = req.headers['range']
+  let start = 0
+  let end = totalSize - 1
+  let isRange = false
 
-  const start = parseInt(startStr)
-  const end = (endStr && endStr !== '') ? parseInt(endStr) : totalSize - 1
+  if (rangeHeader) {
+    const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
+    if (match) {
+      start = parseInt(match[1])
+      if (match[2] && match[2] !== '') end = parseInt(match[2])
+      isRange = true
+    } else {
+      res.writeHead(400); res.end(); return
+    }
+  }
+
   const responseSize = end - start + 1
 
-  res.writeHead(206, {
-    'Content-Type': mimeType,
-    'Content-Range': `bytes ${start}-${end}/${totalSize}`,
-    'Content-Length': responseSize,
-    'Accept-Ranges': 'bytes',
-  })
+  if (isRange) {
+    res.writeHead(206, {
+      'Content-Type': mimeType,
+      'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+      'Content-Length': responseSize,
+      'Accept-Ranges': 'bytes',
+    })
+  } else {
+    res.writeHead(200, {
+      'Content-Type': mimeType,
+      'Content-Length': responseSize,
+      'Accept-Ranges': 'bytes',
+    })
+  }
 
   // Stream data in 2MB chunks using the renderer cache
   const CHUNK_SIZE = 2 * 1024 * 1024;
