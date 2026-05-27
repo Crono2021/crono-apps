@@ -60,18 +60,11 @@ function handleRequest(req, res) {
   const mimeType  = info.mimeType || 'video/mp4'
 
   // Parse Range header: "bytes=X-Y"
-  const rangeHeader = req.headers['range']
+  let rangeHeader = req.headers['range']
   if (!rangeHeader) {
-    // Initial probe — tell MPV the file size and that we support Range requests.
-    // Do NOT stream the whole file here; MPV will follow up with Range requests
-    // to jump directly to the moov atom (usually at the end of the file).
-    res.writeHead(200, {
-      'Content-Type': mimeType,
-      'Content-Length': totalSize,
-      'Accept-Ranges': 'bytes',
-    })
-    res.end()
-    return
+    // ffmpeg only considers a stream seekable when it gets a 206 response.
+    // Convert the initial probe into a Range request for the first chunk.
+    rangeHeader = 'bytes=0-'
   }
 
   const [, startStr, endStr] = rangeHeader.match(/bytes=(\d+)-(\d*)/) || []
