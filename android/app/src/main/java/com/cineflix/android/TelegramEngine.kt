@@ -449,6 +449,76 @@ class TelegramEngine(private val context: Context) {
             synchronized(collector.videos) { collector.videos.toList() }
         }
 
+    suspend fun waitForMyContentVideos(): List<VideoInfo> =
+        withContext(Dispatchers.IO) {
+            val chatId = getBotChatId() ?: return@withContext emptyList()
+
+            // Get anchor message id
+            val anchorDeferred = CompletableDeferred<Long>()
+            client?.send(TdApi.GetChatHistory(chatId, 0L, 0, 1, false)) { hist ->
+                val lastId = if (hist is TdApi.Messages && hist.messages.isNotEmpty())
+                    hist.messages[0].id else 0L
+                anchorDeferred.complete(lastId)
+            }
+            val anchorMsgId = anchorDeferred.await()
+
+            // Send /micontenido
+            val text = TdApi.FormattedText("/micontenido", emptyArray())
+            val sendDeferred = CompletableDeferred<Boolean>()
+            client?.send(TdApi.SendMessage(chatId, null, null, null, null,
+                TdApi.InputMessageText(text, null, false)
+            )) { result -> sendDeferred.complete(result !is TdApi.Error) }
+
+            if (!sendDeferred.await()) return@withContext emptyList()
+
+            // Poll for completion message
+            var isDone = false
+            var attempts = 0
+            while (!isDone && attempts < 120) {
+                delay(3000)
+                attempts++
+                
+                val recentDeferred = CompletableDeferred<List<TdApi.Message>>()
+                client?.send(TdApi.GetChatHistory(chatId, 0L, 0, 15, false)) { hist ->
+                    if (hist is TdApi.Messages) {
+                        recentDeferred.complete(hist.messages.toList())
+                    } else {
+                        recentDeferred.complete(emptyList())
+                    }
+                }
+                val recentMessages = recentDeferred.await()
+                
+                for (m in recentMessages) {
+                    if (m.id <= anchorMsgId) break
+                    val content = m.content
+                    if (content is TdApi.MessageText) {
+                        val msgText = content.text.text
+                        if (msgText.contains("✅") || msgText == "/fin" || msgText.contains("Mi contenido listo")) {
+                            isDone = true
+                            break
+                        }
+                    }
+                }
+            }
+
+            if (!isDone) throw Exception("Tiempo de espera agotado.")
+
+            // Fetch videos after anchor
+            val videosDeferred = CompletableDeferred<List<VideoInfo>>()
+            val collected = mutableListOf<VideoInfo>()
+            client?.send(TdApi.GetChatHistory(chatId, 0L, 0, 100, false)) { hist ->
+                if (hist is TdApi.Messages) {
+                    for (m in hist.messages) {
+                        if (m.id <= anchorMsgId) continue
+                        val info = extractVideoInfo(m) ?: continue
+                        collected.add(info)
+                    }
+                }
+                videosDeferred.complete(collected)
+            }
+            videosDeferred.await().sortedBy { it.msgId }
+        }
+
     // ── File / Streaming ──────────────────────────────────────────────────────
 
     data class FileState(

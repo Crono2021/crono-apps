@@ -264,6 +264,23 @@ class AndroidBridge(
     }
 
     /**
+     * waitForMyContentVideos(queryId)
+     * Equivalente a waitForMyContentVideos() web.
+     */
+    @JavascriptInterface
+    fun waitForMyContentVideos(queryId: String) {
+        scope.launch {
+            try {
+                val videos = engine.waitForMyContentVideos()
+                val chatId = engine.getBotChatIdPublic() ?: 0L
+                callback(queryId, true, videosToJson(videos, chatId))
+            } catch (e: Exception) {
+                callback(queryId, false, e.message ?: "Error desconocido")
+            }
+        }
+    }
+
+    /**
      * getVideoMessages(queryId, limit, minId)
      * Fallback used by JS when clickInlineButton returns empty.
      * Uses TDLib GetChatHistory to find video messages newer than minId.
