@@ -568,9 +568,8 @@ export function initElectronStreamHandler() {
     // ── Read-ahead block cache (DESKTOP ONLY — PCs have plenty of RAM) ──────
     // MPV sends many tiny range requests (4KB-512KB). Instead of hitting Telegram
     // for each one, we download 2MB blocks and cache them. 8MB was too slow for seeking.
-    // Subsequent requests within the same block are served instantly from memory.
-    const CACHE_BLOCK = 2 * 1024 * 1024;  // 2MB per cached block
-    const MAX_CACHE_BLOCKS = 64;           // 128MB max memory
+    const CACHE_BLOCK = 1 * 1024 * 1024;  // 1MB per cached block
+    const MAX_CACHE_BLOCKS = 128;           // 128MB max memory
     const _blockCache = new Map();          // key: `${streamId}:${blockIdx}` → Uint8Array
 
     // Fetch from cache or download a full block
@@ -581,19 +580,17 @@ export function initElectronStreamHandler() {
 
         let block = _blockCache.get(cacheKey);
         if (!block) {
-            // Download entire 2MB block using the high-speed parallel fetcher
+            // Download entire 1MB block using the high-speed parallel fetcher
             const blockStart = blockIdx * CACHE_BLOCK;
             const blockSize = Math.min(CACHE_BLOCK, fileSize - blockStart);
             try {
                 block = await fetchTelegramRangeAndroid(client, doc, blockStart, blockSize);
             } catch (e) {
-                // Fallback to slow iterDownload if GetFile fails
                 console.warn('[Electron] fetchTelegramRangeAndroid failed, falling back', e);
                 block = await fetchTelegramRange(client, doc, blockStart, blockSize);
             }
             _blockCache.set(cacheKey, block);
 
-            // Evict oldest if over limit
             if (_blockCache.size > MAX_CACHE_BLOCKS) {
                 const oldest = _blockCache.keys().next().value;
                 _blockCache.delete(oldest);
@@ -603,15 +600,12 @@ export function initElectronStreamHandler() {
         const offsetInBlock = start - (blockIdx * CACHE_BLOCK);
         const available = Math.min(size, block.byteLength - offsetInBlock);
         const slice = block.slice(offsetInBlock, offsetInBlock + available);
-        // Clean buffer for IPC
         const buf = new ArrayBuffer(slice.byteLength);
         new Uint8Array(buf).set(slice);
         return new Uint8Array(buf);
     };
 
-    // ── Request processing (uses block cache!) ──────────────────────────────
     let _reqCount = 0;
-    let _cacheHits = 0;
 
     const _processRange = async (requestId, streamId, start, size) => {
         const info = streamRegistry.get(streamId);
@@ -621,36 +615,17 @@ export function initElectronStreamHandler() {
         }
         try {
             _reqCount++;
-            // Use the block cache — serves repeated/nearby reads from memory
             const chunk = await _cachedFetch(info.client, info.doc, streamId, start, size);
             window.cineflix.stream.replyRange(requestId, chunk.buffer);
-
-            // Show stats every 10 requests
-            if (_reqCount % 10 === 0) {
-                console.log(`[Stream] ${_reqCount} reqs | cache blocks: ${_blockCache.size}/${MAX_CACHE_BLOCKS}`);
-            }
         } catch (err) {
             console.error(`[Stream] Error: ${err.message}`);
             window.cineflix.stream.replyRange(requestId, new ArrayBuffer(0));
         }
     };
 
-    // Process up to 4 block downloads concurrently
-    // (Desktop has bandwidth to spare — Android uses 2)
-    let _activeReqs = 0;
-    const _queue = [];
-
-    const _runNext = () => {
-        while (_activeReqs < 4 && _queue.length > 0) {
-            _activeReqs++;
-            const args = _queue.shift();
-            _processRange(...args).finally(() => { _activeReqs--; _runNext(); });
-        }
-    };
-
+    // Process requests immediately without arbitrary limits, relying on MTProto multiplexing
     window.cineflix.stream.onFetchRange(({ requestId, streamId, start, size }) => {
-        _queue.push([requestId, streamId, start, size]);
-        _runNext();
+        _processRange(requestId, streamId, start, size);
     });
 }
 
