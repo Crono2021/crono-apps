@@ -623,9 +623,24 @@ export function initElectronStreamHandler() {
         }
     };
 
-    // Process requests immediately without arbitrary limits, relying on MTProto multiplexing
+    // Process up to 2 block downloads concurrently
+    let _activeReqs = 0;
+    const _queue = [];
+
+    const _runNext = () => {
+        while (_activeReqs < 2 && _queue.length > 0) {
+            _activeReqs++;
+            const args = _queue.shift();
+            _processRange(...args).finally(() => { _activeReqs--; _runNext(); });
+        }
+    };
+
     window.cineflix.stream.onFetchRange(({ requestId, streamId, start, size }) => {
-        _processRange(requestId, streamId, start, size);
+        // If a new request comes in, any queued requests are from dead/aborted sockets (seeks).
+        // Clear the queue so the new seek gets immediate priority.
+        _queue.length = 0;
+        _queue.push([requestId, streamId, start, size]);
+        _runNext();
     });
 }
 
