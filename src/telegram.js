@@ -705,14 +705,11 @@ export async function playInMpv(playlistArray, seriesTitle, startIndex = 0, intr
  * IMPORTANT: Telegram only allows limit values of 4KB, 128KB or 512KB.
  */
 async function fetchTelegramRange(tgClient, doc, start, size) {
-    const VALID_LIMITS = [4096, 131072, 524288];
     const BLOCK = 4096;
     const alignedStart = Math.floor(start / BLOCK) * BLOCK;
 
     const needed = (start - alignedStart) + size;
-    const limit = VALID_LIMITS.find(v => v >= needed) || VALID_LIMITS[VALID_LIMITS.length - 1];
-
-    let received = new Uint8Array(limit);
+    let received = new Uint8Array(needed);
     let ptr = 0;
     
     for await (const chunk of tgClient.iterDownload({
@@ -723,12 +720,13 @@ async function fetchTelegramRange(tgClient, doc, start, size) {
             thumbSize: '',
         }),
         offset: typeof doc.size === 'bigint' ? BigInt(alignedStart) : bigInt(alignedStart),
-        requestSize: limit,
+        requestSize: 524288,
         dcId: doc.dcId,
     })) {
-        received.set(new Uint8Array(chunk), ptr);
-        ptr += chunk.length;
-        if (ptr >= limit) break;
+        const chunkLen = Math.min(chunk.length, needed - ptr);
+        received.set(new Uint8Array(chunk.slice(0, chunkLen)), ptr);
+        ptr += chunkLen;
+        if (ptr >= needed) break;
     }
 
     if (ptr === 0) return new Uint8Array(0);
