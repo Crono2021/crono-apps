@@ -566,10 +566,9 @@ export function initElectronStreamHandler() {
     _electronHandlerActive = true;
 
     // ── Read-ahead block cache (DESKTOP ONLY — PCs have plenty of RAM) ──────
-    // MPV sends many tiny range requests (4KB-512KB). Instead of hitting Telegram
-    // for each one, we download 1MB blocks and cache them.
-    const CACHE_BLOCK = 1 * 1024 * 1024;  // 1MB per cached block
-    const MAX_CACHE_BLOCKS = 64;           // 64MB max memory
+    // Subsequent requests within the same block are served instantly from memory.
+    const CACHE_BLOCK = 2 * 1024 * 1024;  // 2MB per cached block
+    const MAX_CACHE_BLOCKS = 64;           // 128MB max memory
     const _blockCache = new Map();          // key: `${streamId}:${blockIdx}` → Uint8Array
 
     // Fetch from cache or download a full block
@@ -580,14 +579,14 @@ export function initElectronStreamHandler() {
 
         let block = _blockCache.get(cacheKey);
         if (!block) {
-            // Download entire 1MB block using the high-speed parallel fetcher
+            // Download entire 2MB block using the high-speed parallel fetcher
             const blockStart = blockIdx * CACHE_BLOCK;
             const blockSize = Math.min(CACHE_BLOCK, fileSize - blockStart);
             try {
-                block = await fetchTelegramRange(client, doc, blockStart, blockSize);
+                block = await fetchTelegramRangeAndroid(client, doc, blockStart, blockSize);
             } catch (e) {
-                console.warn('[Electron] fetchTelegramRange failed', e);
-                block = new Uint8Array(0);
+                console.warn('[Electron] fetchTelegramRangeAndroid failed directly, falling back', e);
+                block = await fetchTelegramRange(client, doc, blockStart, blockSize);
             }
             _blockCache.set(cacheKey, block);
 
@@ -623,12 +622,12 @@ export function initElectronStreamHandler() {
         }
     };
 
-    // Process up to 1 block download concurrently (100% sequential to avoid Telegram FLOOD_WAIT)
+    // Process up to 2 block downloads concurrently
     let _activeReqs = 0;
     const _queue = [];
 
     const _runNext = () => {
-        while (_activeReqs < 1 && _queue.length > 0) {
+        while (_activeReqs < 2 && _queue.length > 0) {
             _activeReqs++;
             const args = _queue.shift();
             _processRange(...args).finally(() => { _activeReqs--; _runNext(); });
