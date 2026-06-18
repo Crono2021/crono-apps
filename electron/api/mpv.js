@@ -110,6 +110,7 @@ function setupObservers() {
 }
 
 function emit(evt) {
+  dlog('EMIT TO FRONTEND:', JSON.stringify(evt));
   if (_overlayWin && !_overlayWin.isDestroyed()) {
     _overlayWin.webContents.send('mpv:event', evt)
   }
@@ -117,6 +118,13 @@ function emit(evt) {
 
 function handleEvent(msg) {
   if (!msg) return
+  if (msg.event === 'playback-restart' || msg.event === 'file-loaded') {
+    emit({ type: 'playback-restart' })
+    sendCommand(['set_property', 'fullscreen', 'yes'])
+    if (_overlayWin && !_overlayWin.isDestroyed()) {
+      _overlayWin.hide()
+    }
+  }
   if (msg.event === 'property-change') {
     switch (msg.name) {
       case 'time-pos': {
@@ -251,8 +259,6 @@ async function playEmbedded(streamInfo, overlayWin) {
     `--playlist-start=${startIndex}`,
     `--input-ipc-server=${PIPE_PATH}`,
     `--log-file=${path.join(os.tmpdir(), 'mpv_debug.log')}`,
-    '--force-window=yes',
-    '--fs=yes',                                    // Always force full screen
     `--title=Cineflix - ${seriesTitle || 'Reproductor'}`, // Window title
     '--hwdec=auto-safe',                           // Force hardware acceleration for video
     '--vo=gpu',                                    // GPU video out
@@ -263,8 +269,15 @@ async function playEmbedded(streamInfo, overlayWin) {
     '--slang=spa,es,en',
     '--alang=spa,es,en',
     '--ytdl=no',
-    '--demuxer-max-bytes=100MiB',
     '--cache=yes',
+    '--demuxer-max-bytes=150MiB',
+    '--demuxer-max-back-bytes=50MiB',
+    '--cache-secs=120',
+    '--force-seekable=yes',
+    '--hr-seek=default',
+    '--hr-seek-framedrop=yes',
+    '--cache-pause=no',
+    '--vd-lavc-fast',
     `--script=${uiLuaTmp}`
   ]
 
@@ -339,7 +352,6 @@ async function play(mainWindow, streamInfo) {
   const args = [
     url,
     `--input-ipc-server=${PIPE_PATH}`,
-    '--force-window=yes',
     `--title=Cineflix — ${title}`,
     `--start=${startTime}`,
     '--keep-open=yes',
