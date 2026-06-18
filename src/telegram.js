@@ -200,9 +200,13 @@ export async function isLoggedIn() {
         
         // ONLY remove session if it's explicitly an AuthKey error from Telegram Server
         // Do NOT remove session if it's a parse error or network error!
-        if (msg.includes('AUTH_KEY_UNREGISTERED') || msg.includes('SESSION_REVOKED') || msg.includes('401')) {
+        if (msg.includes('AUTH_KEY_UNREGISTERED') || msg.includes('AUTH_KEY_DUPLICATED') || msg.includes('SESSION_REVOKED') || msg.includes('401')) {
             console.warn('[AUTH] Wiping session due to fatal Telegram authorization error.');
             localStorage.removeItem(SESSION_KEY);
+            // Also wipe Electron's persistent store so restoreNativeSession() doesn't restore the corrupted session
+            if (window.cineflix?.isElectron) {
+                try { window.cineflix.store.delete(SESSION_KEY).catch(()=>{}); } catch {}
+            }
             client = null;
         } else {
             console.warn('[AUTH] Soft error in GramJS, preserving session.');
@@ -561,33 +565,13 @@ export function initElectronStreamHandler() {
     if (!window.cineflix?.isElectron || _electronHandlerActive) return;
     _electronHandlerActive = true;
 
-    // ── Visual debug toast (no DevTools available in prod Electron builds) ───
-    const _toast = (msg, color = '#0f0') => {
-        try {
-            let el = document.getElementById('electron-stream-toast');
-            if (!el) {
-                el = document.createElement('div');
-                el.id = 'electron-stream-toast';
-                el.style.cssText = 'position:fixed;bottom:10px;left:10px;padding:6px 14px;border-radius:6px;font:12px monospace;z-index:999999;pointer-events:none;transition:opacity 0.5s;';
-                document.body.appendChild(el);
-            }
-            el.style.background = 'rgba(0,0,0,0.85)';
-            el.style.color = color;
-            el.style.opacity = '1';
-            el.textContent = msg;
-            clearTimeout(el._t);
-            el._t = setTimeout(() => { el.style.opacity = '0'; }, 8000);
-        } catch {}
-    };
-
-    // ── Read-ahead block cache ──────────────────────────────────────────────
+    // ── Read-ahead block cache (DESKTOP ONLY — PCs have plenty of RAM) ──────
     // MPV sends many tiny range requests (4KB-512KB). Instead of hitting Telegram
-    // for each one, we download 2MB blocks and cache them. Subsequent requests
-    // within the same block are served instantly from memory.
-    // Tamaño de bloque para optimizar búsquedas en MP4s mal entrelazados (gaps de audio/video)
-    const CACHE_BLOCK = 8 * 1024 * 1024; // 8MB per cached block
-    const MAX_CACHE_BLOCKS = 8;          // 64MB max memory
-    const _blockCache = new Map();       // key: `${streamId}:${blockIdx}` → Uint8Array
+    // for each one, we download 2MB blocks and cache them. 8MB was too slow for seeking.
+    // Subsequent requests within the same block are served instantly from memory.
+    const CACHE_BLOCK = 2 * 1024 * 1024;  // 2MB per cached block
+    const MAX_CACHE_BLOCKS = 64;           // 128MB max memory
+    const _blockCache = new Map();          // key: `${streamId}:${blockIdx}` → Uint8Array
 
     // Fetch from cache or download a full block
     const _cachedFetch = async (client, doc, streamId, start, size) => {
@@ -597,7 +581,7 @@ export function initElectronStreamHandler() {
 
         let block = _blockCache.get(cacheKey);
         if (!block) {
-            // Download entire 2MB block using the high-speed Android parallel fetcher
+            // Download entire 2MB block using the high-speed parallel fetcher
             const blockStart = blockIdx * CACHE_BLOCK;
             const blockSize = Math.min(CACHE_BLOCK, fileSize - blockStart);
             try {
@@ -625,7 +609,7 @@ export function initElectronStreamHandler() {
         return new Uint8Array(buf);
     };
 
-    // ── Request processing ──────────────────────────────────────────────────
+    // ── Request processing (uses block cache!) ──────────────────────────────
     let _reqCount = 0;
     let _cacheHits = 0;
 
@@ -637,32 +621,27 @@ export function initElectronStreamHandler() {
         }
         try {
             _reqCount++;
-            let chunk;
-            try {
-                chunk = await fetchTelegramRangeAndroid(info.client, info.doc, start, size);
-            } catch (e) {
-                console.warn('[Electron] fetchTelegramRangeAndroid failed directly, falling back', e);
-                chunk = await fetchTelegramRange(info.client, info.doc, start, size);
-            }
+            // Use the block cache — serves repeated/nearby reads from memory
+            const chunk = await _cachedFetch(info.client, info.doc, streamId, start, size);
             window.cineflix.stream.replyRange(requestId, chunk.buffer);
 
             // Show stats every 10 requests
             if (_reqCount % 10 === 0) {
-                _toast(`[Stream] ${_reqCount} reqs | ${_cacheHits} cache hits (${Math.round(_cacheHits/_reqCount*100)}%)`, '#0f0');
+                console.log(`[Stream] ${_reqCount} reqs | cache blocks: ${_blockCache.size}/${MAX_CACHE_BLOCKS}`);
             }
         } catch (err) {
-            _toast(`[Stream] Error: ${err.message}`, '#f44');
+            console.error(`[Stream] Error: ${err.message}`);
             window.cineflix.stream.replyRange(requestId, new ArrayBuffer(0));
         }
     };
 
-    // Process up to 2 block downloads concurrently
-    // (more than 2 can overwhelm Telegram rate limits)
+    // Process up to 4 block downloads concurrently
+    // (Desktop has bandwidth to spare — Android uses 2)
     let _activeReqs = 0;
     const _queue = [];
 
     const _runNext = () => {
-        while (_activeReqs < 2 && _queue.length > 0) {
+        while (_activeReqs < 4 && _queue.length > 0) {
             _activeReqs++;
             const args = _queue.shift();
             _processRange(...args).finally(() => { _activeReqs--; _runNext(); });
@@ -673,45 +652,65 @@ export function initElectronStreamHandler() {
         _queue.push([requestId, streamId, start, size]);
         _runNext();
     });
-
-    _toast('[Stream] Electron handler ready (2MB read-ahead cache)', '#0af');
 }
 
 /**
  * Play in embedded MPV (Electron only).
+ * @param {Array} playlistArray - videos to play
+ * @param {string} seriesTitle
+ * @param {number} startIndex
+ * @param {Promise|null} introDataPromise - resolves to { introStartMs, introEndMs, theIntroDbCreditsMs }
  */
-export async function playInMpv(playlistArray, seriesTitle, startIndex = 0, introStartMs = '', introEndMs = '', theIntroDbCreditsMs = '') {
+export async function playInMpv(playlistArray, seriesTitle, startIndex = 0, introDataPromise = null) {
     initElectronStreamHandler();
-    const streamInfos = [];
-    
-    for (let i = 0; i < playlistArray.length; i++) {
-        const v = playlistArray[i];
-        let media = v.media || v;
+
+    // Get the Telegram client ONCE (not per-episode)
+    const c = await getClient();
+
+    // Prepare all stream metadata synchronously (no awaits needed)
+    const prepared = playlistArray.map((v, i) => {
+        const media = v.media || v;
         const doc = media.document;
-        const streamId = `${doc.id.toString()}-${Date.now()}`;
-        const c = await getClient();
-        
-        streamRegistry.set(streamId, { client: c, doc });
-        
-        await window.cineflix.stream.register(streamId, {
-            size: Number(doc.size),
-            mimeType: doc.mimeType || 'video/mp4',
-        });
-        
+        const streamId = `${doc.id.toString()}-${Date.now()}-${i}`;
         const label = v.displayTitle || (v.caption || v.fileName || v.title || seriesTitle || '').replace(/\.[^.]+$/, '');
-        streamInfos.push({
-            streamId: streamId,
-            fileSize: Number(doc.size),
-            mimeType: doc.mimeType || 'video/mp4',
-            title: label,
-            introStartMs: (i === startIndex && introStartMs) ? Number(introStartMs) : undefined,
-            introEndMs: (i === startIndex && introEndMs) ? Number(introEndMs) : undefined,
-            creditsStartMs: (i === startIndex && theIntroDbCreditsMs) ? Number(theIntroDbCreditsMs) : undefined,
-        });
-    }
+        streamRegistry.set(streamId, { client: c, doc });
+        return { streamId, doc, label, v };
+    });
+
+    // Register ALL streams in PARALLEL (instead of one-by-one)
+    await Promise.all(prepared.map(p =>
+        window.cineflix.stream.register(p.streamId, {
+            size: Number(p.doc.size),
+            mimeType: p.doc.mimeType || 'video/mp4',
+        })
+    ));
+
+    const streamInfos = prepared.map(p => ({
+        streamId: p.streamId,
+        fileSize: Number(p.doc.size),
+        mimeType: p.doc.mimeType || 'video/mp4',
+        title: p.label,
+        // Preserve any intro data already attached to the video object
+        introStartMs: p.v.introStartMs,
+        introEndMs: p.v.introEndMs,
+        creditsStartMs: p.v.creditsStartMs,
+    }));
 
     if (streamInfos.length === 0) return;
 
+    // Resolve intro data from promise if provided (parallel fetch from main.js)
+    if (introDataPromise) {
+        try {
+            const introData = await introDataPromise;
+            if (introData && streamInfos[startIndex]) {
+                if (introData.introStartMs) streamInfos[startIndex].introStartMs = Number(introData.introStartMs);
+                if (introData.introEndMs) streamInfos[startIndex].introEndMs = Number(introData.introEndMs);
+                if (introData.theIntroDbCreditsMs) streamInfos[startIndex].creditsStartMs = Number(introData.theIntroDbCreditsMs);
+            }
+        } catch {}
+    }
+
+    // Launch MPV
     const res = await window.cineflix.player.launch({
         playlist: streamInfos,
         startIndex,
