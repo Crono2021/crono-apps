@@ -567,9 +567,9 @@ export function initElectronStreamHandler() {
 
     // ── Read-ahead block cache (DESKTOP ONLY — PCs have plenty of RAM) ──────
     // MPV sends many tiny range requests (4KB-512KB). Instead of hitting Telegram
-    // for each one, we download 2MB blocks and cache them. 8MB was too slow for seeking.
+    // for each one, we download 1MB blocks and cache them.
     const CACHE_BLOCK = 1 * 1024 * 1024;  // 1MB per cached block
-    const MAX_CACHE_BLOCKS = 128;           // 128MB max memory
+    const MAX_CACHE_BLOCKS = 64;           // 64MB max memory
     const _blockCache = new Map();          // key: `${streamId}:${blockIdx}` → Uint8Array
 
     // Fetch from cache or download a full block
@@ -584,10 +584,10 @@ export function initElectronStreamHandler() {
             const blockStart = blockIdx * CACHE_BLOCK;
             const blockSize = Math.min(CACHE_BLOCK, fileSize - blockStart);
             try {
-                block = await fetchTelegramRangeAndroid(client, doc, blockStart, blockSize);
-            } catch (e) {
-                console.warn('[Electron] fetchTelegramRangeAndroid failed, falling back', e);
                 block = await fetchTelegramRange(client, doc, blockStart, blockSize);
+            } catch (e) {
+                console.warn('[Electron] fetchTelegramRange failed', e);
+                block = new Uint8Array(0);
             }
             _blockCache.set(cacheKey, block);
 
@@ -623,12 +623,12 @@ export function initElectronStreamHandler() {
         }
     };
 
-    // Process up to 2 block downloads concurrently
+    // Process up to 1 block download concurrently (100% sequential to avoid Telegram FLOOD_WAIT)
     let _activeReqs = 0;
     const _queue = [];
 
     const _runNext = () => {
-        while (_activeReqs < 2 && _queue.length > 0) {
+        while (_activeReqs < 1 && _queue.length > 0) {
             _activeReqs++;
             const args = _queue.shift();
             _processRange(...args).finally(() => { _activeReqs--; _runNext(); });
