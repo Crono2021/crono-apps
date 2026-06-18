@@ -1,7 +1,6 @@
 import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import { computeCheck } from 'telegram/Password';
-import bigInt from 'big-integer';
 
 const API_ID = 25193949;
 const API_HASH = '0523cf42fe71db02eeaa8ba52124c826';
@@ -725,7 +724,7 @@ async function fetchTelegramRange(tgClient, doc, start, size) {
             fileReference: doc.fileReference,
             thumbSize: '',
         }),
-        offset: typeof doc.size === 'bigint' ? BigInt(alignedStart) : bigInt(alignedStart),
+        offset: BigInt(alignedStart),
         requestSize: 524288,
         dcId: doc.dcId,
     })) {
@@ -766,8 +765,8 @@ async function fetchTelegramRangeAndroid(tgClient, doc, start, size) {
         });
     }
 
-    // Descargar en ráfagas de 2 conexiones en paralelo (Multiplexing MTProto nativo optimizado para evitar baneos)
-    const MAX_CONCURRENT = 2;
+    // Descargar en ráfagas de 8 conexiones en paralelo (Multiplexing MTProto nativo)
+    const MAX_CONCURRENT = 8;
     const results = new Uint8Array(totalNeededBytes);
     
     for (let i = 0; i < chunks.length; i += MAX_CONCURRENT) {
@@ -785,7 +784,7 @@ async function fetchTelegramRangeAndroid(tgClient, doc, start, size) {
                             fileReference: doc.fileReference,
                             thumbSize: ''
                         }),
-                        offset: typeof doc.size === 'bigint' ? BigInt(chunkInfo.requestOffset) : bigInt(chunkInfo.requestOffset),
+                        offset: BigInt(chunkInfo.requestOffset),
                         limit: chunkInfo.requestSize
                     }));
                     receivedBytes = result.bytes;
