@@ -585,6 +585,7 @@ export function initElectronStreamHandler() {
                 block = await fetchTelegramRangeAndroid(client, doc, blockStart, blockSize);
             } catch (e) {
                 console.warn('[Electron] fetchTelegramRangeAndroid failed directly, falling back', e);
+                window.cineflix.store.set('LAST_ERROR', e ? (e.stack || e.message) : 'Unknown Error');
                 block = await fetchTelegramRange(client, doc, blockStart, blockSize);
             }
             _blockCache.set(cacheKey, block);
