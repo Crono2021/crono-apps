@@ -393,3 +393,42 @@ export function parseEpisodeFile(filename, defaultSeason = 1) {
 
     return null;
 }
+
+/**
+ * Get YouTube trailer ID for a given TMDB ID.
+ * @param {number} tmdbId The TMDB ID of the series/movie
+ * @param {string} type 'tv' or 'movie'
+ * @returns {string|null} The YouTube video ID or null
+ */
+export async function getTrailerUrl(tmdbId, type = 'tv') {
+    if (!tmdbId) return null;
+    const key = `trailer_${type}_${tmdbId}`;
+    const cached = cacheGet(key);
+    if (cached !== null) return cached;
+
+    try {
+        const params = new URLSearchParams({ api_key: TMDB_KEY, language: 'es-ES' });
+        const res = await fetch(`${TMDB_BASE}/${type}/${tmdbId}/videos?${params}`);
+        const json = await res.json();
+        
+        // Try to find a Spanish trailer first, then fallback to English/Any
+        let videos = json.results || [];
+        if (videos.length === 0) {
+            // Fallback to English
+            const resEn = await fetch(`${TMDB_BASE}/${type}/${tmdbId}/videos?api_key=${TMDB_KEY}&language=en-US`);
+            const jsonEn = await resEn.json();
+            videos = jsonEn.results || [];
+        }
+
+        const trailer = videos.find(v => v.site === 'YouTube' && v.type === 'Trailer') ||
+                        videos.find(v => v.site === 'YouTube' && v.type === 'Teaser') ||
+                        videos.find(v => v.site === 'YouTube');
+        
+        const videoId = trailer ? trailer.key : null;
+        cacheSet(key, videoId);
+        return videoId;
+    } catch (err) {
+        console.warn(`[TMDB] Trailer fetch failed for ${type} ${tmdbId}`, err.message);
+        return null;
+    }
+}

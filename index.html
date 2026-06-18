@@ -84,6 +84,7 @@
                 <!-- Hero -->
                 <div id="catalog-hero" class="hero-section">
                     <div id="hero-backdrop" class="hero-backdrop"></div>
+                    <div id="hero-video-container" class="hero-video"></div>
                     <div class="hero-overlay"></div>
                     <div class="hero-content">
                         <div class="hero-badge">🔥 Tendencia</div>
@@ -95,6 +96,7 @@
                         </div>
                     </div>
                     <div id="hero-dots" class="hero-dots"></div>
+                    <button id="hero-mute-btn" class="hero-mute-btn hidden" title="Activar sonido">🔊</button>
                 </div>
 
                 <!-- Content rows -->
@@ -132,6 +134,7 @@
                 <!-- Hero -->
                 <div id="movies-hero" class="hero-section">
                     <div id="movies-hero-backdrop" class="hero-backdrop"></div>
+                    <div id="movies-hero-video-container" class="hero-video"></div>
                     <div class="hero-overlay"></div>
                     <div class="hero-content">
                         <div class="hero-badge">🎬 En cartelera</div>
@@ -143,6 +146,7 @@
                         </div>
                     </div>
                     <div id="movies-hero-dots" class="hero-dots"></div>
+                    <button id="movies-hero-mute-btn" class="hero-mute-btn hidden" title="Activar sonido">🔊</button>
                 </div>
                 <!-- Content rows -->
                 <div id="movies-rows" class="catalog-rows"></div>
@@ -218,11 +222,11 @@
         </div>
 
         <!-- ELECTRON MPV LOADER -->
-        <div id="mpv-loader" class="modal-overlay hidden" style="z-index: 9999; background: rgba(10,10,15,0.9);">
-            <div class="center-message" style="transform: translateY(-50px);">
+        <div id="mpv-loader" class="modal-overlay hidden" style="z-index: 9999; background: rgba(10,10,15,0.9); align-items: center; justify-content: center;">
+            <div class="center-message" style="transform: none;">
                 <div class="spinner"></div>
                 <h2 style="margin-top: 1rem; color: #fff; font-size: 1.5rem;">Cambiando a MPV...</h2>
-                <p style="color: #aaa; margin-top: 0.5rem;">Preparando el motor de video nativo</p>
+                <p id="mpv-loader-text" style="color: #aaa; margin-top: 0.5rem;">Preparando el motor de video nativo</p>
             </div>
         </div>
     </div>

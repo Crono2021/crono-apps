@@ -274,8 +274,7 @@ async function playEmbedded(streamInfo, overlayWin) {
     '--demuxer-max-back-bytes=50MiB',
     '--cache-secs=120',
     '--force-seekable=yes',
-    '--hr-seek=default',
-    '--hr-seek-framedrop=yes',
+    '--hr-seek=no',
     '--cache-pause=no',
     '--vd-lavc-fast',
     `--script=${uiLuaTmp}`

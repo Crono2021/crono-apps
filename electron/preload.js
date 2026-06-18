@@ -41,6 +41,11 @@ contextBridge.exposeInMainWorld('cineflix', {
       ipcRenderer.on('stream:fetchRange', (_e, data) => cb(data))
       return () => ipcRenderer.removeAllListeners('stream:fetchRange')
     },
+    // Listen for download progress updates
+    onProgress: (cb) => {
+      ipcRenderer.on('stream:progress', (_e, data) => cb(data))
+      return () => ipcRenderer.removeAllListeners('stream:progress')
+    },
   },
 
   // ── Integrated player ─────────────────────────────────────────────────────────

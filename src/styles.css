@@ -137,12 +137,34 @@ body {
     transition: background-image 1s ease;
     transform: scale(1.02);
 }
+.hero-video {
+    position: absolute; inset: 0; z-index: 0;
+    pointer-events: none; /* Let clicks pass through */
+    opacity: 0; transition: opacity 1s ease;
+}
+.hero-video iframe {
+    width: 100vw; height: 56.25vw; /* 16:9 aspect ratio relative to width */
+    min-height: 100vh; min-width: 177.77vh; /* 16:9 relative to height */
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(1.15); /* scale up to hide YT borders/logos */
+}
 .hero-overlay {
     position: absolute; inset: 0;
     background:
         linear-gradient(to right, rgba(10,10,18,0.92) 0%, rgba(10,10,18,0.5) 45%, transparent 75%),
         linear-gradient(to top, #0a0a12 0%, rgba(10,10,18,0.6) 30%, transparent 60%);
+    pointer-events: none;
 }
+.hero-mute-btn {
+    position: absolute; bottom: 20px; right: 2rem; z-index: 10;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+    color: #fff; font-size: 1.2rem; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(8px); transition: all 0.2s;
+}
+.hero-mute-btn:hover { background: rgba(255,255,255,0.2); transform: scale(1.05); }
+.hero-mute-btn.hidden { display: none; }
 .hero-content {
     position: absolute; bottom: 0; left: 0;
     padding: 0 3rem 2.5rem; z-index: 1; max-width: 620px;

@@ -98,6 +98,7 @@ function handleRequest(req, res) {
   let currentChunkSize = 512 * 1024; 
   const MAX_CHUNK_SIZE = 4 * 1024 * 1024;
   let currentStart = start;
+  let emptyRetries = 0;  // Track consecutive empty reads
 
   const streamLoop = async () => {
     while (currentStart <= end) {
@@ -106,12 +107,35 @@ function handleRequest(req, res) {
       const fetchSize = Math.min(currentChunkSize, end - currentStart + 1);
       try {
         const buf = await fetchRange(streamId, currentStart, fetchSize);
-        if (!buf || buf.byteLength === 0) break; // EOF or error
         
+        if (!buf || buf.byteLength === 0) {
+          emptyRetries++;
+          if (emptyRetries >= 3) {
+            // After 3 empty reads, pad the remaining bytes with zeros
+            // This prevents ffmpeg's "Stream ends prematurely" exponential backoff
+            const remaining = end - currentStart + 1;
+            if (remaining > 0 && remaining <= 1024 * 1024) {  // Only pad up to 1MB
+              console.log(`[StreamServer] Padding ${remaining} bytes at EOF to prevent ffmpeg retry storm`);
+              if (!req.destroyed && !res.destroyed) {
+                res.write(Buffer.alloc(remaining));
+              }
+              currentStart = end + 1;  // Mark as complete
+            }
+            break;
+          }
+          continue;  // Retry instead of breaking immediately
+        }
+        
+        emptyRetries = 0;  // Reset on successful read
         if (req.destroyed || res.destroyed) break;
         
         const canWrite = res.write(buf);
         currentStart += buf.byteLength;
+        
+        const win = _getWindow && _getWindow();
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('stream:progress', { downloaded: currentStart, total: totalSize });
+        }
         
         if (!canWrite) {
           await new Promise(resolve => {

@@ -81,10 +81,12 @@ function getMainBounds() {
 
 async function openPlayerWindows(streamInfo) {
   // Launch MPV in its own native window natively with the regular MPV UI
-  await mpvController.playEmbedded(streamInfo)
+  await mpvController.playEmbedded(streamInfo, mainWindow)
 
-  // Hide main app while watching (only AFTER MPV has spawned/connected)
-  mainWindow.hide()
+  // Do NOT hide main app immediately. 
+  // MPV might take up to 60s to probe badly interleaved files.
+  // The renderer will show a loading screen. We will hide the main window
+  // only when MPV actually starts playing (via 'playback-restart' event).
 }
 
 function closePlayerWindows() {
@@ -92,6 +94,8 @@ function closePlayerWindows() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show()
     mainWindow.focus()
+    // Tell renderer to hide loading screen just in case
+    mainWindow.webContents.send('mpv:event', { type: 'ended' })
   }
 }
 

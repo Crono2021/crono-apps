@@ -71,7 +71,7 @@ import {
 import {
     searchSeries, searchMovie, getSeasonEpisodes, extractSeasonNumber,
     parseEpisodeFile, posterUrl, stillUrl,
-    getTrending, getTrendingMovies, discoverMoviesByGenre, normTitle,
+    getTrending, getTrendingMovies, discoverMoviesByGenre, normTitle, getTrailerUrl
 } from './tmdb.js';
 
 
@@ -208,6 +208,9 @@ async function init() {
         window.cineflix.mpv.onEvent(evt => {
             if (evt.type === 'error') {
                 alert(`MPV Error: ${evt.message}`);
+                $('mpv-loader').classList.add('hidden');
+            } else if (evt.type === 'playback-restart' || evt.type === 'ended') {
+                $('mpv-loader').classList.add('hidden');
             }
         });
     }
@@ -432,6 +435,10 @@ async function renderHeroSlide(idx) {
         $('hero-backdrop').style.backgroundImage =
             `url('https://image.tmdb.org/t/p/w1280${tmdb.backdropPath}')`;
     }
+    
+    // Play YouTube Trailer
+    playHeroTrailer('hero-video-container', 'hero-mute-btn', tmdb?.id, 'tv');
+
     $('hero-play-btn').onclick = () => openSeries(series);
 }
 
@@ -451,6 +458,47 @@ function updateHeroDots() {
         });
         dotsEl.appendChild(dot);
     });
+}
+
+// ===== HERO TRAILER (YOUTUBE) =====
+function playHeroTrailer(containerId, muteBtnId, tmdbId, type) {
+    clearTimeout(window[`ytTimer_${containerId}`]);
+    const container = $(containerId);
+    const muteBtn = $(muteBtnId);
+    if (!container || !muteBtn) return;
+    
+    container.style.opacity = '0';
+    container.innerHTML = '';
+    muteBtn.classList.add('hidden');
+    muteBtn.textContent = '🔊';
+    muteBtn.dataset.muted = 'true';
+
+    if (!tmdbId) return;
+
+    window[`ytTimer_${containerId}`] = setTimeout(async () => {
+        const videoId = await getTrailerUrl(tmdbId, type);
+        if (!videoId) return;
+
+        const origin = window.location.origin || 'http://localhost';
+        container.innerHTML = `<iframe id="yt_${containerId}" src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&loop=1&playlist=${videoId}&enablejsapi=1&origin=${origin}" frameborder="0" allow="autoplay; encrypted-media"></iframe>`;
+        
+        setTimeout(() => {
+            if (container.querySelector('iframe')) {
+                container.style.opacity = '1';
+                muteBtn.classList.remove('hidden');
+            }
+        }, 1500);
+
+        muteBtn.onclick = () => {
+            const iframe = $(`yt_${containerId}`);
+            if (!iframe) return;
+            const isMuted = muteBtn.dataset.muted === 'true';
+            const cmd = isMuted ? 'unMute' : 'mute';
+            iframe.contentWindow.postMessage(JSON.stringify({event: "command", func: cmd, args: []}), '*');
+            muteBtn.dataset.muted = isMuted ? 'false' : 'true';
+            muteBtn.textContent = isMuted ? '🔈' : '🔊';
+        };
+    }, 2000);
 }
 
 // ===== GENRE TABS =====
@@ -989,6 +1037,10 @@ async function renderMovieHeroSlide(idx) {
         $('movies-hero-backdrop').style.backgroundImage =
             `url('https://image.tmdb.org/t/p/w1280${tmdb.backdropPath}')`;
     }
+
+    // Play YouTube Trailer
+    playHeroTrailer('movies-hero-video-container', 'movies-hero-mute-btn', tmdb?.id, 'movie');
+
     $('movies-hero-play-btn').onclick = () => openMovie(movie);
 }
 
@@ -1499,7 +1551,18 @@ async function playVideo(video, seriesTitle, playlistArray = null) {
     // ── Electron: route ALL playback through MPV ──────────────────────────────
     if (window.cineflix?.isElectron) {
         // Show loading overlay so user knows it's doing something
+        $('mpv-loader-text').textContent = 'Conectando con Telegram...';
         $('mpv-loader').classList.remove('hidden');
+
+        let unsubProgress = null;
+        if (window.cineflix.stream && window.cineflix.stream.onProgress) {
+            unsubProgress = window.cineflix.stream.onProgress(p => {
+                const dlMB = (p.downloaded / (1024 * 1024)).toFixed(1);
+                const totMB = (p.total / (1024 * 1024)).toFixed(0);
+                $('mpv-loader-text').textContent = `Cargando caché: ${dlMB} / ${totMB} MB`;
+            });
+        }
+
         try {
             // If requested from Episodes, we have the full playlist
             if (playlistArray && playlistArray.length > 0) {
@@ -1512,9 +1575,9 @@ async function playVideo(video, seriesTitle, playlistArray = null) {
             }
         } catch (err) {
             alert(`No se pudo abrir en MPV:\n${err.message}`);
-        } finally {
-            // Hide loading overlay once it launches or fails
             $('mpv-loader').classList.add('hidden');
+        } finally {
+            if (unsubProgress) unsubProgress();
         }
         return;
     }
