@@ -567,8 +567,8 @@ export function initElectronStreamHandler() {
 
     // ── Read-ahead block cache (DESKTOP ONLY — PCs have plenty of RAM) ──────
     // Subsequent requests within the same block are served instantly from memory.
-    const CACHE_BLOCK = 2 * 1024 * 1024;  // 2MB per cached block
-    const MAX_CACHE_BLOCKS = 64;           // 128MB max memory
+    const CACHE_BLOCK = 1 * 1024 * 1024;  // 1MB per cached block
+    const MAX_CACHE_BLOCKS = 64;           // 64MB max memory
     const _blockCache = new Map();          // key: `${streamId}:${blockIdx}` → Uint8Array
 
     // Fetch from cache or download a full block
@@ -579,7 +579,7 @@ export function initElectronStreamHandler() {
 
         let block = _blockCache.get(cacheKey);
         if (!block) {
-            // Download entire 2MB block using the high-speed parallel fetcher
+            // Download block using safe parallel fetcher
             const blockStart = blockIdx * CACHE_BLOCK;
             const blockSize = Math.min(CACHE_BLOCK, fileSize - blockStart);
             try {
@@ -597,37 +597,29 @@ export function initElectronStreamHandler() {
         }
 
         const offsetInBlock = start - (blockIdx * CACHE_BLOCK);
-        const available = Math.min(size, block.byteLength - offsetInBlock);
-        const slice = block.slice(offsetInBlock, offsetInBlock + available);
-        const buf = new ArrayBuffer(slice.byteLength);
-        new Uint8Array(buf).set(slice);
-        return new Uint8Array(buf);
+        const chunk = block.slice(offsetInBlock, offsetInBlock + size);
+        return new Uint8Array(chunk);
     };
-
-    let _reqCount = 0;
 
     const _processRange = async (requestId, streamId, start, size) => {
         const info = streamRegistry.get(streamId);
-        if (!info) {
-            window.cineflix.stream.replyRange(requestId, new ArrayBuffer(0));
-            return;
-        }
+        if (!info) return;
+
         try {
-            _reqCount++;
             const chunk = await _cachedFetch(info.client, info.doc, streamId, start, size);
             window.cineflix.stream.replyRange(requestId, chunk.buffer);
-        } catch (err) {
-            console.error(`[Stream] Error: ${err.message}`);
+        } catch (error) {
+            console.error('[Electron] fetchRange error:', error);
             window.cineflix.stream.replyRange(requestId, new ArrayBuffer(0));
         }
     };
 
-    // Process up to 2 block downloads concurrently
+    // Process strictly 1 block download concurrently to absolutely guarantee zero FloodWaits
     let _activeReqs = 0;
     const _queue = [];
 
     const _runNext = () => {
-        while (_activeReqs < 2 && _queue.length > 0) {
+        while (_activeReqs < 1 && _queue.length > 0) {
             _activeReqs++;
             const args = _queue.shift();
             _processRange(...args).finally(() => { _activeReqs--; _runNext(); });
@@ -774,8 +766,8 @@ async function fetchTelegramRangeAndroid(tgClient, doc, start, size) {
         });
     }
 
-    // Descargar en ráfagas de 8 conexiones en paralelo (Multiplexing MTProto nativo)
-    const MAX_CONCURRENT = 8;
+    // Descargar en ráfagas de 2 conexiones en paralelo (Multiplexing MTProto nativo optimizado para evitar baneos)
+    const MAX_CONCURRENT = 2;
     const results = new Uint8Array(totalNeededBytes);
     
     for (let i = 0; i < chunks.length; i += MAX_CONCURRENT) {
