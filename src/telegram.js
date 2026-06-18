@@ -147,15 +147,49 @@ export async function restoreNativeSession() {
 
 // ===== CLIENT =====
 
+let clientPool = null;
+
+/**
+ * Ensures the Telegram Client Pool is connected. Returns the pool.
+ */
+export async function initClient() {
+    if (clientPool) return clientPool;
+
+    try {
+        const sessionStr = await getSavedSession();
+        if (!sessionStr) {
+            throw new Error('No Telegram session saved. User must login via UI.');
+        }
+
+        const session = new StringSession(sessionStr);
+        
+        console.log('[Electron] Creating pool of 8 TelegramClients for true parallel MTProto downloading...');
+        const pool = [];
+        
+        // Android natively opens up to 8 connections. 
+        // We do the same by instantiating 8 separate TelegramClients.
+        for (let i = 0; i < 8; i++) {
+            const client = new TelegramClient(new StringSession(sessionStr), API_ID, API_HASH, {
+                connectionRetries: 5,
+                useWSS: true,
+                maxConcurrentDownloads: 1 // We don't care, we have 8 clients!
+            });
+            await client.connect();
+            pool.push(client);
+        }
+
+        clientPool = pool;
+        console.log('[Electron] Telegram Client Pool connected successfully.');
+        return clientPool;
+    } catch (error) {
+        console.error('[Electron] Failed to init Telegram Client Pool:', error);
+        throw error;
+    }
+}
+
 export async function getClient() {
-    if (client && client.connected) return client;
-    const sessionStr = await getSavedSession();
-    const session = new StringSession(sessionStr);
-    client = new TelegramClient(session, API_ID, API_HASH, {
-        connectionRetries: 5,
-        useWSS: true,
-    });
-    await client.connect();
+    const pool = await initClient();
+    if (!client) client = pool[0];
     return client;
 }
 
@@ -766,28 +800,41 @@ async function fetchTelegramRangeAndroid(tgClient, doc, start, size) {
         });
     }
 
-    // Descargar en ráfagas de 8 conexiones en paralelo (Multiplexing MTProto nativo)
-    const MAX_CONCURRENT = 8;
+    // The problem was that gram.js only uses ONE WebSocket per TelegramClient.
+    // Telegram severely throttles the bandwidth of a single connection (~50-100 KB/s).
+    // Concurrency over a single connection does NOT increase bandwidth, it just increases latency.
+    // To get Android-like speeds, we MUST use a pool of multiple TelegramClients 
+    // (multiple TCP sockets) with the same session.
+    
+    // Use the global clientPool which contains 8 separate TelegramClients
+    const MAX_CONCURRENT = clientPool ? clientPool.length : 1;
+    const pool = clientPool || [client];
+    
     const results = new Uint8Array(totalNeededBytes);
     
     for (let i = 0; i < chunks.length; i += MAX_CONCURRENT) {
         const batch = chunks.slice(i, i + MAX_CONCURRENT);
-        const promises = batch.map(async (chunkInfo) => {
+        const promises = batch.map(async (chunkInfo, batchIdx) => {
             let receivedBytes = null;
+            // Round-robin assign clients
+            const tgClient = pool[batchIdx % pool.length];
             
             // Mecanismo de supervivencia y reintentos por caída
             for (let retries = 0; retries < 3; retries++) {
                 try {
-                    const result = await tgClient.invoke(new Api.upload.GetFile({
-                        location: new Api.InputDocumentFileLocation({
-                            id: doc.id,
-                            accessHash: doc.accessHash,
-                            fileReference: doc.fileReference,
-                            thumbSize: ''
-                        }),
-                        offset: BigInt(chunkInfo.requestOffset),
-                        limit: chunkInfo.requestSize
-                    }));
+                    const result = await Promise.race([
+                        tgClient.invoke(new Api.upload.GetFile({
+                            location: new Api.InputDocumentFileLocation({
+                                id: doc.id,
+                                accessHash: doc.accessHash,
+                                fileReference: doc.fileReference,
+                                thumbSize: ''
+                            }),
+                            offset: BigInt(chunkInfo.requestOffset),
+                            limit: chunkInfo.requestSize
+                        })),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('INVOKE_TIMEOUT')), 10000))
+                    ]);
                     receivedBytes = result.bytes;
                     break;
                 } catch (e) {
