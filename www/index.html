@@ -3,42 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
     <title>Cine en Castellano HD</title>
     <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="./assets/index-B5l4Hx3h.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index--T_DyWxS.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script type="module" crossorigin src="./assets/index-0xxdb085.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-C_SPfSF2.css">
 </head>
 <body>
     <div id="app">
         <!-- LOGIN -->
         <div id="view-login" class="view active">
             <div class="login-container">
+                <div class="login-logo">🎥</div>
                 <h1 class="login-title">Cine en Castellano HD</h1>
-                <p class="login-subtitle">Tu videoclub en streaming (v2.1)</p>
+                <p class="login-subtitle">Tu videoclub en streaming</p>
 
-                <!-- QR Section (Visible only on TV) -->
-                <div id="qr-section" style="display:none; margin-top: 24px; text-align: center;">
-                    <div id="qr-canvas" class="qr-container" style="margin: 0 auto; width: 220px; height: 220px; padding: 12px;"></div>
-                    <div id="qr-loading" class="qr-loading" style="padding: 40px 0;">
-                        <div class="spinner"></div>
-                        <p style="font-size: 0.85rem; color: #a1a1aa;">Generando código QR...</p>
-                    </div>
-                    <p id="qr-error" class="error-text"></p>
-                    <p class="hint" style="margin-top: 12px; font-size: 0.85rem;">
-                        <strong>Abre Telegram en tu móvil</strong><br>
-                        Ajustes → Dispositivos → Escanear QR
-                    </p>
-                    <div style="margin: 24px 0 12px; border-top: 1px solid rgba(255,255,255,0.1); position: relative;">
-                        <span style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #1a1a2e; padding: 0 12px; font-size: 0.8rem; color: #71717a; border-radius: 4px;">O USA TU NÚMERO</span>
-                    </div>
-                </div>
-
-                <div id="step-phone" class="login-step active" style="margin-top: 16px;">
+                <div id="step-phone" class="login-step active">
                     <label>Número de teléfono</label>
                     <div class="input-row">
                         <input type="tel" id="input-phone" placeholder="+34 600 000 000" value="+34" autocomplete="off">
@@ -76,30 +57,17 @@
 
         <!-- CATALOG (SERIES) -->
         <div id="view-catalog" class="view">
-            <header class="topbar has-search">
-                <div class="topbar-main">
-                    <h1 class="topbar-title">Cine en Castellano HD</h1>
-                    <div class="topbar-actions">
-                        <button id="btn-refresh-catalog" class="btn-icon" title="Refrescar datos">🔄</button>
-                        <button id="btn-logout" class="btn-icon" title="Cerrar sesión">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                                <polyline points="16 17 21 12 16 7"></polyline>
-                                <line x1="21" y1="12" x2="9" y2="12"></line>
-                            </svg>
-                        </button>
-                    </div>
-                </div>
+            <header class="topbar">
+                <h1 class="topbar-title">Cine en Castellano HD</h1>
+                <nav class="main-nav">
+                    <button id="nav-series" class="main-nav-btn active">📺 Series</button>
+                    <button id="nav-movies" class="main-nav-btn">🎬 Películas</button>
+                </nav>
                 <div class="topbar-search">
                     <input type="text" id="search-input" placeholder="🔍 Buscar series...">
                 </div>
+                <button id="btn-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
             </header>
-
-            <!-- Main nav tabs: Series / Movies -->
-            <nav class="main-nav">
-                <button id="nav-series" class="main-nav-btn active">📺 Series</button>
-                <button id="nav-movies" class="main-nav-btn">🎬 Películas</button>
-            </nav>
 
             <!-- Genre tabs — always visible -->
             <div id="genre-tabs" class="genre-tabs"></div>
@@ -117,6 +85,7 @@
                 <!-- Hero -->
                 <div id="catalog-hero" class="hero-section">
                     <div id="hero-backdrop" class="hero-backdrop"></div>
+                    <div id="hero-video-container" class="hero-video"></div>
                     <div class="hero-overlay"></div>
                     <div class="hero-content">
                         <div class="hero-badge">🔥 Tendencia</div>
@@ -128,6 +97,7 @@
                         </div>
                     </div>
                     <div id="hero-dots" class="hero-dots"></div>
+                    <button id="hero-mute-btn" class="hero-mute-btn hidden" title="Activar sonido">🔊</button>
                 </div>
 
                 <!-- Content rows -->
@@ -137,30 +107,17 @@
 
         <!-- MOVIES VIEW — Netflix layout -->
         <div id="view-movies" class="view">
-            <header class="topbar has-search">
-                <div class="topbar-main">
-                    <h1 class="topbar-title">Cine en Castellano HD</h1>
-                    <div class="topbar-actions">
-                        <button id="btn-movies-refresh" class="btn-icon" title="Refrescar datos">🔄</button>
-                        <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                                <polyline points="16 17 21 12 16 7"></polyline>
-                                <line x1="21" y1="12" x2="9" y2="12"></line>
-                            </svg>
-                        </button>
-                    </div>
-                </div>
+            <header class="topbar">
+                <h1 class="topbar-title">Cine en Castellano HD</h1>
+                <nav class="main-nav">
+                    <button id="nav-series-from-movies" class="main-nav-btn">📺 Series</button>
+                    <button id="nav-movies-active" class="main-nav-btn active">🎬 Películas</button>
+                </nav>
                 <div class="topbar-search">
                     <input type="text" id="movies-search-input" placeholder="🔍 Buscar películas...">
                 </div>
+                <button id="btn-movies-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
             </header>
-
-            <!-- Main nav tabs -->
-            <nav class="main-nav">
-                <button id="nav-series-from-movies" class="main-nav-btn">📺 Series</button>
-                <button id="nav-movies-active" class="main-nav-btn active">🎬 Películas</button>
-            </nav>
 
             <!-- Genre tabs -->
             <div id="movies-genre-tabs" class="genre-tabs"></div>
@@ -173,15 +130,16 @@
                 <div id="movies-grid" class="catalog-grid"></div>
             </div>
 
-            <!-- Carruseles de películas —­ sin cabecera hero -->
+            <!-- Netflix-style home -->
             <div id="movies-content">
-                <!-- Hero: 5 estrenos recientes del catálogo — cero llamadas externas -->
+                <!-- Hero -->
                 <div id="movies-hero" class="hero-section">
                     <div id="movies-hero-backdrop" class="hero-backdrop"></div>
+                    <div id="movies-hero-video-container" class="hero-video"></div>
                     <div class="hero-overlay"></div>
                     <div class="hero-content">
-                        <div class="hero-badge">🎬 Estrenos</div>
-                        <h2 id="movies-hero-title" class="hero-title"></h2>
+                        <div class="hero-badge">🎬 En cartelera</div>
+                        <h2 id="movies-hero-title" class="hero-title">Cargando...</h2>
                         <div id="movies-hero-meta" class="hero-meta"></div>
                         <p id="movies-hero-overview" class="hero-overview"></p>
                         <div class="hero-buttons">
@@ -189,11 +147,12 @@
                         </div>
                     </div>
                     <div id="movies-hero-dots" class="hero-dots"></div>
+                    <button id="movies-hero-mute-btn" class="hero-mute-btn hidden" title="Activar sonido">🔊</button>
                 </div>
+                <!-- Content rows -->
                 <div id="movies-rows" class="catalog-rows"></div>
             </div>
         </div>
-
 
         <!-- MOVIE FILES MODAL (overlay shown when bot searches) -->
         <div id="movie-files-modal" class="modal-overlay hidden">
@@ -262,16 +221,27 @@
             </div>
             <video id="video-player" controls></video>
         </div>
-        
-        <!-- MPV Loading Overlay -->
-        <div id="mpv-loader" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,10,12,0.95);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:9999;">
-            <div class="spinner" style="width:50px;height:50px;border-width:4px;"></div>
-            <h2 style="margin-top:20px;font-size:1.5rem;font-weight:600;">Cambiando a MPV...</h2>
-            <p style="color:#8b8e96;margin-top:8px;">Aceleración por hardware iniciada</p>
+
+        <!-- ELECTRON MPV LOADER -->
+        <div id="mpv-loader" class="modal-overlay hidden" style="z-index: 9999; background: rgba(10,10,15,0.9); align-items: center; justify-content: center;">
+            <div class="center-message" style="transform: none;">
+                <div class="spinner"></div>
+                <h2 style="margin-top: 1rem; color: #fff; font-size: 1.5rem;">Cambiando a MPV...</h2>
+                <p id="mpv-loader-text" style="color: #aaa; margin-top: 0.5rem;">Preparando el motor de video nativo</p>
+            </div>
         </div>
     </div>
 
-    <script src="./qrcode.min.js"></script>
-    <script src="./tv-nav.js" defer></script>
+    <!-- UPDATE TOAST -->
+    <div id="update-toast" class="update-toast hidden">
+        <div class="update-toast-icon">✨</div>
+        <div class="update-toast-content">
+            <div id="update-toast-title" class="update-toast-title">Actualización lista</div>
+            <div id="update-toast-message" class="update-toast-message">Descargando nueva versión...</div>
+        </div>
+        <button id="btn-update-action" class="update-toast-btn hidden">Reiniciar</button>
+        <button id="btn-update-close" class="update-toast-close">✕</button>
+    </div>
+
 </body>
 </html>

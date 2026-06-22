@@ -108,22 +108,7 @@ class MainActivity : ComponentActivity() {
                         "window._cineflixIsTV = $tvFlag; " +
                         "window.__appPlatform = 'android_tv'; " +
                         "window.__appVersion = $vCode; " +
-                        "document.documentElement.classList.toggle('android-tv', $tvFlag); " +
-                        "if ($tvFlag && !$isAmazon) { " +
-                        "  window.addEventListener('keydown', function(e) { " +
-                        "    if ((e.keyCode === 13 || e.key === 'Enter') && document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) { " +
-                        "      e.preventDefault(); " +
-                        "    } " +
-                        "  }, true); " +
-                        "  window.addEventListener('blur', function(e) { " +
-                        "    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) { " +
-                        "       if (window.cineflixTvNav && window.cineflixTvNav.inputMode) { " +
-                        "           e.stopImmediatePropagation(); " +
-                        "           setTimeout(function() { e.target.focus(); }, 50); " +
-                        "       } " +
-                        "    } " +
-                        "  }, true); " +
-                        "}",
+                        "document.documentElement.classList.toggle('android-tv', $tvFlag);",
                         null
                     )
                     android.util.Log.d("CineflixMain", "Injected OTA vars and JS fixes, TV=$tvFlag, Amazon=$isAmazon")

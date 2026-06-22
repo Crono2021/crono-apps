@@ -191,8 +191,8 @@
       const genreTabs = [...view.querySelectorAll('.genre-tab')].filter(el => this.visible(el));
       if (genreTabs.length) zones.push({ key: 'genre-tabs', items: genreTabs });
 
-      // Zone 4 — Hero button (▶ Ver ahora)
-      const heroBtns = [...view.querySelectorAll('.hero-btn, .hero-btn-primary')].filter(el => this.visible(el));
+      // Zone 4 — Hero buttons (▶ Ver ahora, 🔊 Mute)
+      const heroBtns = [...view.querySelectorAll('.hero-btn, .hero-btn-primary, .hero-mute-btn')].filter(el => this.visible(el));
       if (heroBtns.length) zones.push({ key: 'hero', items: heroBtns });
 
       // Zone 5 — Back button (series/episodes detail views)
