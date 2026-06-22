@@ -209,23 +209,6 @@ class AndroidBridge(
         }
     }
 
-    @JavascriptInterface
-    fun sendDirectMessage(queryId: String, text: String) {
-        scope.launch {
-            try {
-                val success = engine.sendDirectMessage(text)
-                if (success) {
-                    callback(queryId, true, "OK")
-                } else {
-                    callback(queryId, false, "Failed to send message")
-                }
-            } catch (e: Exception) {
-                callback(queryId, false, e.message ?: "Error")
-            }
-        }
-    }
-
-
     /**
      * clickInlineButton(queryId, msgId, buttonIndex)
      *

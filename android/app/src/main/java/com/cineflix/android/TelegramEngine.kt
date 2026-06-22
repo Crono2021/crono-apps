@@ -355,17 +355,6 @@ class TelegramEngine(private val context: Context) {
         result
     }
 
-    /** Send a direct text message to the bot without waiting for a reply */
-    suspend fun sendDirectMessage(text: String): Boolean = withContext(Dispatchers.IO) {
-        val chatId = getBotChatId() ?: return@withContext false
-        val formatted = TdApi.FormattedText(text, emptyArray())
-        val deferred = CompletableDeferred<Boolean>()
-        client?.send(TdApi.SendMessage(chatId, null, null, null, null,
-            TdApi.InputMessageText(formatted, null, false)
-        )) { result -> deferred.complete(result !is TdApi.Error) }
-        deferred.await()
-    }
-
     /**
      * Click an inline button (season) and wait for the bot to finish sending episode videos.
      * Web equivalent: clickInlineButton(msgId, data) + getVideoMessages()
