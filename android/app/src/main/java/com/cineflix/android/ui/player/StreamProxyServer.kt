@@ -56,10 +56,21 @@ class StreamProxyServer(
             Log.i(TAG, "🧹 SAFE GC: Cleaning stale TDLib disk cache (keeping active download alive)")
             try {
                 val filesDir = engine.getAppFilesDir()
+                val oneHourAgo = System.currentTimeMillis() - 3600000L // 1 hora
+                
                 val videosDir = java.io.File(filesDir, "tdlib_data/videos")
-                if (videosDir.exists()) videosDir.deleteRecursively()
+                if (videosDir.exists()) {
+                    videosDir.listFiles()?.forEach { file ->
+                        if (file.lastModified() < oneHourAgo) file.delete()
+                    }
+                }
+                
                 val docsDir = java.io.File(filesDir, "tdlib_data/documents")
-                if (docsDir.exists()) docsDir.deleteRecursively()
+                if (docsDir.exists()) {
+                    docsDir.listFiles()?.forEach { file ->
+                        if (file.lastModified() < oneHourAgo) file.delete()
+                    }
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Safe GC disk cleanup failed: ${e.message}")
             }
