@@ -36,32 +36,43 @@ class StreamProxyServer(
         // on slower devices like Fire Stick where WiFi throughput is limited.
         private const val PREFETCH_SIZE = 4L * 1024L * 1024L
         
-        // Wipe stale TDLib cache files every 250MB to keep TV storage under control.
-        // IMPORTANT: We must NEVER call cancelAndDeleteVideo() during playback —
-        // it kills the active TDLib download, making all subsequent seeks fail.
-        private const val ROLLING_GC_THRESHOLD = 250L * 1024L * 1024L
+        // Free disk space every 100MB delivered to ExoPlayer.
+        // Uses TDLib's CancelDownloadFile + DeleteFile APIs which properly close
+        // the file descriptor, ensuring the OS actually reclaims disk space.
+        // After deletion, the next read() triggers a fresh DownloadFile from the
+        // current playback offset — TDLib re-downloads only what's needed ahead.
+        // 100MB is safe for Fire Stick (≈1GB free) while keeping round-trips low.
+        private const val ROLLING_GC_THRESHOLD = 100L * 1024L * 1024L
     }
 
     @Volatile
     private var bytesReadSinceLastWipe: Long = 0L
 
     /**
-     * Safe GC: wipes old TDLib video/document cache files from disk
-     * WITHOUT cancelling the active download. This preserves the
-     * streaming session so ExoPlayer can still seek freely.
+     * Proper GC: uses TDLib's own APIs (CancelDownloadFile + DeleteFile) to
+     * free disk space. Unlike the old deleteRecursively() hack, this:
+     *   1. Properly closes TDLib's file descriptor → OS reclaims disk blocks
+     *   2. Keeps TDLib's internal state consistent (no corruption)
+     *   3. After deletion, DownloadFile with same fileId works as a fresh download
+     *
+     * The next read() call will go through the slow path, call hintDownloadOffset()
+     * which triggers DownloadFile from the current playback position, and the
+     * retry loop waits for TDLib to fetch the needed bytes from Telegram CDN.
      */
     private fun checkRollingGc(bytesDelivered: Int) {
         bytesReadSinceLastWipe += bytesDelivered
         if (bytesReadSinceLastWipe > ROLLING_GC_THRESHOLD) {
-            Log.i(TAG, "🧹 SAFE GC: Cleaning stale TDLib disk cache (keeping active download alive)")
+            val freedMB = bytesReadSinceLastWipe / (1024L * 1024L)
+            Log.i(TAG, "🧹 GC: Freeing ~${freedMB}MB via TDLib CancelDownload+DeleteFile (fileId=$fileId)")
             try {
-                val filesDir = engine.getAppFilesDir()
-                val videosDir = java.io.File(filesDir, "tdlib_data/videos")
-                if (videosDir.exists()) videosDir.deleteRecursively()
-                val docsDir = java.io.File(filesDir, "tdlib_data/documents")
-                if (docsDir.exists()) docsDir.deleteRecursively()
+                val ok = engine.cancelAndDeleteVideoSync(fileId)
+                if (ok) {
+                    Log.i(TAG, "🧹 GC: TDLib confirmed delete — disk space freed")
+                } else {
+                    Log.w(TAG, "🧹 GC: TDLib delete timed out (3s) — space may not be freed yet")
+                }
             } catch (e: Exception) {
-                Log.w(TAG, "Safe GC disk cleanup failed: ${e.message}")
+                Log.w(TAG, "🧹 GC failed: ${e.message}")
             }
             bytesReadSinceLastWipe = 0L
         }

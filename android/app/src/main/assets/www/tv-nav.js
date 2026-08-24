@@ -16,26 +16,6 @@
 (function () {
   'use strict';
 
-  let bootAttempts = 0;
-  function boot() {
-    if (window._cineflixIsTV) {
-      console.log('[TV-NAV] Activating D-pad navigation for Android TV');
-      window.cineflixTvNav = new CineflixTVNav();
-      window.cineflixTvNav.init();
-    } else if (bootAttempts < 15) {
-      bootAttempts++;
-      setTimeout(boot, 300);
-    } else {
-      console.log('[TV-NAV] Aborting boot, window._cineflixIsTV not set after 15 attempts');
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', boot);
-  } else {
-    boot();
-  }
-
   // ─────────────────────────────────────────────────────────────────────────
   class CineflixTVNav {
     constructor() {
@@ -132,6 +112,7 @@
     // ── Key handler ───────────────────────────────────────────────────────
     onKey(e) {
       const key = e.keyCode || e.which;
+
 
       // ── INPUT MODE: only Back/Escape exits; everything else passes through ──
       if (this.inputMode) {
@@ -271,15 +252,20 @@
         if (loginEls.length) zones.push({ key: 'login', items: loginEls });
       }
 
-      // Zone — Modal (movie quality / file selector)
+      // Zone — Modal (movie quality / file selector / series detail)
       const modal = document.querySelector('.modal-overlay:not(.hidden)');
       if (modal) {
         // TRAP FOCUS: If modal is open, clear all other zones and ONLY return modal zones
         zones = [];
         
-        const closeBtn = modal.querySelector('#modal-close');
+        const closeBtn = modal.querySelector('#modal-close, #series-detail-close, #resume-modal-close');
         if (closeBtn && this.visible(closeBtn)) {
           zones.push({ key: 'modal-close', items: [closeBtn] });
+        }
+        // Series detail: play button
+        const playBtn = modal.querySelector('#series-detail-play');
+        if (playBtn && this.visible(playBtn)) {
+          zones.push({ key: 'modal-play', items: [playBtn] });
         }
         // File list is vertical
         [...modal.querySelectorAll('.movie-file-item')]
@@ -345,7 +331,7 @@
       }
       this.focused = el;
       el.classList.add('tv-focused');
-      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      el.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
       
       // Prevent native focus from trapping the D-pad until user presses OK
       if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
@@ -389,13 +375,15 @@
     // ── Auto-focus first relevant element ────────────────────────────────
     focusFirst() {
       const zones = this.getZones();
+
       if (!zones.length) return;
 
       // Prefer content over chrome
-      const preferred = ['platforms-row-0', 'hero', 'row-0', 'seasons', 'episodes', 'login', 'modal-file-0', 'modal-files'];
+      const preferred = ['modal-play', 'platforms-row-0', 'hero', 'row-0', 'seasons', 'episodes', 'login', 'modal-file-0', 'modal-files'];
       const idx = zones.findIndex(z => preferred.includes(z.key));
       this.zoneIndex = idx >= 0 ? idx : 0;
       this.focusCurrentZone(zones);
+
     }
 
     // ── View changed (MutationObserver callback) ──────────────────────────
@@ -431,6 +419,27 @@
       const r = el.getBoundingClientRect();
       return r.width > 0 && r.height > 0;
     }
+  }
+
+  // ── Boot (MUST be after class definition to avoid TDZ errors) ─────────
+  let bootAttempts = 0;
+  function boot() {
+    if (window._cineflixIsTV) {
+      console.log('[TV-NAV] Activating D-pad navigation for Android TV');
+      window.cineflixTvNav = new CineflixTVNav();
+      window.cineflixTvNav.init();
+    } else if (bootAttempts < 100) {
+      bootAttempts++;
+      setTimeout(boot, 300);
+    } else {
+      console.log('[TV-NAV] Aborting boot, window._cineflixIsTV not set after 100 attempts');
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
   }
 
 })();

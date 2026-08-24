@@ -536,7 +536,10 @@ class AndroidBridge(
             try {
                 webView.requestFocus()
                 val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                // SHOW_FORCED works on Sony/Philips TVs where SHOW_IMPLICIT is ignored
+                imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_FORCED)
+                // Fallback: toggleSoftInput for older Android TV WebViews
+                imm.toggleSoftInput(android.view.inputmethod.InputMethodManager.SHOW_FORCED, 0)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -598,8 +601,11 @@ class AndroidBridge(
                 
             dialog.setOnShowListener {
                 editText.requestFocus()
-                val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                // Delayed keyboard show: Sony TVs need a frame to register the new window
+                editText.postDelayed({
+                    val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                    imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_FORCED)
+                }, 200)
             }
             dialog.show()
         }

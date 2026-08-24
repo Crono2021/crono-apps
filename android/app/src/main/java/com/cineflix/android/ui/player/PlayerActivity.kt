@@ -193,7 +193,7 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         // 3. Build stream URLs
-        val localStreamUrl = "http://127.0.0.1:$port/stream"
+        val localStreamUrl = "tdlib://$fileId"
         val wifiIp = getWifiIpAddress()
         castStreamUrl = if (wifiIp != null) "http://$wifiIp:$port/stream" else null
         
@@ -375,8 +375,19 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun playUrl(url: String) {
         loadingSpinner.visibility = View.VISIBLE
+        
+        val engine = TelegramEngine.getInstance(this)
         val mediaItem = MediaItem.fromUri(Uri.parse(url))
-        player?.setMediaItem(mediaItem)
+        
+        if (url.startsWith("tdlib://")) {
+            val dataSourceFactory = TdlibDataSourceFactory(engine)
+            val mediaSource = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
+                .createMediaSource(mediaItem)
+            player?.setMediaSource(mediaSource)
+        } else {
+            player?.setMediaItem(mediaItem)
+        }
+        
         player?.prepare()
         player?.play()
         

@@ -10,10 +10,37 @@
     <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="./assets/index-BHc8UfoC.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-CfTQyjxa.css">
+  <script type="module" crossorigin src="./assets/index-DDL_jAh8.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CYUIPO46.css">
 </head>
 <body>
+    <!-- CINEFLIX INTRO ANIMATION -->
+    <div id="cineflix-intro" class="cineflix-intro">
+        <div class="noir-container">
+            <div class="thunder" id="intro-thunder"></div>
+            <div class="rain"></div>
+
+            <svg class="lightning-bolt bolt-1" id="intro-bolt-1" viewBox="0 0 100 500" preserveAspectRatio="none">
+                <polyline points="50,0 45,80 60,150 40,250 65,350 30,450 50,500" stroke="#fff" stroke-width="1.5" fill="none" />
+                <polyline points="60,150 80,200 70,250" stroke="#fff" stroke-width="0.8" fill="none" />
+                <polyline points="40,250 20,320 25,380" stroke="#fff" stroke-width="0.8" fill="none" />
+            </svg>
+            
+            <svg class="lightning-bolt bolt-2" id="intro-bolt-2" viewBox="0 0 100 500" preserveAspectRatio="none">
+                <polyline points="40,0 60,100 30,220 50,300 20,400 40,500" stroke="#fff" stroke-width="1.5" fill="none" />
+                <polyline points="60,100 85,160 80,210" stroke="#fff" stroke-width="0.8" fill="none" />
+                <polyline points="30,220 10,290" stroke="#fff" stroke-width="0.8" fill="none" />
+            </svg>
+            
+            <div class="logo-container" id="intro-logo-noir">
+                <h1 class="logo-text" data-text="CINEFLIX">CINEFLIX</h1>
+                <div class="subtitle">NOIR EDITION</div>
+            </div>
+            
+            <div class="grain"></div>
+        </div>
+    </div>
+
     <div id="app">
         <!-- LOGIN -->
         <div id="view-login" class="view active">
@@ -96,6 +123,7 @@
                     <button id="nav-series" class="main-nav-btn active">📺 Series</button>
                     <button id="nav-movies" class="main-nav-btn">🎬 Películas</button>
                     <button id="nav-platforms" class="main-nav-btn">🌐 Plataformas</button>
+                    <button id="nav-mycontent" class="main-nav-btn">📁 Mi Contenido</button>
                     <button id="nav-continue" class="main-nav-btn" style="display: none;">▶️ Seguir viendo</button>
                 </div>
                 <button id="btn-refresh-catalog" class="btn-refresh-nav tv-only" title="Actualizar catálogo">
@@ -159,6 +187,7 @@
                     <button id="nav-series-from-movies" class="main-nav-btn">📺 Series</button>
                     <button id="nav-movies-active" class="main-nav-btn active">🎬 Películas</button>
                     <button id="nav-platforms-from-movies" class="main-nav-btn">🌐 Plataformas</button>
+                    <button id="nav-mycontent-from-movies" class="main-nav-btn">📁 Mi Contenido</button>
                     <button id="nav-continue-from-movies" class="main-nav-btn" style="display: none;">▶️ Seguir viendo</button>
                 </div>
                 <button id="btn-movies-refresh" class="btn-refresh-nav tv-only" title="Actualizar catálogo">
@@ -215,6 +244,7 @@
                     <button id="nav-series-from-platforms" class="main-nav-btn">📺 Series</button>
                     <button id="nav-movies-from-platforms" class="main-nav-btn">🎬 Películas</button>
                     <button id="nav-platforms-active" class="main-nav-btn active">🌐 Plataformas</button>
+                    <button id="nav-mycontent-from-platforms" class="main-nav-btn">📁 Mi Contenido</button>
                     <button id="nav-continue-from-platforms" class="main-nav-btn" style="display: none;">▶️ Seguir viendo</button>
                 </div>
             </nav>
@@ -249,6 +279,41 @@
         </div>
 
 
+        <!-- MI CONTENIDO VIEW -->
+        <div id="view-my-content" class="view">
+            <header class="topbar">
+                <div class="topbar-main">
+                    <h1 class="topbar-title">Mi Contenido</h1>
+                    <div class="topbar-actions">
+                        <button id="btn-mycontent-logout" class="btn-icon" title="Cerrar sesión">⏻</button>
+                    </div>
+                </div>
+            </header>
+
+            <nav class="main-nav">
+                <div class="nav-tabs">
+                    <button id="nav-series-from-mycontent" class="main-nav-btn">📺 Series</button>
+                    <button id="nav-movies-from-mycontent" class="main-nav-btn">🎬 Películas</button>
+                    <button id="nav-platforms-from-mycontent" class="main-nav-btn">🌐 Plataformas</button>
+                    <button id="nav-mycontent-active" class="main-nav-btn active">📁 Mi Contenido</button>
+                    <button id="nav-continue-from-mycontent" class="main-nav-btn" style="display: none;">▶️ Seguir viendo</button>
+                </div>
+            </nav>
+
+            <div id="mycontent-wait-state" class="center-message">
+                <div class="spinner"></div>
+                <p style="font-size: 1.1rem; font-weight: bold; margin-bottom: 0.5rem;">Modo Escucha Activado</p>
+                <p>Abre el bot de Telegram, envíale tus vídeos y escribe <strong style="color: #fff">/fin</strong> cuando termines.</p>
+            </div>
+            
+            <div id="mycontent-results" class="search-results hidden" style="display: none;">
+                <div class="search-header">
+                    <span id="mycontent-count" class="search-count"></span>
+                </div>
+                <div id="mycontent-grid" class="catalog-grid"></div>
+            </div>
+        </div>
+
         <!-- CONTINUE WATCHING VIEW -->
         <div id="view-continue" class="view">
             <header class="topbar">
@@ -265,6 +330,7 @@
                     <button id="nav-series-from-continue" class="main-nav-btn">📺 Series</button>
                     <button id="nav-movies-from-continue" class="main-nav-btn">🎬 Películas</button>
                     <button id="nav-platforms-from-continue" class="main-nav-btn">🌐 Plataformas</button>
+                    <button id="nav-mycontent-from-continue" class="main-nav-btn">📁 Mi Contenido</button>
                     <button id="nav-continue-active" class="main-nav-btn active" style="display: none;">▶️ Seguir viendo</button>
                 </div>
             </nav>
@@ -279,6 +345,24 @@
                     <span id="continue-count" class="search-count"></span>
                 </div>
                 <div id="continue-grid" class="catalog-grid"></div>
+            </div>
+        </div>
+
+        <!-- SERIES DETAIL MODAL (ficha con carátula, sinopsis, puntuación) -->
+        <div id="series-detail-modal" class="modal-overlay hidden">
+            <div class="series-detail-card">
+                <div class="series-detail-backdrop" id="series-detail-backdrop"></div>
+                <div class="series-detail-backdrop-overlay"></div>
+                <button id="series-detail-close" class="btn-icon series-detail-close-btn">✕</button>
+                <div class="series-detail-content">
+                    <div class="series-detail-poster" id="series-detail-poster"></div>
+                    <div class="series-detail-info">
+                        <h2 id="series-detail-title" class="series-detail-title"></h2>
+                        <div id="series-detail-meta" class="series-detail-meta"></div>
+                        <p id="series-detail-overview" class="series-detail-overview"></p>
+                        <button id="series-detail-play" class="series-detail-play-btn">▶ Reproducir</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -337,6 +421,9 @@
                 <button id="btn-back-catalog" class="btn-back">←</button>
                 <h1 id="series-title" class="topbar-title"></h1>
             </header>
+            <div id="alt-version-toggle" class="alt-version-toggle hidden">
+                <button id="btn-alt-version" class="btn-alt-version">🎬 Versión: Blanco y Negro</button>
+            </div>
             <div id="series-loading" class="center-message">
                 <div class="spinner"></div>
                 <p>Consultando temporadas...</p>
@@ -417,6 +504,7 @@
                     <input type="text" id="admin-edit-payload">
                 </div>
                 <div class="admin-modal-actions">
+                    <button class="btn-admin-actualizar" id="admin-btn-actualizar" style="background:#8b5cf6; border:none; color:white; padding:0.6rem 1rem; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.9rem; margin-right:auto; display:none;">⏱ ACTUALIZAR</button>
                     <button class="btn-admin-cancel" id="admin-btn-cancel">Cancelar</button>
                     <button class="btn-admin-save" id="admin-btn-save">💾 Guardar</button>
                 </div>
