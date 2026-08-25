@@ -126,8 +126,9 @@ class TelegramEngine(private val context: Context) {
         when (state) {
             is TdApi.AuthorizationStateWaitTdlibParameters -> {
                 val dbPath = File(context.filesDir, "tdlib_data").absolutePath
+                val cachePath = File(context.cacheDir, "tdlib_files").absolutePath
                 client?.send(TdApi.SetTdlibParameters(
-                    false, dbPath, dbPath, null,
+                    false, dbPath, cachePath, null,
                     true, true, true, true,
                     API_ID, API_HASH,
                     "es", "Android", "14", "Cineflix/2.0"
@@ -141,12 +142,21 @@ class TelegramEngine(private val context: Context) {
             is TdApi.AuthorizationStateWaitPassword    -> _authState.value = AuthState.WaitPassword
             is TdApi.AuthorizationStateReady           -> {
                 _authState.value = AuthState.Ready
-                // Cleanup stray 2.8GB caches at boot to rescue TV storage
+                // Cleanup stray caches at boot to rescue TV storage
                 try {
-                    val videosDir = java.io.File(context.filesDir, "tdlib_data/videos")
-                    if (videosDir.exists()) videosDir.deleteRecursively()
-                    val docsDir = java.io.File(context.filesDir, "tdlib_data/documents")
-                    if (docsDir.exists()) docsDir.deleteRecursively()
+                    // Clean new cache directory
+                    val cacheVideos = java.io.File(context.cacheDir, "tdlib_files/videos")
+                    if (cacheVideos.exists()) cacheVideos.deleteRecursively()
+                    val cacheDocs = java.io.File(context.cacheDir, "tdlib_files/documents")
+                    if (cacheDocs.exists()) cacheDocs.deleteRecursively()
+                    
+                    // Clean legacy files directory (to reclaim space from old versions)
+                    val legacyVideos = java.io.File(context.filesDir, "tdlib_data/videos")
+                    if (legacyVideos.exists()) legacyVideos.deleteRecursively()
+                    val legacyDocs = java.io.File(context.filesDir, "tdlib_data/documents")
+                    if (legacyDocs.exists()) legacyDocs.deleteRecursively()
+                    val legacyPhotos = java.io.File(context.filesDir, "tdlib_data/profile_photos")
+                    if (legacyPhotos.exists()) legacyPhotos.deleteRecursively()
                 } catch (_: Exception) {}
             }
             is TdApi.AuthorizationStateLoggingOut      -> _authState.value = AuthState.LoggingOut
@@ -462,14 +472,27 @@ class TelegramEngine(private val context: Context) {
             }
             val anchorMsgId = anchorDeferred.await()
 
+            // Open the chat to force TDLib to sync live updates
+            client?.send(TdApi.OpenChat(chatId)) { }
+
             // Send /micontenido
+            Log.d(TAG, "waitForMyContentVideos: anchorMsgId=$anchorMsgId, sending /micontenido")
             val text = TdApi.FormattedText("/micontenido", emptyArray())
             val sendDeferred = CompletableDeferred<Boolean>()
             client?.send(TdApi.SendMessage(chatId, null, null, null, null,
                 TdApi.InputMessageText(text, null, false)
-            )) { result -> sendDeferred.complete(result !is TdApi.Error) }
+            )) { result -> 
+                Log.d(TAG, "waitForMyContentVideos: SendMessage result: ${result.javaClass.simpleName}")
+                sendDeferred.complete(result !is TdApi.Error) 
+            }
 
-            if (!sendDeferred.await()) return@withContext emptyList()
+            if (!sendDeferred.await()) {
+                Log.e(TAG, "waitForMyContentVideos: SendMessage failed")
+                client?.send(TdApi.CloseChat(chatId)) { }
+                return@withContext emptyList()
+            }
+            
+            try {
 
             // Poll for completion message
             var isDone = false
@@ -477,23 +500,32 @@ class TelegramEngine(private val context: Context) {
             while (!isDone && attempts < 120) {
                 delay(3000)
                 attempts++
+                Log.d(TAG, "waitForMyContentVideos: polling attempt $attempts")
                 
                 val recentDeferred = CompletableDeferred<List<TdApi.Message>>()
                 client?.send(TdApi.GetChatHistory(chatId, 0L, 0, 15, false)) { hist ->
                     if (hist is TdApi.Messages) {
                         recentDeferred.complete(hist.messages.toList())
                     } else {
+                        Log.e(TAG, "waitForMyContentVideos: GetChatHistory returned ${hist.javaClass.simpleName}")
                         recentDeferred.complete(emptyList())
                     }
                 }
                 val recentMessages = recentDeferred.await()
+                Log.d(TAG, "waitForMyContentVideos: got ${recentMessages.size} recent messages")
                 
                 for (m in recentMessages) {
-                    if (m.id <= anchorMsgId) break
+                    Log.d(TAG, "waitForMyContentVideos: checking message id=${m.id}, type=${m.content.javaClass.simpleName}")
+                    if (m.id <= anchorMsgId) {
+                        Log.d(TAG, "waitForMyContentVideos: reached anchor message id=${m.id} <= $anchorMsgId. Breaking.")
+                        break
+                    }
                     val content = m.content
                     if (content is TdApi.MessageText) {
                         val msgText = content.text.text
-                        if (msgText.contains("✅") || msgText == "/fin" || msgText.contains("Mi contenido listo")) {
+                        Log.d(TAG, "waitForMyContentVideos: text: '$msgText'")
+                        if (msgText.contains("✅") || msgText == "/fin" || msgText.contains("El contenido está listo")) {
+                            Log.d(TAG, "waitForMyContentVideos: found completion text!")
                             isDone = true
                             break
                         }
@@ -501,22 +533,25 @@ class TelegramEngine(private val context: Context) {
                 }
             }
 
-            if (!isDone) throw Exception("Tiempo de espera agotado.")
+                if (!isDone) throw Exception("Tiempo de espera agotado.")
 
-            // Fetch videos after anchor
-            val videosDeferred = CompletableDeferred<List<VideoInfo>>()
-            val collected = mutableListOf<VideoInfo>()
-            client?.send(TdApi.GetChatHistory(chatId, 0L, 0, 100, false)) { hist ->
-                if (hist is TdApi.Messages) {
-                    for (m in hist.messages) {
-                        if (m.id <= anchorMsgId) continue
-                        val info = extractVideoInfo(m) ?: continue
-                        collected.add(info)
+                // Fetch videos after anchor
+                val videosDeferred = CompletableDeferred<List<VideoInfo>>()
+                val collected = mutableListOf<VideoInfo>()
+                client?.send(TdApi.GetChatHistory(chatId, 0L, 0, 100, false)) { hist ->
+                    if (hist is TdApi.Messages) {
+                        for (m in hist.messages) {
+                            if (m.id <= anchorMsgId) continue
+                            val info = extractVideoInfo(m) ?: continue
+                            collected.add(info)
+                        }
                     }
+                    videosDeferred.complete(collected)
                 }
-                videosDeferred.complete(collected)
+                videosDeferred.await().sortedBy { it.msgId }
+            } finally {
+                client?.send(TdApi.CloseChat(chatId)) { }
             }
-            videosDeferred.await().sortedBy { it.msgId }
         }
 
     // ── File / Streaming ──────────────────────────────────────────────────────
@@ -676,6 +711,21 @@ class TelegramEngine(private val context: Context) {
         Log.i(TAG, "🧹 Cleaning up TDLib cache for fileId: $fileId")
         client?.send(TdApi.CancelDownloadFile(fileId, false)) {}
         client?.send(TdApi.DeleteFile(fileId)) {}
+    }
+
+    /**
+     * Synchronous version: cancel download + delete file and WAIT for TDLib
+     * to confirm both operations. This ensures the file descriptor is closed
+     * and disk space is actually freed before returning.
+     * Used by StreamProxyServer's rolling GC during playback.
+     */
+    fun cancelAndDeleteVideoSync(fileId: Int, timeoutMs: Long = 3000): Boolean {
+        Log.i(TAG, "🧹 cancelAndDeleteVideoSync fileId=$fileId")
+        val latch = java.util.concurrent.CountDownLatch(2)
+        val c = client ?: return false
+        c.send(TdApi.CancelDownloadFile(fileId, false)) { latch.countDown() }
+        c.send(TdApi.DeleteFile(fileId)) { latch.countDown() }
+        return latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     /**

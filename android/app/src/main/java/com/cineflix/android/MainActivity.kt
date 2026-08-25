@@ -25,6 +25,13 @@ class MainActivity : ComponentActivity() {
     private var isAndroidTV = false
 
     companion object {
+        init {
+            try {
+                System.loadLibrary("c++_shared")
+            } catch (e: Throwable) {
+                android.util.Log.e("Cineflix", "Failed to load native libraries", e)
+            }
+        }
         @SuppressLint("StaticFieldLeak")
         var webViewInstance: WebView? = null
     }
@@ -57,9 +64,12 @@ class MainActivity : ComponentActivity() {
         android.util.Log.i("CineflixMain", "Android TV mode: $isAndroidTV")
 
         engine = TelegramEngine.getInstance(this)
-
+        
         webView = WebView(this)
         webViewInstance = webView
+        
+        bridge = AndroidBridge(this, webView, engine)
+
 
         webView.apply {
             keepScreenOn = true
@@ -147,10 +157,13 @@ class MainActivity : ComponentActivity() {
                 android.util.Log.d("CineflixMain", "WebView state restored from savedInstanceState")
             } else {
                 val cacheBuster = System.currentTimeMillis()
-                loadUrl("https://cineflix-production-19e3.up.railway.app/?v=$cacheBuster")
+                loadUrl("https://cineflixapp.duckdns.org/?v=$cacheBuster")
                 android.util.Log.d("CineflixMain", "WebView loading remote catalog URL with cache-buster")
             }
         }
+        
+        // Fix white flash on startup
+        webView.setBackgroundColor(android.graphics.Color.BLACK)
 
         setContentView(webView)
 

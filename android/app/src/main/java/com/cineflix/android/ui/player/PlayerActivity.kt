@@ -170,30 +170,38 @@ class PlayerActivity : AppCompatActivity() {
             effectiveFileSize = 2_000_000_000L
         }
 
-        // 1. Start StreamProxyServer
-        val proxy = StreamProxyServer(
-            engine   = engine,
-            fileId   = fileId,
-            fileSize = effectiveFileSize,
-            mimeType = mimeType,
-        )
-        proxy.start()
-        proxyServer = proxy
-        val port = proxy.listeningPort
-        Log.i(TAG, "▶ StreamProxyServer started on port $port")
+        val useNodeJsProxy = intent.getBooleanExtra("USE_NODEJS_PROXY", false)
+        val port: Int
+        
+        if (useNodeJsProxy) {
+            port = 3000
+            Log.i(TAG, "- Using NodeJS StreamProxyServer on port 3000")
+        } else {
+            // 1. Start StreamProxyServer
+            val proxy = StreamProxyServer(
+                engine   = engine,
+                fileId   = fileId,
+                fileSize = effectiveFileSize,
+                mimeType = mimeType,
+            )
+            proxy.start()
+            proxyServer = proxy
+            port = proxy.listeningPort
+            Log.i(TAG, "- StreamProxyServer started on port $port")
 
-        // 2. Register file with TDLib
-        scope.launch {
-            try {
-                engine.startDownloadReturnPath(fileId, priority = 32)
-                engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
-            } catch (e: Exception) {
-                Log.e(TAG, "▶ TDLib registration error: ${e.message}", e)
+            // 2. Register file with TDLib
+            scope.launch {
+                try {
+                    engine.startDownloadReturnPath(fileId, priority = 32)
+                    engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
+                } catch (e: Exception) {
+                    Log.e(TAG, "- TDLib registration error: ${e.message}", e)
+                }
             }
         }
 
         // 3. Build stream URLs
-        val localStreamUrl = "http://127.0.0.1:$port/stream"
+        val localStreamUrl = "tdlib://$fileId"
         val wifiIp = getWifiIpAddress()
         castStreamUrl = if (wifiIp != null) "http://$wifiIp:$port/stream" else null
         
@@ -375,8 +383,26 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun playUrl(url: String) {
         loadingSpinner.visibility = View.VISIBLE
+        
+        val engine = TelegramEngine.getInstance(this)
         val mediaItem = MediaItem.fromUri(Uri.parse(url))
-        player?.setMediaItem(mediaItem)
+        
+        if (url.startsWith("tdlib://")) {
+            val playbackId = intent.getStringExtra("EXTRA_PLAYBACK_ID") ?: com.cineflix.android.GramJSStreamManager.currentPlaybackId
+            val dataSourceFactory: androidx.media3.datasource.DataSource.Factory = if (playbackId.isNotEmpty()) {
+                android.util.Log.i("PlayerActivity", "Using GramJSDataSourceFactory for playbackId: ")
+                GramJSDataSourceFactory(playbackId, 0)
+            } else {
+                android.util.Log.w("PlayerActivity", "Fallback to TdlibDataSourceFactory (no playbackId)")
+                TdlibDataSourceFactory(engine)
+            }
+            val mediaSource = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
+                .createMediaSource(mediaItem)
+            player?.setMediaSource(mediaSource)
+        } else {
+            player?.setMediaItem(mediaItem)
+        }
+        
         player?.prepare()
         player?.play()
         

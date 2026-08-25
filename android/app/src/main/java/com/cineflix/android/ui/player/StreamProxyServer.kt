@@ -53,15 +53,13 @@ class StreamProxyServer(
     private fun checkRollingGc(bytesDelivered: Int) {
         bytesReadSinceLastWipe += bytesDelivered
         if (bytesReadSinceLastWipe > ROLLING_GC_THRESHOLD) {
-            Log.i(TAG, "🧹 SAFE GC: Cleaning stale TDLib disk cache (keeping active download alive)")
+            Log.i(TAG, "🧽 HARD GC: Cancelling TDLib download to force OS to release disk space")
             try {
-                val filesDir = engine.getAppFilesDir()
-                val videosDir = java.io.File(filesDir, "tdlib_data/videos")
-                if (videosDir.exists()) videosDir.deleteRecursively()
-                val docsDir = java.io.File(filesDir, "tdlib_data/documents")
-                if (docsDir.exists()) docsDir.deleteRecursively()
+                // En Linux/Android, borrar un archivo abierto NO libera el espacio. 
+                // Hay que obligar a TDLib a cerrar el 'file handle' cancelando la descarga.
+                engine.cancelAndDeleteVideo(fileId)
             } catch (e: Exception) {
-                Log.w(TAG, "Safe GC disk cleanup failed: ${e.message}")
+                Log.w(TAG, "Hard GC disk cleanup failed: ${e.message}")
             }
             bytesReadSinceLastWipe = 0L
         }

@@ -9,11 +9,16 @@ android {
         applicationId "com.cineflix.android"
         minSdkVersion 21
         targetSdkVersion 34
-        versionCode 5
-        versionName "1.4.1"
+        versionCode 12
+        versionName "1.4.1c"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         ndk {
-            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
+    }
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
         }
     }
     signingConfigs {
@@ -63,6 +68,7 @@ android {
             universalApk true
         }
     }
+
 }
 
 dependencies {

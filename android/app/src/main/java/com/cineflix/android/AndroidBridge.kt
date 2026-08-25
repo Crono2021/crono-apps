@@ -1,6 +1,7 @@
 package com.cineflix.android
 
 import android.content.Context
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -114,6 +115,21 @@ class AndroidBridge(
     @JavascriptInterface
     fun logOut() {
         engine.logout { sendAuthState("WAIT_PHONE") }
+    }
+
+    @JavascriptInterface
+    fun getMe(queryId: String) {
+        engine.getMe { user ->
+            if (user != null) {
+                val json = JSONObject().apply {
+                    put("id", user.id)
+                    put("phoneNumber", user.phoneNumber ?: "")
+                }.toString()
+                callback(queryId, true, json)
+            } else {
+                callback(queryId, false, "Not logged in")
+            }
+        }
     }
 
     /**
@@ -373,6 +389,8 @@ class AndroidBridge(
         launcher?.invoke(intent) ?: context.startActivity(intent)
     }
 
+
+
     @JavascriptInterface
     fun playVideoWithIntroDB(
         chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String,
@@ -386,10 +404,12 @@ class AndroidBridge(
             putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
             putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
             putExtra(PlayerActivity.EXTRA_TITLE,     title)
+            
             putExtra(PlayerActivity.EXTRA_PHONE,      phone)
             putExtra(PlayerActivity.EXTRA_CONTENT_ID, contentId)
             putExtra(PlayerActivity.EXTRA_SEASON,     season)
             putExtra(PlayerActivity.EXTRA_EPISODE,    episode)
+            
             putExtra(PlayerActivity.EXTRA_CREDITS_START, creditsStart)
             putExtra(PlayerActivity.EXTRA_INTRO_START_MS, introStart)
             putExtra(PlayerActivity.EXTRA_INTRO_END_MS, introEnd)
@@ -606,4 +626,44 @@ class AndroidBridge(
     }
 
     fun cleanup() { scope.cancel() }
+
+    // --- GramJS Bridge (Phase 1) ---
+    @JavascriptInterface
+    fun setPlaybackSession(playbackId: String) {
+        GramJSStreamManager.currentPlaybackId = playbackId
+    }
+
+    @JavascriptInterface
+    fun deliverChunkBase64(requestId: String, base64Data: String) {
+        val latch = GramJSStreamManager.latches[requestId] ?: return // Ignorar si expiró o se canceló
+        
+        try {
+            val bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+            GramJSStreamManager.pendingChunks[requestId] = bytes
+        } catch (e: Exception) {
+            GramJSStreamManager.errors[requestId] = "Base64 Decode Error: ${e.message}"
+        } finally {
+            latch.countDown()
+        }
+    }
+
+    @JavascriptInterface
+    fun deliverChunkError(requestId: String, error: String) {
+        val latch = GramJSStreamManager.latches[requestId] ?: return
+        GramJSStreamManager.errors[requestId] = error
+        latch.countDown()
+    }
+}
+
+@SuppressLint("StaticFieldLeak")
+object GramJSStreamManager {
+    @Volatile
+    var webView: WebView? = null
+    
+    val pendingChunks = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+    val latches = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CountDownLatch>()
+    val errors = java.util.concurrent.ConcurrentHashMap<String, String>()
+    
+    @Volatile
+    var currentPlaybackId: String = ""
 }
