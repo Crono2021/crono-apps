@@ -1,0 +1,9 @@
+{
+  "versionCode": 14,
+  "versionName": "1.4.1e",
+  "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/cineflix-android/cineflix_1.4.1e.apk",
+  "sha256": "7d3535c425513a2c059e71e813186e3682ee107b0a3f38b32b8aa6dfe1b6574d",
+  "changelog": "• Sistema de actualizaciones automáticas OTA\n• Verificación SHA-256 del APK\n• Soporte para omitir o posponer actualizaciones",
+  "mandatory": false,
+  "minVersionCode": 1
+}
