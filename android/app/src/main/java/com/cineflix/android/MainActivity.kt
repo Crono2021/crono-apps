@@ -167,6 +167,9 @@ class MainActivity : ComponentActivity() {
 
         setContentView(webView)
 
+        // OTA: comprobar actualizaciones al abrir la app
+        OtaUpdateManager(this).checkForUpdate()
+
         // Manejar el botón de atrás del sistema
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
