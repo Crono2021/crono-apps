@@ -1,4 +1,4 @@
-package com.cineflix.android
+﻿package com.cineflix.android
 
 import android.content.Context
 import android.annotation.SuppressLint
@@ -13,12 +13,12 @@ import org.json.JSONObject
 import org.drinkless.tdlib.TdApi
 
 /**
- * AndroidBridge — injected as window.AndroidBridge in the WebView.
+ * AndroidBridge â€” injected as window.AndroidBridge in the WebView.
  *
  * Replaces all Capacitor plugin calls from telegram.js:
  *   - Auth: requestAuthState / loginWithPhone / signInWithCode / signInWithPassword / logOut
  *   - Bot:  sendBotCommand / clickInlineButton / searchMovieByPayload
- *   - Play: playVideo  →  launches PlayerActivity (TVGram approach)
+ *   - Play: playVideo  â†’  launches PlayerActivity (TVGram approach)
  *
  * Async results are delivered back to JS via:
  *   - window.onTelegramAuthStateChanged(state) for auth
@@ -31,9 +31,9 @@ class AndroidBridge(
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Auth methods (called by callNativeAsync in telegram.js)
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @JavascriptInterface
     fun requestAuthState() {
@@ -166,20 +166,20 @@ class AndroidBridge(
                         is TelegramEngine.AuthState.WaitPassword -> sendAuthState("WAIT_PASSWORD")
                         is TelegramEngine.AuthState.WaitPhone    -> sendAuthState("WAIT_PHONE")
                         is TelegramEngine.AuthState.Error        -> sendAuthError((finalState as TelegramEngine.AuthState.Error).message)
-                        null -> sendAuthError("QR expirado. Inténtalo de nuevo.")
+                        null -> sendAuthError("QR expirado. IntÃ©ntalo de nuevo.")
                         else -> {}
                     }
                 }
                 is TelegramEngine.AuthState.Error -> sendAuthError((qrState as TelegramEngine.AuthState.Error).message)
-                null -> sendAuthError("Timeout: TDLib no generó el código QR")
+                null -> sendAuthError("Timeout: TDLib no generÃ³ el cÃ³digo QR")
                 else -> sendAuthError("Estado inesperado: $qrState")
             }
         }
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Bot methods (called by callNativeDataAsync in telegram.js)
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Native storage for the most recent sendBotCommand result.
@@ -190,7 +190,7 @@ class AndroidBridge(
     /**
      * sendBotCommand(queryId, payload)
      * Returns JSON: { messageId, chatId, buttons: [{text, data, msgId}], text }
-     * button.data is the button INDEX ("0", "1", ...) — JS passes it back to
+     * button.data is the button INDEX ("0", "1", ...) â€” JS passes it back to
      * clickInlineButton which looks up the native SeasonButton to get real TDLib bytes.
      */
     @JavascriptInterface
@@ -199,10 +199,10 @@ class AndroidBridge(
             try {
                 val response = engine.sendBotCommand(payload)
                 if (response == null) {
-                    callback(queryId, false, "Bot no respondió")
+                    callback(queryId, false, "Bot no respondiÃ³")
                     return@launch
                 }
-                // Store entire response natively — buttons' raw TDLib bytes are never serialized to JS
+                // Store entire response natively â€” buttons' raw TDLib bytes are never serialized to JS
                 lastBotResponse = response
                 val buttons = JSONArray()
                 for ((index, btn) in response.buttons.withIndex()) {
@@ -230,29 +230,29 @@ class AndroidBridge(
      *
      * buttonIndex is the integer index returned by sendBotCommand ("0", "1", ...).
      * The raw TDLib callback bytes come from the natively-stored lastBotResponse
-     * — they NEVER go through JavaScript, eliminating all base64 round-trip issues.
+     * â€” they NEVER go through JavaScript, eliminating all base64 round-trip issues.
      */
     @JavascriptInterface
     fun clickInlineButton(queryId: String, msgIdStr: String, buttonIndex: String) {
         scope.launch {
             try {
                 val response = lastBotResponse ?: run {
-                    callback(queryId, false, "No hay respuesta del bot en memoria — reinicia la búsqueda")
+                    callback(queryId, false, "No hay respuesta del bot en memoria â€” reinicia la bÃºsqueda")
                     return@launch
                 }
                 val idx = buttonIndex.toIntOrNull() ?: run {
-                    callback(queryId, false, "Índice de botón inválido: $buttonIndex")
+                    callback(queryId, false, "Ãndice de botÃ³n invÃ¡lido: $buttonIndex")
                     return@launch
                 }
                 val button = response.buttons.getOrNull(idx) ?: run {
-                    callback(queryId, false, "Botón $idx no encontrado (total: ${response.buttons.size})")
+                    callback(queryId, false, "BotÃ³n $idx no encontrado (total: ${response.buttons.size})")
                     return@launch
                 }
                 val chatId = engine.getBotChatIdPublic() ?: run {
                     callback(queryId, false, "No se pudo obtener chatId del bot")
                     return@launch
                 }
-                // Use stored native msgId and raw TDLib bytes directly — no JS serialization
+                // Use stored native msgId and raw TDLib bytes directly â€” no JS serialization
                 val videos = engine.clickInlineButton(chatId, response.messageId, button.dataBase64)
                 callback(queryId, true, videosToJson(videos, chatId))
             } catch (e: Exception) {
@@ -316,9 +316,9 @@ class AndroidBridge(
         }
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Playback — launches PlayerActivity (TVGram approach)
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Playback â€” launches PlayerActivity (TVGram approach)
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * playVideo(chatId, msgId, fileId, fileSize, mimeType, title)
@@ -400,6 +400,7 @@ class AndroidBridge(
         val intent = Intent(context, PlayerActivity::class.java).apply {
             putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
             putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
+            putExtra("EXTRA_PLAYBACK_ID", GramJSStreamManager.currentPlaybackId)
             
             if (multipartJson != null) {
                 putExtra(PlayerActivity.EXTRA_MULTIPART_JSON, multipartJson)
@@ -450,9 +451,9 @@ class AndroidBridge(
         )
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // OTA Update: Download and install new APK
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @JavascriptInterface
     fun downloadAndInstallUpdate(url: String) {
@@ -466,7 +467,7 @@ class AndroidBridge(
 
             val req = android.app.DownloadManager.Request(android.net.Uri.parse(url))
             req.setTitle("Cineflix Update")
-            req.setDescription("Descargando nueva versión...")
+            req.setDescription("Descargando nueva versiÃ³n...")
             req.setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             req.setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, "cineflix_update.apk")
             
@@ -501,9 +502,9 @@ class AndroidBridge(
         }
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Helpers
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private fun sendAuthState(state: String) {
         runOnUiThread { webView.evaluateJavascript(
@@ -604,7 +605,7 @@ class AndroidBridge(
         if (isTv && !isAmazon) {
             // En Android TV, al abrir el teclado el WebView pierde el foco de ventana.
             // Esto dispara un evento 'blur' en JS que hace que tv-nav.js llame a hideKeyboard() al instante.
-            // Si la llamada ocurre justo después de abrirlo (menos de 1.5s), la ignoramos.
+            // Si la llamada ocurre justo despuÃ©s de abrirlo (menos de 1.5s), la ignoramos.
             if (System.currentTimeMillis() - lastShowKeyboardTime < 1500) {
                 android.util.Log.d("CineflixMain", "Ignored hideKeyboard() due to TV window focus blur")
                 return
@@ -667,35 +668,42 @@ class AndroidBridge(
 
     @JavascriptInterface
     fun deliverChunkBase64(requestId: String, base64Data: String) {
-        val latch = GramJSStreamManager.latches[requestId] ?: return // Ignorar si expiró o se canceló
+        val request = GramJSStreamManager.activeRequests.remove(requestId) ?: return
         
         try {
+            if (base64Data.isEmpty()) {
+                request.deferred.complete(Result.success(ByteArray(0)))
+                return
+            }
             val bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
-            GramJSStreamManager.pendingChunks[requestId] = bytes
+            request.deferred.complete(Result.success(bytes))
         } catch (e: Exception) {
-            GramJSStreamManager.errors[requestId] = "Base64 Decode Error: ${e.message}"
-        } finally {
-            latch.countDown()
+            request.deferred.complete(Result.failure(Exception("Base64 Decode Error: " + e.message)))
         }
     }
 
     @JavascriptInterface
     fun deliverChunkError(requestId: String, error: String) {
-        val latch = GramJSStreamManager.latches[requestId] ?: return
-        GramJSStreamManager.errors[requestId] = error
-        latch.countDown()
+        val request = GramJSStreamManager.activeRequests.remove(requestId) ?: return
+        request.deferred.complete(Result.failure(Exception(error)))
     }
 }
+
+data class PendingGramJSRequest(
+    val generation: Int,
+    val virtualOffset: Long,
+    val deferred: kotlinx.coroutines.CompletableDeferred<Result<ByteArray>>
+)
 
 @SuppressLint("StaticFieldLeak")
 object GramJSStreamManager {
     @Volatile
     var webView: WebView? = null
     
-    val pendingChunks = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
-    val latches = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CountDownLatch>()
-    val errors = java.util.concurrent.ConcurrentHashMap<String, String>()
+    val activeRequests = java.util.concurrent.ConcurrentHashMap<String, PendingGramJSRequest>()
     
     @Volatile
     var currentPlaybackId: String = ""
 }
+
+
