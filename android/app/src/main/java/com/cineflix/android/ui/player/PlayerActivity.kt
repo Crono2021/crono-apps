@@ -52,6 +52,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
     private var proxyServer: StreamProxyServer? = null
+    private var multipartParts: List<FilePart>? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // UI
@@ -94,6 +95,7 @@ class PlayerActivity : AppCompatActivity() {
     private var castButton: MediaRouteButton? = null
 
     companion object {
+        const val EXTRA_MULTIPART_JSON = "multipart_json"
         const val EXTRA_FILE_ID   = "file_id"
         const val EXTRA_FILE_SIZE = "file_size"
         const val EXTRA_MIME_TYPE = "mime_type"
@@ -136,6 +138,26 @@ class PlayerActivity : AppCompatActivity() {
         bindViews()
         setupListeners()
 
+        val multipartJson = intent.getStringExtra(EXTRA_MULTIPART_JSON)
+        if (!multipartJson.isNullOrEmpty()) {
+            try {
+                val partsArray = org.json.JSONArray(multipartJson)
+                val parts = mutableListOf<FilePart>()
+                for (i in 0 until partsArray.length()) {
+                    val obj = partsArray.getJSONObject(i)
+                    parts.add(FilePart(obj.getInt("fileId"), obj.getLong("size")))
+                }
+                if (parts.isNotEmpty()) {
+                    multipartParts = parts
+                    Log.i(TAG, "Loaded multipart video with ${parts.size} parts")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse EXTRA_MULTIPART_JSON", e)
+                Toast.makeText(this, "Error parsing multipart video data", Toast.LENGTH_LONG).show()
+                finish()
+                return
+            }
+        }
         val fileId   = intent.getIntExtra(EXTRA_FILE_ID, -1)
         val fileSize = intent.getLongExtra(EXTRA_FILE_SIZE, 0L)
         val mimeType = intent.getStringExtra(EXTRA_MIME_TYPE) ?: "video/mp4"
@@ -192,8 +214,15 @@ class PlayerActivity : AppCompatActivity() {
             // 2. Register file with TDLib
             scope.launch {
                 try {
-                    engine.startDownloadReturnPath(fileId, priority = 32)
-                    engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
+                    if (multipartParts != null) {
+                        for (part in multipartParts!!) {
+                            engine.startDownloadReturnPath(part.fileId, priority = 32)
+                            engine.hintDownloadOffset(part.fileId, 0L, 20L * 1024L * 1024L)
+                        }
+                    } else {
+                        engine.startDownloadReturnPath(fileId, priority = 32)
+                        engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "- TDLib registration error: ${e.message}", e)
                 }
@@ -394,7 +423,7 @@ class PlayerActivity : AppCompatActivity() {
                 GramJSDataSourceFactory(playbackId, 0)
             } else {
                 android.util.Log.w("PlayerActivity", "Fallback to TdlibDataSourceFactory (no playbackId)")
-                TdlibDataSourceFactory(engine)
+                TdlibDataSourceFactory(engine, multipartParts)
             }
             val mediaSource = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
                 .createMediaSource(mediaItem)

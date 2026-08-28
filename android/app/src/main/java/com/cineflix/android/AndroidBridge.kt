@@ -391,17 +391,23 @@ class AndroidBridge(
 
 
 
-    @JavascriptInterface
-    fun playVideoWithIntroDB(
-        chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String,
+    private fun playVideoInternal(
+        chatId: String, msgId: String, mimeType: String, title: String,
         phone: String, contentId: String, season: String, episode: String,
-        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String
+        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String,
+        fileId: String? = null, fileSize: String? = null, multipartJson: String? = null
     ) {
         val intent = Intent(context, PlayerActivity::class.java).apply {
             putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
             putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
-            putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId.toIntOrNull()    ?: 0)
-            putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
+            
+            if (multipartJson != null) {
+                putExtra(PlayerActivity.EXTRA_MULTIPART_JSON, multipartJson)
+            } else {
+                putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId?.toIntOrNull()    ?: 0)
+                putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize?.toLongOrNull() ?: 0L)
+            }
+            
             putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
             putExtra(PlayerActivity.EXTRA_TITLE,     title)
             
@@ -416,6 +422,32 @@ class AndroidBridge(
             putExtra(PlayerActivity.EXTRA_INTRODB_CREDITS_MS, introDbCreditsMs)
         }
         launcher?.invoke(intent) ?: context.startActivity(intent)
+    }
+
+    @JavascriptInterface
+    fun playVideoWithIntroDB(
+        chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String,
+        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String
+    ) {
+        playVideoInternal(
+            chatId, msgId, mimeType, title, phone, contentId, season, episode,
+            creditsStart, introStart, introEnd, introDbCreditsMs,
+            fileId = fileId, fileSize = fileSize
+        )
+    }
+
+    @JavascriptInterface
+    fun playMultipartVideoWithIntroDB(
+        chatId: String, msgId: String, multipartJson: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String,
+        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String
+    ) {
+        playVideoInternal(
+            chatId, msgId, mimeType, title, phone, contentId, season, episode,
+            creditsStart, introStart, introEnd, introDbCreditsMs,
+            multipartJson = multipartJson
+        )
     }
 
     // ──────────────────────────────────────────────────────────────────────────
