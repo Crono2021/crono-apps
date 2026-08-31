@@ -142,6 +142,14 @@ class TelegramEngine(private val context: Context) {
             is TdApi.AuthorizationStateWaitPassword    -> _authState.value = AuthState.WaitPassword
             is TdApi.AuthorizationStateReady           -> {
                 _authState.value = AuthState.Ready
+                
+                // Disable TDLib auto-downloads completely to save bandwidth and disk space
+                val emptySettings = TdApi.AutoDownloadSettings().apply { isAutoDownloadEnabled = false }
+                client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeWiFi())) {}
+                client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeMobile())) {}
+                client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeMobileRoaming())) {}
+                client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeOther())) {}
+
                 // Cleanup stray caches at boot to rescue TV storage
                 try {
                     // Clean new cache directory
@@ -243,9 +251,12 @@ class TelegramEngine(private val context: Context) {
                 is TdApi.MessageDocument -> {
                     val doc = c.document
                     val mime = doc.mimeType
+                    val isMultipart = Regex("""\.(?:part0*\d+|0*\d+)$""", RegexOption.IGNORE_CASE).containsMatchIn(doc.fileName)
                     val isMedia = mime.contains("video") ||
                             doc.fileName.endsWith(".mp4") ||
-                            doc.fileName.endsWith(".mkv")
+                            doc.fileName.endsWith(".mkv") ||
+                            doc.fileName.endsWith(".avi") ||
+                            isMultipart
                     if (!isMedia) return null
                     VideoInfo(
                         msgId    = msg.id,
