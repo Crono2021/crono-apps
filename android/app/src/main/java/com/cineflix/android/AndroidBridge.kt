@@ -1,4 +1,4 @@
-﻿package com.cineflix.android
+package com.cineflix.android
 
 import android.content.Context
 import android.annotation.SuppressLint
@@ -30,6 +30,10 @@ class AndroidBridge(
     private val engine: TelegramEngine,
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    init {
+        GramJSStreamManager.webView = webView
+    }
 
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Auth methods (called by callNativeAsync in telegram.js)

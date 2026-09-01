@@ -1,4 +1,4 @@
-package com.cineflix.android.ui.player
+﻿package com.cineflix.android.ui.player
 
 import android.util.Log
 import com.cineflix.android.TelegramEngine
@@ -6,7 +6,7 @@ import fi.iki.elonen.NanoHTTPD
 import java.io.InputStream
 
 /**
- * StreamProxyServer — NanoHTTPD-based local HTTP server that proxies
+ * StreamProxyServer â€” NanoHTTPD-based local HTTP server that proxies
  * Telegram byte-range requests between ExoPlayer and TDLib.
  *
  * DISK-FREE MODE: No file is ever written to device storage.
@@ -15,17 +15,18 @@ import java.io.InputStream
  * streams them directly to ExoPlayer. Disk usage = 0 bytes.
  *
  * Flow:
- *   ExoPlayer → HTTP GET /stream (with Range header)
- *               → TdApi.DownloadFile(offset, limit, synchronous=true)
- *               → TdApi.ReadFilePart(offset, count)
- *               → HTTP 206 + bytes returned to ExoPlayer
- *               → TDLib cache freed (no permanent file)
+ *   ExoPlayer â†’ HTTP GET /stream (with Range header)
+ *               â†’ TdApi.DownloadFile(offset, limit, synchronous=true)
+ *               â†’ TdApi.ReadFilePart(offset, count)
+ *               â†’ HTTP 206 + bytes returned to ExoPlayer
+ *               â†’ TDLib cache freed (no permanent file)
  */
 class StreamProxyServer(
     private val engine: TelegramEngine,
     private val fileId: Int,
     val fileSize: Long,
     private val mimeType: String,
+    private val multipartParts: List<FilePart>? = null,
 ) : NanoHTTPD(0) { // Port 0 = OS assigns a free port
 
     companion object {
@@ -37,7 +38,7 @@ class StreamProxyServer(
         private const val PREFETCH_SIZE = 4L * 1024L * 1024L
         
         // Wipe stale TDLib cache files every 250MB to keep TV storage under control.
-        // IMPORTANT: We must NEVER call cancelAndDeleteVideo() during playback —
+        // IMPORTANT: We must NEVER call cancelAndDeleteVideo() during playback â€”
         // it kills the active TDLib download, making all subsequent seeks fail.
         private const val ROLLING_GC_THRESHOLD = 250L * 1024L * 1024L
     }
@@ -50,17 +51,26 @@ class StreamProxyServer(
      * WITHOUT cancelling the active download. This preserves the
      * streaming session so ExoPlayer can still seek freely.
      */
-    private fun checkRollingGc(bytesDelivered: Int) {
+    private fun resolvePart(globalOffset: Long): Pair<Int, Long> {
+        if (multipartParts.isNullOrEmpty()) return Pair(fileId, globalOffset)
+        var accumulated = 0L
+        for (part in multipartParts) {
+            if (globalOffset < accumulated + part.size) {
+                return Pair(part.fileId, globalOffset - accumulated)
+            }
+            accumulated += part.size
+        }
+        val lastPart = multipartParts.last()
+        return Pair(lastPart.fileId, globalOffset - (accumulated - lastPart.size))
+    }
+
+    private fun checkRollingGc(bytesDelivered: Int, currentPartFileId: Int) {
         bytesReadSinceLastWipe += bytesDelivered
         if (bytesReadSinceLastWipe > ROLLING_GC_THRESHOLD) {
-            Log.i(TAG, "🧽 HARD GC: Cancelling TDLib download to force OS to release disk space")
+            Log.i(TAG, "HARD GC: Cancelling TDLib download to force OS to release disk space")
             try {
-                // En Linux/Android, borrar un archivo abierto NO libera el espacio. 
-                // Hay que obligar a TDLib a cerrar el 'file handle' cancelando la descarga.
-                engine.cancelAndDeleteVideo(fileId)
-            } catch (e: Exception) {
-                Log.w(TAG, "Hard GC disk cleanup failed: ${e.message}")
-            }
+                engine.cancelAndDeleteVideo(currentPartFileId)
+            } catch (e: Exception) { }
             bytesReadSinceLastWipe = 0L
         }
     }
@@ -75,19 +85,20 @@ class StreamProxyServer(
      * Caches the result to prevent ExoPlayer from restarting playback due to size mismatch.
      */
     private fun resolveFileSize(): Long {
+        if (!multipartParts.isNullOrEmpty()) return fileSize
         resolvedFileSize?.let { return it }
 
         val deadline = System.currentTimeMillis() + 10_000L
         while (System.currentTimeMillis() < deadline) {
             val state = engine.getFileStateFlow(fileId).value
             if (state != null && state.expectedSize > 0) {
-                Log.d(TAG, "resolveFileSize → ${state.expectedSize} (from TDLib)")
+                Log.d(TAG, "resolveFileSize -> ${state.expectedSize} (from TDLib)")
                 resolvedFileSize = state.expectedSize
                 return state.expectedSize
             }
             Thread.sleep(100)
         }
-        Log.w(TAG, "resolveFileSize → $fileSize (fallback from Intent)")
+        Log.w(TAG, "resolveFileSize -> $fileSize (fallback from Intent)")
         resolvedFileSize = fileSize
         return fileSize
     }
@@ -144,7 +155,7 @@ class StreamProxyServer(
      * temporary buffer, but our app never holds the full file.
      *
      * Strategy:
-     *  1. Try ReadFilePart (fast — TDLib already has this range in its buffer)
+     *  1. Try ReadFilePart (fast â€” TDLib already has this range in its buffer)
      *  2. If not cached: DownloadFile(synchronous=true) then ReadFilePart
      *     This blocks until Telegram CDN delivers the bytes, then returns them.
      *  3. Serves bytes from an in-memory prefetch buffer (2MB) to reduce IPC calls.
@@ -160,7 +171,7 @@ class StreamProxyServer(
         private var currentPosition = startOffset
         private val endPosition     = startOffset + lengthRequested
 
-        // In-memory prefetch buffer — avoids one IPC call per byte
+        // In-memory prefetch buffer â€” avoids one IPC call per byte
         private var prefetchBuffer: ByteArray? = null
         private var prefetchOffset: Long = -1L
 
@@ -183,7 +194,7 @@ class StreamProxyServer(
                 val toRead    = minOf(len, available)
                 System.arraycopy(pb, bufferIdx, b, off, toRead)
                 currentPosition += toRead
-                checkRollingGc(toRead)
+                checkRollingGc(toRead, resolvePart(currentPosition - toRead).first)
                 return toRead
             }
 
@@ -193,19 +204,23 @@ class StreamProxyServer(
                 endPosition - currentPosition
             )
 
-            // 🚀 AGGRESSIVE MULTIPLEXING (NATIVE) 🚀
-            engine.hintDownloadOffset(fileId, currentPosition, toFetch)
+            // ðŸš€ AGGRESSIVE MULTIPLEXING (NATIVE) ðŸš€
+            val (partId, localOffset) = resolvePart(currentPosition)
+            val partSize = multipartParts?.find { it.fileId == partId }?.size ?: totalFileSize
+            val maxInPart = partSize - localOffset
+            val actualFetch = minOf(toFetch, maxInPart)
+            engine.hintDownloadOffset(partId, localOffset, actualFetch)
 
             var retries = 0
             while (retries < 150) { // Up to 15 seconds wait for the FIRST byte of this chunk
-                val fastChunk = engine.readFilePartSync(fileId, currentPosition, toFetch)
+                val fastChunk = engine.readFilePartSync(partId, localOffset, actualFetch)
                 if (fastChunk != null && fastChunk.isNotEmpty()) {
                     return deliverFromChunk(fastChunk, b, off, len)
                 }
 
                 // EOF check: if we know the expected size and have reached it, it's EOF.
-                val state = engine.getFileStateFlow(fileId).value
-                if (state != null && state.expectedSize > 0 && currentPosition >= state.expectedSize) {
+                val state = engine.getFileStateFlow(partId).value
+                if (state != null && state.expectedSize > 0 && localOffset >= state.expectedSize) {
                     Log.d(TAG, "EOF reached at position=$currentPosition")
                     return -1
                 }
@@ -225,8 +240,15 @@ class StreamProxyServer(
             val toRead = minOf(len, chunk.size)
             System.arraycopy(chunk, 0, b, off, toRead)
             currentPosition += toRead
-            checkRollingGc(toRead)
+            checkRollingGc(toRead, resolvePart(currentPosition - toRead).first)
             return toRead
         }
     }
 }
+
+
+
+
+
+
+
