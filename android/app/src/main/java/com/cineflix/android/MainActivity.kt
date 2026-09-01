@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.app.UiModeManager
 import android.content.Context
 import android.os.Bundle
+import android.view.KeyEvent
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -198,6 +199,43 @@ class MainActivity : ComponentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         webView.saveState(outState)
+    }
+
+    /**
+     * Intercept D-pad keys BEFORE the WebView's native focus engine processes them.
+     * The WebView has its own D-pad navigation that moves focus between tabindex elements,
+     * which fights with tv-nav.js's spatial navigation. By consuming D-pad events here
+     * and injecting them as JavaScript KeyboardEvents, tv-nav.js becomes the sole owner
+     * of D-pad navigation.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (isAndroidTV && event.action == KeyEvent.ACTION_DOWN) {
+            val jsKeyCode = when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> 38
+                KeyEvent.KEYCODE_DPAD_DOWN -> 40
+                KeyEvent.KEYCODE_DPAD_LEFT -> 37
+                KeyEvent.KEYCODE_DPAD_RIGHT -> 39
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> 13
+                else -> null
+            }
+            if (jsKeyCode != null) {
+                val jsKey = when (jsKeyCode) {
+                    38 -> "ArrowUp"
+                    40 -> "ArrowDown"
+                    37 -> "ArrowLeft"
+                    39 -> "ArrowRight"
+                    13 -> "Enter"
+                    else -> ""
+                }
+                webView.evaluateJavascript(
+                    "document.dispatchEvent(new KeyboardEvent('keydown', " +
+                    "{key:'$jsKey', keyCode:$jsKeyCode, code:'$jsKey', bubbles:true, cancelable:true}))",
+                    null
+                )
+                return true // Consume the event — WebView never sees it
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     /** Pause WebView timers + rendering when app goes to background */
