@@ -249,26 +249,35 @@ class PlayerActivity : AppCompatActivity() {
 
         // 4. Iniciar ExoPlayer
         initExoPlayer()
-        playUrl(localStreamUrl)
 
-        // 5. Fetch saved progress y trackear
-        if (phone.isNotEmpty() && contentId.isNotEmpty()) {
+        // 5. Apply progress and start tracking
+        val p = jsProgress?.toFloatOrNull()?.toInt() ?: 0
+        if (p > 5) {
+            playUrl(localStreamUrl)
+            player?.seekTo(p * 1000L)
+            Toast.makeText(this@PlayerActivity, "Reanudado en ${p/60}m", Toast.LENGTH_SHORT).show()
+        } else if (phone.isNotEmpty() && contentId.isNotEmpty()) {
             scope.launch {
                 try {
                     val savedProgress = fetchSavedProgress(phone, contentId, season, episode)
-                    if (savedProgress > 30) {
-                        withContext(Dispatchers.Main) {
-                            // Delay to ensure buffer starts before seek
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                player?.let {
-                                    it.seekTo(savedProgress * 1000L)
-                                    Toast.makeText(this@PlayerActivity, "Reanudado en ${savedProgress/60}m", Toast.LENGTH_SHORT).show()
-                                }
-                            }, 1000)
+                    withContext(Dispatchers.Main) {
+                        if (savedProgress > 5) {
+                            playUrl(localStreamUrl)
+                            player?.seekTo(savedProgress * 1000L)
+                            Toast.makeText(this@PlayerActivity, "Reanudado en ${savedProgress/60}m", Toast.LENGTH_SHORT).show()
+                        } else {
+                            playUrl(localStreamUrl)
                         }
                     }
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { playUrl(localStreamUrl) }
+                }
             }
+        } else {
+            playUrl(localStreamUrl)
+        }
+
+        if (phone.isNotEmpty() && contentId.isNotEmpty()) {
             startProgressTracking(phone, contentId, season, episode)
         }
 
@@ -384,6 +393,7 @@ class PlayerActivity : AppCompatActivity() {
 
         val renderersFactory = DefaultRenderersFactory(this)
             .setExtensionRendererMode(mode)
+            .setEnableDecoderFallback(true)
 
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -425,7 +435,8 @@ class PlayerActivity : AppCompatActivity() {
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                Toast.makeText(this@PlayerActivity, "Error de reproducciÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n", Toast.LENGTH_SHORT).show()
+                Log.e(TAG, "onPlayerError: ${error.errorCodeName} - ${error.message}", error)
+                Toast.makeText(this@PlayerActivity, "Error de reproducción: ${error.errorCodeName}", Toast.LENGTH_SHORT).show()
                 finish()
             }
         })
