@@ -8,14 +8,14 @@
         <item name="android:windowLightStatusBar">false</item>
     </style>
 
-    <!-- Player theme: instant black screen during rotation transition -->
+    <!-- Player theme: translucent window so catalog card spinner stays visible until playback starts -->
     <style name="Theme.Cineflix.Player" parent="Theme.AppCompat.NoActionBar">
-        <item name="android:windowBackground">@color/black</item>
-        <item name="android:colorBackground">@color/black</item>
-        <item name="android:statusBarColor">@color/black</item>
-        <item name="android:navigationBarColor">@color/black</item>
-        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowAnimationStyle">@null</item>
-        <item name="android:windowDisablePreview">false</item>
+        <item name="android:windowDisablePreview">true</item>
     </style>
 </resources>

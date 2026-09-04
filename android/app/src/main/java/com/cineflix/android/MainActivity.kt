@@ -139,6 +139,44 @@ class MainActivity : ComponentActivity() {
                     )
 
                     android.util.Log.d("CineflixMain", "Injected OTA vars and JS fixes, TV=$tvFlag, Amazon=$isAmazon")
+
+                    // Inyectar protección del spinner de carga en fichas para que no se cierre hasta que inicie el reproductor
+                    view.evaluateJavascript(
+                        """
+                        (function() {
+                            if (!document.getElementById('card-spinner-injected-style')) {
+                                var s = document.createElement('style');
+                                s.id = 'card-spinner-injected-style';
+                                s.textContent = '.card-loading-overlay { position: absolute !important; inset: 0 !important; background: rgba(0,0,0,0.65) !important; display: flex !important; align-items: center !important; justify-content: center !important; z-index: 99 !important; border-radius: inherit !important; pointer-events: none !important; } .card-loading-overlay .spinner { width: 36px !important; height: 36px !important; border: 3px solid rgba(255, 255, 255, 0.25) !important; border-top-color: #8b5cf6 !important; border-radius: 50% !important; animation: cardSpinAnim 0.8s linear infinite !important; margin: 0 !important; } @keyframes cardSpinAnim { to { transform: rotate(360deg); } }';
+                                document.head.appendChild(s);
+                            }
+                            window.__cardSpinnerLocked = false;
+                            window._clearCardLoadingOverlays = function() {
+                                window.__cardSpinnerLocked = false;
+                                document.querySelectorAll('.card-loading-overlay').forEach(function(el) {
+                                    if (el.parentNode) el.parentNode.removeChild(el);
+                                });
+                            };
+                            var origRemove = Element.prototype.remove;
+                            Element.prototype.remove = function() {
+                                if (this.classList && this.classList.contains('card-loading-overlay')) {
+                                    if (window.__cardSpinnerLocked) {
+                                        return;
+                                    }
+                                }
+                                return origRemove.apply(this, arguments);
+                            };
+                            document.addEventListener('click', function(e) {
+                                var card = e.target.closest('.series-card, .movie-card, .content-row .card, .row-cards > div');
+                                if (card) {
+                                    window.__cardSpinnerLocked = true;
+                                    setTimeout(function() { window.__cardSpinnerLocked = false; }, 45000);
+                                }
+                            }, true);
+                        })();
+                        """.trimIndent(),
+                        null
+                    )
                 }
             }
 
@@ -239,9 +277,14 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    /** Pause WebView timers + rendering when app goes to background */
+    /** Do NOT pause WebView timers in onPause because PlayerActivity is translucent and runs on top */
     override fun onPause() {
         super.onPause()
+    }
+
+    /** Only pause WebView timers + rendering when activity is fully stopped (backgrounded) */
+    override fun onStop() {
+        super.onStop()
         webView.onPause()
         webView.pauseTimers()
     }

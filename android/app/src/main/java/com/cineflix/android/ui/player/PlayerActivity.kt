@@ -427,14 +427,20 @@ class PlayerActivity : AppCompatActivity() {
         mediaPlayer?.setEventListener { event ->
             when (event.type) {
                 MediaPlayer.Event.Buffering -> {
-                    if (event.buffering < 100f) {
-                        loadingSpinner.visibility = View.VISIBLE
+                    if (vlcVideoLayout.visibility == View.VISIBLE) {
+                        if (event.buffering < 100f) {
+                            loadingSpinner.visibility = View.VISIBLE
+                        } else {
+                            loadingSpinner.visibility = View.GONE
+                        }
                     } else {
                         loadingSpinner.visibility = View.GONE
                     }
                 }
                 MediaPlayer.Event.Playing -> {
                     loadingSpinner.visibility = View.GONE
+                    vlcVideoLayout.visibility = View.VISIBLE
+                    findViewById<View>(R.id.player_root)?.setBackgroundColor(android.graphics.Color.BLACK)
                     btnPlayPause.setImageResource(android.R.drawable.ic_media_pause)
                     scheduleHideControls()
                 }
