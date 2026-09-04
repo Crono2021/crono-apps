@@ -113,6 +113,7 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_INTRO_START_MS       = "intro_start_ms"
         const val EXTRA_INTRO_END_MS         = "intro_end_ms"
         const val EXTRA_INTRODB_CREDITS_MS   = "introdb_credits_ms"
+        const val EXTRA_PROGRESS             = "progress"
 
         private const val TAG = "PlayerActivity"
     }
@@ -170,6 +171,7 @@ class PlayerActivity : AppCompatActivity() {
         val contentId  = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
         val season     = intent.getStringExtra(EXTRA_SEASON) ?: ""
         val episode    = intent.getStringExtra(EXTRA_EPISODE) ?: ""
+        val jsProgress = intent.getStringExtra(EXTRA_PROGRESS)
         
         val engine   = TelegramEngine.getInstance(this)
 
@@ -391,9 +393,21 @@ class PlayerActivity : AppCompatActivity() {
         val mode = if (forceSoftware) DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER 
                    else DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
 
+        val customMediaCodecSelector = androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+            val decoders = androidx.media3.exoplayer.mediacodec.MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+            if (mimeType.equals(androidx.media3.common.MimeTypes.VIDEO_H265, ignoreCase = true)) {
+                decoders.sortedBy { decoder ->
+                    if (decoder.name.contains("exynos", ignoreCase = true)) 1 else 0
+                }
+            } else {
+                decoders
+            }
+        }
+
         val renderersFactory = DefaultRenderersFactory(this)
             .setExtensionRendererMode(mode)
             .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(customMediaCodecSelector)
 
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
