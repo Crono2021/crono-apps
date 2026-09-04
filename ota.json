@@ -3,7 +3,7 @@
   "versionName": "1.4.3",
   "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/cineflix-android/cineflix.apk",
   "sha256": "aa61da1ce347183f54714ee8959726412c6301df5d7db9d27adc8a8d52731aff",
-  "changelog": "• Corrección del spinner de carga en el catálogo\n• Corrección del carrusel 'Seguir viendo'\n• Desplazamiento táctil más fluido en móviles",
+  "changelog": "• Añadido soporte para archivos de 4GB+\n• Añadida función \"Seguir viendo\"",
   "mandatory": false,
   "minVersionCode": 1
 }
