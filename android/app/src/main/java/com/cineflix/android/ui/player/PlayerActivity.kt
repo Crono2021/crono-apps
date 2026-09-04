@@ -64,7 +64,7 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var btnForward: ImageButton
     private lateinit var btnResize: ImageButton
     private lateinit var btnTracks: ImageButton
-    private lateinit var layoutLoading: View
+    private lateinit var loadingSpinner: ProgressBar
     private lateinit var castContainer: FrameLayout
     private lateinit var layoutNextEpisode: LinearLayout
     private lateinit var tvNextEpisodeCountdown: TextView
@@ -306,7 +306,7 @@ class PlayerActivity : AppCompatActivity() {
         btnForward = findViewById(R.id.btn_forward)
         btnResize = findViewById(R.id.btn_resize)
         btnTracks = findViewById(R.id.btn_tracks)
-        layoutLoading = findViewById(R.id.layout_loading)
+        loadingSpinner = findViewById(R.id.loading_spinner)
         castContainer = findViewById(R.id.cast_button_container)
         layoutNextEpisode = findViewById(R.id.layout_next_episode)
         tvNextEpisodeCountdown = findViewById(R.id.tv_next_episode_countdown)
@@ -428,15 +428,13 @@ class PlayerActivity : AppCompatActivity() {
             when (event.type) {
                 MediaPlayer.Event.Buffering -> {
                     if (event.buffering < 100f) {
-                        layoutLoading.visibility = View.VISIBLE
+                        loadingSpinner.visibility = View.VISIBLE
+                    } else {
+                        loadingSpinner.visibility = View.GONE
                     }
-                    // CRITICAL: NEVER hide layoutLoading on buffering >= 100f!
-                    // LibVLC reports 100% almost immediately while demuxer/decoder
-                    // is still probing container metadata and seeking to the start.
-                    // The spinner MUST stay visible until Playing or TimeChanged renders frames!
                 }
                 MediaPlayer.Event.Playing -> {
-                    layoutLoading.visibility = View.GONE
+                    loadingSpinner.visibility = View.GONE
                     btnPlayPause.setImageResource(android.R.drawable.ic_media_pause)
                     scheduleHideControls()
                 }
@@ -450,14 +448,14 @@ class PlayerActivity : AppCompatActivity() {
                     triggerNextEpisode()
                 }
                 MediaPlayer.Event.EncounteredError -> {
-                    layoutLoading.visibility = View.GONE
+                    loadingSpinner.visibility = View.GONE
                     Log.e(TAG, "LibVLC EncounteredError during playback")
                     Toast.makeText(this@PlayerActivity, "Error en reproducción LibVLC", Toast.LENGTH_SHORT).show()
                     finish()
                 }
                 MediaPlayer.Event.TimeChanged -> {
-                    if (layoutLoading.visibility == View.VISIBLE && event.timeChanged > 300) {
-                        layoutLoading.visibility = View.GONE
+                    if (loadingSpinner.visibility == View.VISIBLE && event.timeChanged > 300) {
+                        loadingSpinner.visibility = View.GONE
                     }
                     updateProgress(event.timeChanged)
                 }
@@ -473,7 +471,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun playUrl(url: String, resumeSeconds: Long = 0L) {
-        layoutLoading.visibility = View.VISIBLE
+        loadingSpinner.visibility = View.GONE
         
         val vlc = libVLC ?: return
         val mp = mediaPlayer ?: return

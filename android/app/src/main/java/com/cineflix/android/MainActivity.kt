@@ -138,35 +138,6 @@ class MainActivity : ComponentActivity() {
                         null
                     )
 
-                    val loaderScript = """
-                        (function() {
-                            if (!document.getElementById('native-player-loader')) {
-                                var d = document.createElement('div');
-                                d.id = 'native-player-loader';
-                                d.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,10,12,0.85);backdrop-filter:blur(8px);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:999999;';
-                                d.innerHTML = '<div style="width:56px;height:56px;border:4px solid rgba(168,85,247,0.25);border-top-color:#a855f7;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 20px;"></div><h2 id="native-loader-title" style="margin:0;font-size:1.4rem;font-weight:600;color:#ffffff;text-align:center;padding:0 24px;max-width:85%;">Iniciando reproducción...</h2><p id="native-loader-subtitle" style="color:#94a3b8;margin-top:8px;font-size:0.95rem;text-align:center;">Conectando con Telegram...</p>';
-                                document.body.appendChild(d);
-                            }
-                            window._showNativePlayerLoader = function(title, subtitle) {
-                                var l = document.getElementById('native-player-loader');
-                                if (l) {
-                                    var t = document.getElementById('native-loader-title');
-                                    var s = document.getElementById('native-loader-subtitle');
-                                    if (t && title) t.textContent = title;
-                                    if (s && subtitle) s.textContent = subtitle;
-                                    l.style.display = 'flex';
-                                }
-                            };
-                            window._hideNativePlayerLoader = function() {
-                                var l = document.getElementById('native-player-loader');
-                                if (l) l.style.display = 'none';
-                            };
-                            window.addEventListener('focus', function() { if (window._hideNativePlayerLoader) window._hideNativePlayerLoader(); });
-                            document.addEventListener('visibilitychange', function() { if (!document.hidden && window._hideNativePlayerLoader) window._hideNativePlayerLoader(); });
-                        })();
-                    """.trimIndent()
-                    view.evaluateJavascript(loaderScript, null)
-
                     android.util.Log.d("CineflixMain", "Injected OTA vars and JS fixes, TV=$tvFlag, Amazon=$isAmazon")
                 }
             }
@@ -280,6 +251,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         webView.resumeTimers()
         webView.onResume()
+        webView.evaluateJavascript("if (typeof window._clearCardLoadingOverlays === 'function') window._clearCardLoadingOverlays();", null)
         
         pendingNextEpisodeArgs?.let { args ->
             val contentId = args.first
