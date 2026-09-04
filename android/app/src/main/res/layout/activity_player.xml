@@ -291,13 +291,37 @@
             android:text="Siguiente Episodio" />
     </LinearLayout>
 
-    <!-- Loading spinner -->
-    <ProgressBar
-        android:id="@+id/loading_spinner"
-        android:layout_width="64dp"
-        android:layout_height="64dp"
+    <!-- Loading container (Spinner + feedback) -->
+    <LinearLayout
+        android:id="@+id/layout_loading"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:indeterminateTint="#7c3aed"
-        android:visibility="visible" />
+        android:gravity="center"
+        android:orientation="vertical"
+        android:elevation="30dp"
+        android:translationZ="30dp"
+        android:visibility="visible">
+
+        <ProgressBar
+            android:id="@+id/loading_spinner"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:indeterminateTint="#a855f7" />
+
+        <TextView
+            android:id="@+id/tv_loading_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:shadowColor="#000000"
+            android:shadowDx="1"
+            android:shadowDy="1"
+            android:shadowRadius="6"
+            android:text="Iniciando reproducción..." />
+    </LinearLayout>
 
 </FrameLayout>

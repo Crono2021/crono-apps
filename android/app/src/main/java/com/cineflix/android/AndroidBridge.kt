@@ -402,6 +402,14 @@ class AndroidBridge(
         fileId: String? = null, fileSize: String? = null, multipartJson: String? = null,
         progress: String? = null
     ) {
+        // Show loading spinner immediately on the ficha in the WebView
+        val safeTitle = title.replace("'", "\\'").replace("\"", "\\\"").replace("\n", " ")
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                webView.evaluateJavascript("window._showNativePlayerLoader && window._showNativePlayerLoader('$safeTitle');", null)
+            } catch (_: Exception) {}
+        }
+
         val intent = Intent(context, PlayerActivity::class.java).apply {
             putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
             putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
