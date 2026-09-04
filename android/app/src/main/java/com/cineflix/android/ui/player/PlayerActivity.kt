@@ -222,28 +222,18 @@ class PlayerActivity : AppCompatActivity() {
         val port = proxy.listeningPort
         Log.i(TAG, "▶ StreamProxyServer started on port $port for LibVLC (fileSize=$effectiveFileSize)")
 
-        // 4. Register download with TDLib
-        scope.launch {
-            try {
-                if (!multipartParts.isNullOrEmpty()) {
-                    for (part in multipartParts!!) {
-                        launch {
-                            engine.startDownloadReturnPath(part.fileId, priority = 32)
-                        }
-                    }
-                    engine.hintDownloadOffset(multipartParts!![0].fileId, 0L, 20L * 1024L * 1024L)
-                } else {
-                    engine.startDownloadReturnPath(fileId, priority = 32)
-                    engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "TDLib registration error: ${e.message}", e)
-            }
+        // 4. Determine file extension so LibVLC prioritizes demuxer immediately
+        val ext = if (mimeType.contains("matroska", ignoreCase = true) || mimeType.contains("mkv", ignoreCase = true)) {
+            ".mkv"
+        } else if (mimeType.contains("mp4", ignoreCase = true)) {
+            ".mp4"
+        } else {
+            ".mkv"
         }
 
-        val localStreamUrl = "http://127.0.0.1:$port/stream"
+        val localStreamUrl = "http://127.0.0.1:$port/stream$ext"
         val wifiIp = getWifiIpAddress()
-        castStreamUrl = if (wifiIp != null) "http://$wifiIp:$port/stream" else null
+        castStreamUrl = if (wifiIp != null) "http://$wifiIp:$port/stream$ext" else null
 
         setupCastButton()
 
@@ -266,14 +256,22 @@ class PlayerActivity : AppCompatActivity() {
         season: String,
         episode: String
     ) {
-        val p = jsProgress?.toFloatOrNull()?.toInt() ?: 0
-        if (p > 5) {
-            playUrl(streamUrl, resumeSeconds = p.toLong())
-            Toast.makeText(this@PlayerActivity, "Reanudado en ${p/60}m", Toast.LENGTH_SHORT).show()
+        if (jsProgress != null) {
+            // JavaScript provided progress (either 0 or resume timestamp) - trust it immediately!
+            val p = jsProgress.toFloatOrNull()?.toInt() ?: 0
+            if (p > 5) {
+                playUrl(streamUrl, resumeSeconds = p.toLong())
+                Toast.makeText(this@PlayerActivity, "Reanudado en ${p/60}m", Toast.LENGTH_SHORT).show()
+            } else {
+                playUrl(streamUrl)
+            }
         } else if (phone.isNotEmpty() && contentId.isNotEmpty()) {
+            // Fallback: fast fetch with 1s timeout to avoid delaying playback start
             scope.launch {
                 try {
-                    val savedProgress = fetchSavedProgress(phone, contentId, season, episode)
+                    val savedProgress = kotlinx.coroutines.withTimeoutOrNull(1000L) {
+                        fetchSavedProgress(phone, contentId, season, episode)
+                    } ?: 0
                     withContext(Dispatchers.Main) {
                         if (savedProgress > 5) {
                             playUrl(streamUrl, resumeSeconds = savedProgress.toLong())
@@ -404,16 +402,22 @@ class PlayerActivity : AppCompatActivity() {
             // Hardware decoding: try MediaCodec first; if it exceeds chip capabilities (e.g. HEVC 10-bit),
             // LibVLC automatically and seamlessly falls back to FFmpeg software decoding (libhevc)!
             add("--avcodec-hw=any")
+            add("--codec=mediacodec_ndk,mediacodec_jni,all")
 
             // Network caching for local loopback proxy (127.0.0.1)
-            // 500ms allows instant start on TVs without delaying the first frame
-            add("--network-caching=500")
-            add("--file-caching=500")
-            add("--live-caching=500")
+            // 300ms provides ultra-fast startup while loopback latency is 0ms
+            add("--network-caching=300")
+            add("--file-caching=300")
+            add("--live-caching=300")
+            add("--clock-jitter=0")
 
-            // Performance optimizations for SW fallback
+            // Performance optimizations for TV multi-core CPUs
             add("--avcodec-skiploopfilter=1")
             add("--avcodec-fast")
+            add("--avcodec-threads=0")
+            add("--no-video-title-show")
+            add("--drop-late-frames")
+            add("--skip-frames")
         }
 
         libVLC = LibVLC(this, options)
@@ -471,7 +475,10 @@ class PlayerActivity : AppCompatActivity() {
         try {
             val media = Media(vlc, Uri.parse(url)).apply {
                 setHWDecoderEnabled(true, false)
-                addOption(":network-caching=500")
+                addOption(":network-caching=300")
+                addOption(":clock-jitter=0")
+                addOption(":no-video-title-show")
+                addOption(":http-reconnect=true")
                 if (resumeSeconds > 5) {
                     addOption(":start-time=$resumeSeconds")
                 }
@@ -909,6 +916,10 @@ class PlayerActivity : AppCompatActivity() {
 
     // --- Cast ---
     private fun setupCastButton() {
+        // Skip Cast SDK on Android TV / Leanback (the TV is already the display)
+        val isTv = packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+        if (isTv) return
+
         try {
             castContext = CastContext.getSharedInstance(this)
             sessionManager = castContext?.sessionManager

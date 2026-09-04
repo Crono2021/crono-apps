@@ -34,9 +34,10 @@ class StreamProxyServer(
     companion object {
         private const val TAG = "StreamProxy"
 
-        // 128 KB for small metadata/index probes; 2 MB for smooth sequential streaming
+        // 128 KB for small metadata/index probes; 512 KB for fast initial frame; 2 MB for continuous streaming
         private const val PROBE_CHUNK_SIZE = 128L * 1024L        // 128 KB (TDLib block unit)
-        private const val STREAM_CHUNK_SIZE = 2L * 1024L * 1024L  // 2 MB (fast startup + low memory)
+        private const val FIRST_CHUNK_SIZE = 512L * 1024L        // 512 KB (instant first video frame: 4 blocks)
+        private const val STREAM_CHUNK_SIZE = 2L * 1024L * 1024L  // 2 MB (smooth buffering)
         
         // Wipe stale TDLib cache files every 250MB to keep TV storage under control.
         // IMPORTANT: We must NEVER call cancelAndDeleteVideo() during playback â€”
@@ -87,6 +88,11 @@ class StreamProxyServer(
             return fileSize
         }
         resolvedFileSize?.let { return it }
+
+        if (fileSize > 0L) {
+            resolvedFileSize = fileSize
+            return fileSize
+        }
 
         val deadline = System.currentTimeMillis() + 10_000L
         while (System.currentTimeMillis() < deadline) {
@@ -216,10 +222,13 @@ class StreamProxyServer(
 
             val requestRemaining = endPosition - currentPosition
             // Determine optimal chunk size:
-            // - If LibVLC is probing metadata / cues / index (small request <= 512KB), fetch only what is needed!
-            //   This avoids downloading 4MB just to read 28 bytes, which on TV WiFi takes 3-4s per probe!
-            val desiredChunk = if (requestRemaining <= 512L * 1024L) {
+            // - If LibVLC is probing container header at offset 0 (EBML / moov < 256KB) or small metadata/cues probe: fetch 128KB!
+            // - If this is the initial video frame (prefetchBuffer == null): fetch 512KB for instant startup!
+            // - For continuous streaming: fetch 2MB chunks with background prefetching.
+            val desiredChunk = if (requestRemaining <= 512L * 1024L || (localOffset < 256L * 1024L && prefetchBuffer == null)) {
                 PROBE_CHUNK_SIZE
+            } else if (prefetchBuffer == null) {
+                FIRST_CHUNK_SIZE
             } else {
                 STREAM_CHUNK_SIZE
             }
@@ -228,17 +237,15 @@ class StreamProxyServer(
             val blocks = ((neededBytes + ALIGNMENT - 1) / ALIGNMENT)
             val fetchSize = minOf(blocks * ALIGNMENT, maxFromPart)
 
-            engine.hintDownloadOffset(partId, alignedOffset, fetchSize)
+            // Trigger proactive background prefetch for the NEXT chunk immediately!
+            val nextOffset = alignedOffset + fetchSize
+            if (desiredChunk >= FIRST_CHUNK_SIZE && nextOffset < partSize) {
+                engine.hintDownloadOffset(partId, nextOffset, STREAM_CHUNK_SIZE)
+            }
 
             // 1. Check if TDLib already has this chunk in memory/cache
             val fastChunk = engine.readFilePartSync(partId, alignedOffset, fetchSize)
             if (fastChunk != null && fastChunk.size > offsetInsideBlock) {
-                if (desiredChunk == STREAM_CHUNK_SIZE) {
-                    val nextOffset = alignedOffset + fetchSize
-                    if (nextOffset < partSize) {
-                        engine.hintDownloadOffset(partId, nextOffset, STREAM_CHUNK_SIZE)
-                    }
-                }
                 return deliverFromChunk(fastChunk, offsetInsideBlock, b, off, len)
             }
 
@@ -255,12 +262,6 @@ class StreamProxyServer(
             }
 
             if (chunk != null && chunk.size > offsetInsideBlock) {
-                if (desiredChunk == STREAM_CHUNK_SIZE) {
-                    val nextOffset = alignedOffset + fetchSize
-                    if (nextOffset < partSize) {
-                        engine.hintDownloadOffset(partId, nextOffset, STREAM_CHUNK_SIZE)
-                    }
-                }
                 return deliverFromChunk(chunk, offsetInsideBlock, b, off, len)
             }
 
