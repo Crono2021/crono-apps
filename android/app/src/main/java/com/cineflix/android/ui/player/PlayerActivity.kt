@@ -137,6 +137,7 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
         hideSystemUI()
 
         setContentView(R.layout.activity_player)
@@ -295,6 +296,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun bindViews() {
         vlcVideoLayout = findViewById(R.id.video_surface)
+        vlcVideoLayout.setBackgroundColor(android.graphics.Color.BLACK)
         tvVideoTitle = findViewById(R.id.tv_video_title)
         tvTimeCurrent = findViewById(R.id.tv_time_current)
         tvTimeDuration = findViewById(R.id.tv_time_duration)
@@ -402,7 +404,6 @@ class PlayerActivity : AppCompatActivity() {
             // Hardware decoding: try MediaCodec first; if it exceeds chip capabilities (e.g. HEVC 10-bit),
             // LibVLC automatically and seamlessly falls back to FFmpeg software decoding (libhevc)!
             add("--avcodec-hw=any")
-            add("--codec=mediacodec_ndk,mediacodec_jni,all")
 
             // Network caching for local loopback proxy (127.0.0.1)
             // 300ms provides ultra-fast startup while loopback latency is 0ms
@@ -423,6 +424,12 @@ class PlayerActivity : AppCompatActivity() {
         libVLC = LibVLC(this, options)
         mediaPlayer = MediaPlayer(libVLC)
         mediaPlayer?.attachViews(vlcVideoLayout, null, true, false)
+
+        // Configuración de audio passthrough (5.1 surround por defecto; estéreo si el usuario activó compatibilidad)
+        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+        val forceStereo = prefs.getBoolean("force_software_audio", false)
+        mediaPlayer?.setAudioDigitalOutputEnabled(!forceStereo)
+        Log.i(TAG, "LibVLC digital audio passthrough (5.1): ${!forceStereo}")
 
         mediaPlayer?.setEventListener { event ->
             when (event.type) {
@@ -537,9 +544,46 @@ class PlayerActivity : AppCompatActivity() {
             textSize = 14f
             setTypeface(null, android.graphics.Typeface.BOLD)
             gravity = android.view.Gravity.CENTER
-            setPadding(0, 0, 0, dpToPx(16))
+            setPadding(0, 0, 0, dpToPx(8))
         }
         audioColumn.addView(audioTitle)
+
+        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+        val isStereoCompat = prefs.getBoolean("force_software_audio", false)
+
+        val cbForceStereo = android.widget.CheckBox(this).apply {
+            text = "Compatibilidad Estéreo"
+            setTextColor(android.graphics.Color.LTGRAY)
+            textSize = 12f
+            buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
+            isChecked = isStereoCompat
+            isFocusable = true
+            setPadding(0, 0, 0, dpToPx(8))
+            setOnCheckedChangeListener { _, isChecked ->
+                prefs.edit().putBoolean("force_software_audio", isChecked).apply()
+                mp.setAudioDigitalOutputEnabled(!isChecked)
+                val currentTrack = mp.audioTrack
+                if (currentTrack != -1) {
+                    mp.audioTrack = -1
+                    mp.audioTrack = currentTrack
+                }
+                Toast.makeText(
+                    this@PlayerActivity,
+                    if (isChecked) "Modo estéreo compatible activado" else "Sonido 5.1 directo activado",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            setOnFocusChangeListener { v, hasFocus ->
+                if (hasFocus) {
+                    v.animate().scaleX(1.05f).scaleY(1.05f).setDuration(150).start()
+                    (v as? android.widget.CheckBox)?.setTextColor(android.graphics.Color.WHITE)
+                } else {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(150).start()
+                    (v as? android.widget.CheckBox)?.setTextColor(android.graphics.Color.LTGRAY)
+                }
+            }
+        }
+        audioColumn.addView(cbForceStereo)
 
         val audioGroup = android.widget.RadioGroup(this)
         val audioTracks = mp.audioTracks
