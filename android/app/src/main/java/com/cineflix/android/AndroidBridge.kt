@@ -399,7 +399,8 @@ class AndroidBridge(
         chatId: String, msgId: String, mimeType: String, title: String,
         phone: String, contentId: String, season: String, episode: String,
         creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String,
-        fileId: String? = null, fileSize: String? = null, multipartJson: String? = null
+        fileId: String? = null, fileSize: String? = null, multipartJson: String? = null,
+        progress: String? = null
     ) {
         val intent = Intent(context, PlayerActivity::class.java).apply {
             putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
@@ -408,6 +409,9 @@ class AndroidBridge(
             
             if (multipartJson != null) {
                 putExtra(PlayerActivity.EXTRA_MULTIPART_JSON, multipartJson)
+                if (!fileSize.isNullOrEmpty()) {
+                    putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
+                }
             } else {
                 putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId?.toIntOrNull()    ?: 0)
                 putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize?.toLongOrNull() ?: 0L)
@@ -425,6 +429,10 @@ class AndroidBridge(
             putExtra(PlayerActivity.EXTRA_INTRO_START_MS, introStart)
             putExtra(PlayerActivity.EXTRA_INTRO_END_MS, introEnd)
             putExtra(PlayerActivity.EXTRA_INTRODB_CREDITS_MS, introDbCreditsMs)
+
+            if (!progress.isNullOrEmpty()) {
+                putExtra(PlayerActivity.EXTRA_PROGRESS, progress)
+            }
         }
         launcher?.invoke(intent) ?: context.startActivity(intent)
     }
@@ -443,6 +451,20 @@ class AndroidBridge(
     }
 
     @JavascriptInterface
+    fun playVideoWithIntroDBAndProgress(
+        chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String,
+        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String,
+        progress: String
+    ) {
+        playVideoInternal(
+            chatId, msgId, mimeType, title, phone, contentId, season, episode,
+            creditsStart, introStart, introEnd, introDbCreditsMs,
+            fileId = fileId, fileSize = fileSize, progress = progress
+        )
+    }
+
+    @JavascriptInterface
     fun playMultipartVideoWithIntroDB(
         chatId: String, msgId: String, multipartJson: String, mimeType: String, title: String,
         phone: String, contentId: String, season: String, episode: String,
@@ -452,6 +474,20 @@ class AndroidBridge(
             chatId, msgId, mimeType, title, phone, contentId, season, episode,
             creditsStart, introStart, introEnd, introDbCreditsMs,
             multipartJson = multipartJson
+        )
+    }
+
+    @JavascriptInterface
+    fun playMultipartVideoWithIntroDBAndProgress(
+        chatId: String, msgId: String, multipartJson: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String,
+        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String,
+        progress: String
+    ) {
+        playVideoInternal(
+            chatId, msgId, mimeType, title, phone, contentId, season, episode,
+            creditsStart, introStart, introEnd, introDbCreditsMs,
+            multipartJson = multipartJson, progress = progress
         )
     }
 

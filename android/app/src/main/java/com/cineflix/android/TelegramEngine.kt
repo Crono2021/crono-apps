@@ -647,6 +647,8 @@ class TelegramEngine(private val context: Context) {
                 if (result.data.isNotEmpty()) {
                     chunk = result.data
                 }
+            } else if (result is TdApi.Error) {
+                Log.w(TAG, "ReadFilePart error: ${result.code} ${result.message} fileId=$fileId offset=$offset count=$count")
             }
             latch.countDown()
         } ?: return null
@@ -665,6 +667,9 @@ class TelegramEngine(private val context: Context) {
         // Step 1: Tell TDLib to download this exact range. synchronous=true blocks until ready.
         val downloadLatch = java.util.concurrent.CountDownLatch(1)
         client?.send(TdApi.DownloadFile(fileId, 32, offset, count, true)) { result ->
+            if (result is TdApi.Error) {
+                Log.w(TAG, "DownloadFile(sync) error: ${result.code} ${result.message} fileId=$fileId offset=$offset count=$count")
+            }
             downloadLatch.countDown()
         } ?: return null
 

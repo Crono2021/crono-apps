@@ -67,14 +67,9 @@ class StreamProxyServer(
     }
 
     private fun checkRollingGc(bytesDelivered: Int, currentPartFileId: Int) {
-        bytesReadSinceLastWipe += bytesDelivered
-        if (bytesReadSinceLastWipe > ROLLING_GC_THRESHOLD) {
-            Log.i(TAG, "HARD GC: Cancelling TDLib download to force OS to release disk space")
-            try {
-                engine.cancelAndDeleteVideo(currentPartFileId)
-            } catch (e: Exception) { }
-            bytesReadSinceLastWipe = 0L
-        }
+        // No-op during playback: cancelling or deleting TDLib downloads during active
+        // streaming breaks LibVLC seeking and causes playback failure.
+        // Cleanup is safely done when the user exits the player in PlayerActivity.onDestroy().
     }
 
     @Volatile
@@ -84,10 +79,14 @@ class StreamProxyServer(
      * Resolve the true file size from TDLib (up to 10s).
      * TDLib knows the real size after the first DownloadFile call returns.
      * Falls back to the size passed via Intent if TDLib hasn't reported yet.
-     * Caches the result to prevent ExoPlayer from restarting playback due to size mismatch.
+     * Caches the result to prevent ExoPlayer/LibVLC from restarting playback due to size mismatch.
      */
     private fun resolveFileSize(): Long {
-        if (!multipartParts.isNullOrEmpty()) return fileSize
+        if (!multipartParts.isNullOrEmpty()) {
+            val total = multipartParts.sumOf { it.size }
+            if (total > 0L) return total
+            return fileSize
+        }
         resolvedFileSize?.let { return it }
 
         val deadline = System.currentTimeMillis() + 10_000L
@@ -196,53 +195,70 @@ class StreamProxyServer(
                 val toRead    = minOf(len, available)
                 System.arraycopy(pb, bufferIdx, b, off, toRead)
                 currentPosition += toRead
-                checkRollingGc(toRead, resolvePart(currentPosition - toRead).first)
                 return toRead
             }
 
-            // --- Slow path: fetch from TDLib with retries ---
-            val toFetch = minOf(
-                maxOf(len.toLong(), PREFETCH_SIZE),
-                endPosition - currentPosition
-            )
-
-            // ðŸš€ AGGRESSIVE MULTIPLEXING (NATIVE) ðŸš€
+            // --- Slow path: fetch from TDLib with 128KB (131072) alignment ---
             val (partId, localOffset) = resolvePart(currentPosition)
             val partSize = multipartParts?.find { it.fileId == partId }?.size ?: totalFileSize
-            val maxInPart = partSize - localOffset
-            val actualFetch = minOf(toFetch, maxInPart)
-            engine.hintDownloadOffset(partId, localOffset, actualFetch)
 
-            var retries = 0
-            while (retries < 150) { // Up to 15 seconds wait for the FIRST byte of this chunk
-                val fastChunk = engine.readFilePartSync(partId, localOffset, actualFetch)
-                if (fastChunk != null && fastChunk.isNotEmpty()) {
-                    return deliverFromChunk(fastChunk, b, off, len)
-                }
-
-                // EOF check: if we know the expected size and have reached it, it's EOF.
-                val state = engine.getFileStateFlow(partId).value
-                if (state != null && state.expectedSize > 0 && localOffset >= state.expectedSize) {
-                    Log.d(TAG, "EOF reached at position=$currentPosition")
-                    return -1
-                }
-
-                Thread.sleep(100)
-                retries++
+            if (localOffset >= partSize) {
+                Log.d(TAG, "EOF reached for partId=$partId at localOffset=$localOffset")
+                return -1
             }
 
-            // If we still fail after retries, we MUST throw an IOException. 
-            // Returning 0 when len > 0 causes NanoHTTPD to enter an infinite loop!
-            throw java.io.IOException("TDLib failed to fetch data at position=$currentPosition after 15s")
+            // TDLib requires offset to be an exact multiple of 131072 (128 KB)
+            val ALIGNMENT = 131072L
+            val alignedOffset = localOffset - (localOffset % ALIGNMENT)
+            val offsetInsideBlock = (localOffset - alignedOffset).toInt()
+
+            val maxFromPart = maxOf(0L, partSize - alignedOffset)
+            if (maxFromPart <= 0L) return -1
+
+            val neededBytes = offsetInsideBlock.toLong() + len.toLong()
+            val fetchSize = minOf(maxOf(PREFETCH_SIZE, neededBytes), maxFromPart)
+
+            engine.hintDownloadOffset(partId, alignedOffset, fetchSize)
+
+            // 1. Check if TDLib already has this chunk in memory/cache
+            val fastChunk = engine.readFilePartSync(partId, alignedOffset, fetchSize)
+            if (fastChunk != null && fastChunk.size > offsetInsideBlock) {
+                return deliverFromChunk(fastChunk, offsetInsideBlock, b, off, len)
+            }
+
+            // 2. Download synchronously from Telegram CDN
+            var chunk: ByteArray? = null
+            var retries = 0
+            while (retries < 5) {
+                chunk = engine.downloadRangeAndRead(partId, alignedOffset, fetchSize)
+                if (chunk != null && chunk.size > offsetInsideBlock) {
+                    break
+                }
+                retries++
+                Thread.sleep(150)
+            }
+
+            if (chunk != null && chunk.size > offsetInsideBlock) {
+                return deliverFromChunk(chunk, offsetInsideBlock, b, off, len)
+            }
+
+            // EOF check: check TDLib's reported file size
+            val state = engine.getFileStateFlow(partId).value
+            if (state != null && state.expectedSize > 0 && localOffset >= state.expectedSize) {
+                Log.d(TAG, "EOF confirmed from state at position=$currentPosition")
+                return -1
+            }
+
+            throw java.io.IOException("TDLib failed to fetch data at position=$currentPosition (partId=$partId, localOffset=$localOffset) after retries")
         }
 
-        private fun deliverFromChunk(chunk: ByteArray, b: ByteArray, off: Int, len: Int): Int {
+        private fun deliverFromChunk(chunk: ByteArray, offsetInsideBlock: Int, b: ByteArray, off: Int, len: Int): Int {
             prefetchBuffer = chunk
-            prefetchOffset = currentPosition
-            val toRead = minOf(len, chunk.size)
-            System.arraycopy(chunk, 0, b, off, toRead)
+            prefetchOffset = currentPosition - offsetInsideBlock
+            val available = chunk.size - offsetInsideBlock
+            val toRead = minOf(len, available)
+            System.arraycopy(chunk, offsetInsideBlock, b, off, toRead)
             currentPosition += toRead
-            checkRollingGc(toRead, resolvePart(currentPosition - toRead).first)
             return toRead
         }
     }

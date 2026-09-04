@@ -201,7 +201,8 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         val fileSize = intent.getLongExtra(EXTRA_FILE_SIZE, 0L)
-        var effectiveFileSize = fileSize
+        val multipartTotalSize = multipartParts?.sumOf { it.size } ?: 0L
+        var effectiveFileSize = if (multipartTotalSize > 0L) multipartTotalSize else fileSize
         if (effectiveFileSize <= 0) {
             effectiveFileSize = 2_000_000_000L
         }
@@ -219,15 +220,18 @@ class PlayerActivity : AppCompatActivity() {
         proxy.start()
         proxyServer = proxy
         val port = proxy.listeningPort
-        Log.i(TAG, "▶ StreamProxyServer started on port $port for LibVLC")
+        Log.i(TAG, "▶ StreamProxyServer started on port $port for LibVLC (fileSize=$effectiveFileSize)")
 
         // 4. Register download with TDLib
         scope.launch {
             try {
-                if (multipartParts != null && multipartParts!!.isNotEmpty()) {
-                    val firstPart = multipartParts!![0]
-                    engine.startDownloadReturnPath(firstPart.fileId, priority = 32)
-                    engine.hintDownloadOffset(firstPart.fileId, 0L, 20L * 1024L * 1024L)
+                if (!multipartParts.isNullOrEmpty()) {
+                    for (part in multipartParts!!) {
+                        launch {
+                            engine.startDownloadReturnPath(part.fileId, priority = 32)
+                        }
+                    }
+                    engine.hintDownloadOffset(multipartParts!![0].fileId, 0L, 20L * 1024L * 1024L)
                 } else {
                     engine.startDownloadReturnPath(fileId, priority = 32)
                     engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
@@ -394,8 +398,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun initLibVlc() {
         val options = ArrayList<String>().apply {
-            // Audio output using OpenSL ES
-            add("--aout=opensles")
+            // Audio output: use default Android AudioTrack sink (avoids OpenSL ES sample rate issues on Android 14/Samsung)
             add("--audio-time-stretch")
 
             // Hardware decoding: try MediaCodec first; if it exceeds chip capabilities (e.g. HEVC 10-bit),
@@ -1067,7 +1070,11 @@ class PlayerActivity : AppCompatActivity() {
         scope.cancel()
 
         val fileId = intent.getIntExtra(EXTRA_FILE_ID, -1)
-        if (fileId > 0) {
+        if (!multipartParts.isNullOrEmpty()) {
+            for (part in multipartParts!!) {
+                TelegramEngine.getInstance(this).cancelAndDeleteVideo(part.fileId)
+            }
+        } else if (fileId > 0) {
             TelegramEngine.getInstance(this).cancelAndDeleteVideo(fileId)
         }
 
