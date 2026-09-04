@@ -104,6 +104,9 @@ class TelegramEngine(private val context: Context) {
 
     private fun initClient() {
         Log.i(TAG, "Initializing TDLib client...")
+        try {
+            Client.execute(TdApi.SetLogVerbosityLevel(1))
+        } catch (_: Exception) {}
         client = Client.create(
             { result -> handleResult(result) },
             { error -> Log.e(TAG, "TDLib Error: ${error.message}", error) },
@@ -673,8 +676,8 @@ class TelegramEngine(private val context: Context) {
             downloadLatch.countDown()
         } ?: return null
 
-        // Wait up to 30s for TDLib to fetch from Telegram CDN (large file seek can be slow)
-        if (!downloadLatch.await(30_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+        // Wait up to 10s for TDLib to fetch from Telegram CDN (faster fallback/retry)
+        if (!downloadLatch.await(10_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
             Log.w(TAG, "downloadRangeAndRead TIMEOUT offset=$offset count=$count")
             return null
         }

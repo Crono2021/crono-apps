@@ -34,10 +34,9 @@ class StreamProxyServer(
     companion object {
         private const val TAG = "StreamProxy"
 
-        // Each NanoHTTPD request gets this chunk size delivered to ExoPlayer.
-        // 4MB reduces the frequency of TDLib round-trips, preventing micro-freezes
-        // on slower devices like Fire Stick where WiFi throughput is limited.
-        private const val PREFETCH_SIZE = 4L * 1024L * 1024L
+        // 128 KB for small metadata/index probes; 2 MB for smooth sequential streaming
+        private const val PROBE_CHUNK_SIZE = 128L * 1024L        // 128 KB (TDLib block unit)
+        private const val STREAM_CHUNK_SIZE = 2L * 1024L * 1024L  // 2 MB (fast startup + low memory)
         
         // Wipe stale TDLib cache files every 250MB to keep TV storage under control.
         // IMPORTANT: We must NEVER call cancelAndDeleteVideo() during playback â€”
@@ -215,14 +214,31 @@ class StreamProxyServer(
             val maxFromPart = maxOf(0L, partSize - alignedOffset)
             if (maxFromPart <= 0L) return -1
 
-            val neededBytes = offsetInsideBlock.toLong() + len.toLong()
-            val fetchSize = minOf(maxOf(PREFETCH_SIZE, neededBytes), maxFromPart)
+            val requestRemaining = endPosition - currentPosition
+            // Determine optimal chunk size:
+            // - If LibVLC is probing metadata / cues / index (small request <= 512KB), fetch only what is needed!
+            //   This avoids downloading 4MB just to read 28 bytes, which on TV WiFi takes 3-4s per probe!
+            val desiredChunk = if (requestRemaining <= 512L * 1024L) {
+                PROBE_CHUNK_SIZE
+            } else {
+                STREAM_CHUNK_SIZE
+            }
+
+            val neededBytes = offsetInsideBlock.toLong() + minOf(requestRemaining, desiredChunk)
+            val blocks = ((neededBytes + ALIGNMENT - 1) / ALIGNMENT)
+            val fetchSize = minOf(blocks * ALIGNMENT, maxFromPart)
 
             engine.hintDownloadOffset(partId, alignedOffset, fetchSize)
 
             // 1. Check if TDLib already has this chunk in memory/cache
             val fastChunk = engine.readFilePartSync(partId, alignedOffset, fetchSize)
             if (fastChunk != null && fastChunk.size > offsetInsideBlock) {
+                if (desiredChunk == STREAM_CHUNK_SIZE) {
+                    val nextOffset = alignedOffset + fetchSize
+                    if (nextOffset < partSize) {
+                        engine.hintDownloadOffset(partId, nextOffset, STREAM_CHUNK_SIZE)
+                    }
+                }
                 return deliverFromChunk(fastChunk, offsetInsideBlock, b, off, len)
             }
 
@@ -235,10 +251,16 @@ class StreamProxyServer(
                     break
                 }
                 retries++
-                Thread.sleep(150)
+                Thread.sleep(100)
             }
 
             if (chunk != null && chunk.size > offsetInsideBlock) {
+                if (desiredChunk == STREAM_CHUNK_SIZE) {
+                    val nextOffset = alignedOffset + fetchSize
+                    if (nextOffset < partSize) {
+                        engine.hintDownloadOffset(partId, nextOffset, STREAM_CHUNK_SIZE)
+                    }
+                }
                 return deliverFromChunk(chunk, offsetInsideBlock, b, off, len)
             }
 

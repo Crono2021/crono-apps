@@ -405,10 +405,11 @@ class PlayerActivity : AppCompatActivity() {
             // LibVLC automatically and seamlessly falls back to FFmpeg software decoding (libhevc)!
             add("--avcodec-hw=any")
 
-            // Network caching for local HTTP proxy
-            add("--network-caching=2000")
-            add("--file-caching=2000")
-            add("--live-caching=2000")
+            // Network caching for local loopback proxy (127.0.0.1)
+            // 500ms allows instant start on TVs without delaying the first frame
+            add("--network-caching=500")
+            add("--file-caching=500")
+            add("--live-caching=500")
 
             // Performance optimizations for SW fallback
             add("--avcodec-skiploopfilter=1")
@@ -470,7 +471,7 @@ class PlayerActivity : AppCompatActivity() {
         try {
             val media = Media(vlc, Uri.parse(url)).apply {
                 setHWDecoderEnabled(true, false)
-                addOption(":network-caching=2000")
+                addOption(":network-caching=500")
                 if (resumeSeconds > 5) {
                     addOption(":start-time=$resumeSeconds")
                 }
