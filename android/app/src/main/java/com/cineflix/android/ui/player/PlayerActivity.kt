@@ -1121,6 +1121,11 @@ class PlayerActivity : AppCompatActivity() {
         val progressSeconds = (currentPosition / 1000).toInt()
         val isFinished = durationMs > 0 && currentPosition >= (durationMs - 5000)
 
+        val fileTitle = intent.getStringExtra(EXTRA_TITLE) ?: ""
+        val fileChatId = intent.getStringExtra(EXTRA_CHAT_ID) ?: ""
+        val fileMsgId = intent.getStringExtra(EXTRA_MSG_ID) ?: ""
+        val fileId = intent.getIntExtra(EXTRA_FILE_ID, -1)
+
         withContext(Dispatchers.IO) {
             try {
                 // Bypass SSL for older Android TV boxes with expired Let's Encrypt roots
@@ -1150,6 +1155,10 @@ class PlayerActivity : AppCompatActivity() {
                     put("episode", episodeVal)
                     put("progress_seconds", progressSeconds)
                     put("is_finished", isFinished)
+                    if (fileTitle.isNotEmpty()) put("file_title", fileTitle)
+                    if (fileChatId.isNotEmpty()) put("file_chat_id", fileChatId)
+                    if (fileMsgId.isNotEmpty()) put("file_msg_id", fileMsgId)
+                    if (fileId > 0) put("file_id", fileId)
                 }
 
                 conn.outputStream.use { os ->

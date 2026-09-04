@@ -376,7 +376,7 @@ class MainActivity : ComponentActivity() {
      * of D-pad navigation.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (isAndroidTV && event.action == KeyEvent.ACTION_DOWN) {
+        if (isAndroidTV && (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)) {
             val jsKeyCode = when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_UP -> 38
                 KeyEvent.KEYCODE_DPAD_DOWN -> 40
@@ -394,9 +394,11 @@ class MainActivity : ComponentActivity() {
                     13 -> "Enter"
                     else -> ""
                 }
+                val eventType = if (event.action == KeyEvent.ACTION_DOWN) "keydown" else "keyup"
+                val repeat = if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) "true" else "false"
                 webView.evaluateJavascript(
-                    "document.dispatchEvent(new KeyboardEvent('keydown', " +
-                    "{key:'$jsKey', keyCode:$jsKeyCode, code:'$jsKey', bubbles:true, cancelable:true}))",
+                    "document.dispatchEvent(new KeyboardEvent('$eventType', " +
+                    "{key:'$jsKey', keyCode:$jsKeyCode, code:'$jsKey', repeat:$repeat, bubbles:true, cancelable:true}))",
                     null
                 )
                 return true // Consume the event — WebView never sees it
@@ -423,6 +425,7 @@ class MainActivity : ComponentActivity() {
         webView.resumeTimers()
         webView.onResume()
         webView.evaluateJavascript("if (typeof window._clearCardLoadingOverlays === 'function') window._clearCardLoadingOverlays();", null)
+        webView.evaluateJavascript("if (typeof window.fetchWatchProgress === 'function') window.fetchWatchProgress();", null)
         
         pendingNextEpisodeArgs?.let { args ->
             val contentId = args.first
