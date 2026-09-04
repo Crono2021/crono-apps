@@ -1,4 +1,4 @@
-﻿package com.cineflix.android.ui.player
+package com.cineflix.android.ui.player
 
 import android.util.Log
 import com.cineflix.android.TelegramEngine
@@ -21,6 +21,8 @@ import java.io.InputStream
  *               â†’ HTTP 206 + bytes returned to ExoPlayer
  *               â†’ TDLib cache freed (no permanent file)
  */
+data class FilePart(val fileId: Int, val size: Long)
+
 class StreamProxyServer(
     private val engine: TelegramEngine,
     private val fileId: Int,
