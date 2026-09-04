@@ -140,39 +140,108 @@ class MainActivity : ComponentActivity() {
 
                     android.util.Log.d("CineflixMain", "Injected OTA vars and JS fixes, TV=$tvFlag, Amazon=$isAmazon")
 
-                    // Inyectar protección del spinner de carga en fichas para que no se cierre hasta que inicie el reproductor
+                    // Inyectar protección indestructible del spinner de carga en fichas
                     view.evaluateJavascript(
                         """
                         (function() {
                             if (!document.getElementById('card-spinner-injected-style')) {
                                 var s = document.createElement('style');
                                 s.id = 'card-spinner-injected-style';
-                                s.textContent = '.card-loading-overlay { position: absolute !important; inset: 0 !important; background: rgba(0,0,0,0.65) !important; display: flex !important; align-items: center !important; justify-content: center !important; z-index: 99 !important; border-radius: inherit !important; pointer-events: none !important; } .card-loading-overlay .spinner { width: 36px !important; height: 36px !important; border: 3px solid rgba(255, 255, 255, 0.25) !important; border-top-color: #8b5cf6 !important; border-radius: 50% !important; animation: cardSpinAnim 0.8s linear infinite !important; margin: 0 !important; } @keyframes cardSpinAnim { to { transform: rotate(360deg); } }';
+                                s.textContent = '.card-loading-overlay { position: absolute !important; inset: 0 !important; background: rgba(0,0,0,0.65) !important; display: flex !important; align-items: center !important; justify-content: center !important; z-index: 9999 !important; border-radius: inherit !important; pointer-events: none !important; opacity: 1 !important; visibility: visible !important; } .card-loading-overlay .spinner { width: 40px !important; height: 40px !important; border: 3.5px solid rgba(255, 255, 255, 0.25) !important; border-top-color: #ffffff !important; border-radius: 50% !important; animation: cardSpinAnim 0.8s linear infinite !important; margin: 0 !important; box-sizing: border-box !important; display: block !important; } @keyframes cardSpinAnim { to { transform: rotate(360deg); } }';
                                 document.head.appendChild(s);
                             }
-                            window.__cardSpinnerLocked = false;
+
+                            window.__forceClearCardOverlays = false;
+                            window.__activeLoadingPoster = null;
+                            window.__activeLoadingCardId = null;
+                            var safetyTimer = null;
+
                             window._clearCardLoadingOverlays = function() {
-                                window.__cardSpinnerLocked = false;
+                                window.__forceClearCardOverlays = true;
+                                window.__activeLoadingPoster = null;
+                                window.__activeLoadingCardId = null;
+                                if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
                                 document.querySelectorAll('.card-loading-overlay').forEach(function(el) {
                                     if (el.parentNode) el.parentNode.removeChild(el);
                                 });
+                                window.__forceClearCardOverlays = false;
                             };
+
                             var origRemove = Element.prototype.remove;
                             Element.prototype.remove = function() {
                                 if (this.classList && this.classList.contains('card-loading-overlay')) {
-                                    if (window.__cardSpinnerLocked) {
+                                    if (!window.__forceClearCardOverlays) {
                                         return;
                                     }
                                 }
                                 return origRemove.apply(this, arguments);
                             };
-                            document.addEventListener('click', function(e) {
-                                var card = e.target.closest('.series-card, .movie-card, .content-row .card, .row-cards > div');
-                                if (card) {
-                                    window.__cardSpinnerLocked = true;
-                                    setTimeout(function() { window.__cardSpinnerLocked = false; }, 45000);
+
+                            var origRemoveChild = Node.prototype.removeChild;
+                            Node.prototype.removeChild = function(child) {
+                                if (child && child.classList && child.classList.contains('card-loading-overlay')) {
+                                    if (!window.__forceClearCardOverlays) {
+                                        return child;
+                                    }
                                 }
-                            }, true);
+                                return origRemoveChild.apply(this, arguments);
+                            };
+
+                            function onOverlaySeen(overlay) {
+                                if (window.__forceClearCardOverlays) return;
+                                var poster = overlay.parentElement;
+                                if (!poster) return;
+                                window.__activeLoadingPoster = poster;
+                                var card = poster.closest('.series-card, .movie-card, .content-row .card, .row-cards > div');
+                                if (card && card.dataset && card.dataset.id) {
+                                    window.__activeLoadingCardId = card.dataset.id;
+                                }
+                                if (safetyTimer) clearTimeout(safetyTimer);
+                                safetyTimer = setTimeout(function() {
+                                    window._clearCardLoadingOverlays();
+                                }, 45000);
+                            }
+
+                            try {
+                                var observer = new MutationObserver(function(mutations) {
+                                    if (window.__forceClearCardOverlays) return;
+                                    for (var i = 0; i < mutations.length; i++) {
+                                        var added = mutations[i].addedNodes;
+                                        for (var j = 0; j < added.length; j++) {
+                                            var node = added[j];
+                                            if (node && node.nodeType === 1) {
+                                                if (node.classList && node.classList.contains('card-loading-overlay')) {
+                                                    onOverlaySeen(node);
+                                                } else if (node.querySelector) {
+                                                    var found = node.querySelector('.card-loading-overlay');
+                                                    if (found) onOverlaySeen(found);
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                                observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
+                            } catch(e) {}
+
+                            setInterval(function() {
+                                if (window.__forceClearCardOverlays) return;
+                                var target = window.__activeLoadingPoster;
+                                if (!target && window.__activeLoadingCardId) {
+                                    var card = document.querySelector('[data-id="' + window.__activeLoadingCardId + '"]');
+                                    if (card) {
+                                        target = card.querySelector('.series-card-poster') || card;
+                                        window.__activeLoadingPoster = target;
+                                    }
+                                }
+                                if (target && document.body.contains(target)) {
+                                    if (!target.querySelector('.card-loading-overlay')) {
+                                        var ov = document.createElement('div');
+                                        ov.className = 'card-loading-overlay';
+                                        ov.innerHTML = '<div class="spinner"></div>';
+                                        target.appendChild(ov);
+                                    }
+                                }
+                            }, 40);
                         })();
                         """.trimIndent(),
                         null

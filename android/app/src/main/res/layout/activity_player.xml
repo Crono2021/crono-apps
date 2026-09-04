@@ -4,7 +4,7 @@
     android:id="@+id/player_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/transparent"
+    android:background="#000000"
     android:fitsSystemWindows="false"
     android:descendantFocusability="afterDescendants">
 
@@ -13,8 +13,7 @@
         android:id="@+id/video_surface"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_gravity="center"
-        android:visibility="invisible" />
+        android:layout_gravity="center" />
 
     <!-- Título Flotante (arriba centro) -->
     <TextView
