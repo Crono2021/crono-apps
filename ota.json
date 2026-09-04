@@ -1,8 +1,8 @@
 {
   "versionCode": 21,
-  "versionName": "1.4.4",
+  "versionName": "1.4.3b",
   "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/cineflix-android/cineflix.apk",
-  "sha256": "78d57b601a7bd57ce653cf7903fdedca0405154ffd13b2d37107ce9cf73bd7ec",
+  "sha256": "7af5ae42482356501ff6551d11a57937f4c7cbc3054b187959bbdb226a12ad55",
   "changelog": "• Restaurado sonido envolvente 5.1 (Dolby/DTS)\n• Solucionado fallo de audio sin sonido en televisores\n• Añadida casilla de 'Compatibilidad Estéreo' en selector de audio\n• Fondo negro puro en barras panorámicas",
   "mandatory": false,
   "minVersionCode": 1
