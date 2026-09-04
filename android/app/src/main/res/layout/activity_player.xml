@@ -7,14 +7,12 @@
     android:fitsSystemWindows="false"
     android:descendantFocusability="afterDescendants">
 
-    <!-- ExoPlayer Video Surface -->
-    <androidx.media3.ui.PlayerView
+    <!-- LibVLC Video Surface -->
+    <org.videolan.libvlc.util.VLCVideoLayout
         android:id="@+id/video_surface"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_gravity="center"
-        app:use_controller="false"
-        app:surface_type="surface_view" />
+        android:layout_gravity="center" />
 
     <!-- Título Flotante (arriba centro) -->
     <TextView

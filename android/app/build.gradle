@@ -9,8 +9,8 @@ android {
         applicationId "com.cineflix.android"
         minSdkVersion 21
         targetSdkVersion 34
-        versionCode 18
-        versionName "1.4.2g"
+        versionCode 19
+        versionName "1.5.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters 'armeabi-v7a', 'arm64-v8a'
@@ -112,6 +112,9 @@ dependencies {
 
     // Coil (image loading)
     implementation "io.coil-kt:coil-compose:2.5.0"
+
+    // LibVLC (universal software video and audio decoding: HEVC 10-bit, DTS, TrueHD, etc.)
+    implementation "org.videolan.android:libvlc-all:3.6.0"
 
     // ExoPlayer (Media3)
     implementation "androidx.media3:media3-exoplayer:1.2.0"
