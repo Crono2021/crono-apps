@@ -147,7 +147,7 @@ class MainActivity : ComponentActivity() {
                             if (!document.getElementById('card-spinner-injected-style')) {
                                 var s = document.createElement('style');
                                 s.id = 'card-spinner-injected-style';
-                                s.textContent = '.card-loading-overlay { position: absolute !important; inset: 0 !important; background: rgba(0,0,0,0.65) !important; display: flex !important; align-items: center !important; justify-content: center !important; z-index: 9999 !important; border-radius: inherit !important; pointer-events: none !important; opacity: 1 !important; visibility: visible !important; } .card-loading-overlay .spinner { width: 40px !important; height: 40px !important; border: 3.5px solid rgba(255, 255, 255, 0.25) !important; border-top-color: #ffffff !important; border-radius: 50% !important; animation: cardSpinAnim 0.8s linear infinite !important; margin: 0 !important; box-sizing: border-box !important; display: block !important; } @keyframes cardSpinAnim { to { transform: rotate(360deg); } }';
+                                s.textContent = '.card-loading-overlay { position: absolute !important; inset: 0 !important; background: rgba(0,0,0,0.65) !important; display: flex !important; align-items: center !important; justify-content: center !important; z-index: 9999 !important; border-radius: inherit !important; pointer-events: none !important; opacity: 1 !important; visibility: visible !important; } .card-loading-overlay .spinner { width: 40px !important; height: 40px !important; border: 3.5px solid rgba(255, 255, 255, 0.25) !important; border-top-color: #ffffff !important; border-radius: 50% !important; animation: cardSpinAnim 0.8s linear infinite !important; margin: 0 !important; box-sizing: border-box !important; display: block !important; } @keyframes cardSpinAnim { to { transform: rotate(360deg); } } .row-cards { -webkit-overflow-scrolling: touch !important; }';
                                 document.head.appendChild(s);
                             }
 
@@ -242,6 +242,65 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }, 40);
+
+                            // Proteger la posición de scroll del carrusel Seguir Viendo para que no salte al inicio en sincronizaciones
+                            window.__savedSeriesCarouselScroll = 0;
+                            window.__savedMoviesCarouselScroll = 0;
+
+                            document.addEventListener('scroll', function(e) {
+                                if (e.target && e.target.classList && e.target.classList.contains('row-cards')) {
+                                    var parentSeries = e.target.closest('#continue-watching-series');
+                                    if (parentSeries) {
+                                        window.__savedSeriesCarouselScroll = e.target.scrollLeft;
+                                    }
+                                    var parentMovies = e.target.closest('#continue-watching-movies');
+                                    if (parentMovies) {
+                                        window.__savedMoviesCarouselScroll = e.target.scrollLeft;
+                                    }
+                                }
+                            }, true);
+
+                            function patchContinueWatching() {
+                                if (window.renderContinueWatchingRow && !window.__patchedContinueWatchingRow) {
+                                    window.__patchedContinueWatchingRow = true;
+                                    var origRender = window.renderContinueWatchingRow;
+                                    window.renderContinueWatchingRow = function() {
+                                        var sCards = document.querySelector('#continue-watching-series .row-cards');
+                                        if (sCards && sCards.scrollLeft > 0) window.__savedSeriesCarouselScroll = sCards.scrollLeft;
+                                        var mCards = document.querySelector('#continue-watching-movies .row-cards');
+                                        if (mCards && mCards.scrollLeft > 0) window.__savedMoviesCarouselScroll = mCards.scrollLeft;
+                                        
+                                        var res = origRender.apply(this, arguments);
+                                        var restoreScroll = function() {
+                                            if (window.__savedSeriesCarouselScroll > 0) {
+                                                var sc = document.querySelector('#continue-watching-series .row-cards');
+                                                if (sc && Math.abs(sc.scrollLeft - window.__savedSeriesCarouselScroll) > 5) {
+                                                    sc.scrollLeft = window.__savedSeriesCarouselScroll;
+                                                }
+                                            }
+                                            if (window.__savedMoviesCarouselScroll > 0) {
+                                                var mc = document.querySelector('#continue-watching-movies .row-cards');
+                                                if (mc && Math.abs(mc.scrollLeft - window.__savedMoviesCarouselScroll) > 5) {
+                                                    mc.scrollLeft = window.__savedMoviesCarouselScroll;
+                                                }
+                                            }
+                                        };
+                                        if (res && typeof res.then === 'function') {
+                                            return res.then(function(val) {
+                                                restoreScroll();
+                                                setTimeout(restoreScroll, 50);
+                                                return val;
+                                            });
+                                        } else {
+                                            restoreScroll();
+                                            setTimeout(restoreScroll, 50);
+                                            return res;
+                                        }
+                                    };
+                                }
+                            }
+                            patchContinueWatching();
+                            setInterval(patchContinueWatching, 500);
                         })();
                         """.trimIndent(),
                         null
