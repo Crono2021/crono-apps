@@ -113,11 +113,12 @@ class MainActivity : ComponentActivity() {
                     super.onPageFinished(view, url)
                     val isAmazon = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true)
                     val tvFlag = if (isAndroidTV) "true" else "false"
+                    val platformStr = if (isAndroidTV) "android_tv" else "android"
                     @Suppress("DEPRECATION")
                     val vCode = try { packageManager.getPackageInfo(packageName, 0).versionCode.toLong() } catch (e: Throwable) { 2L }
                     view.evaluateJavascript(
                         "window._cineflixIsTV = $tvFlag; " +
-                        "window.__appPlatform = 'android_tv'; " +
+                        "window.__appPlatform = '$platformStr'; " +
                         "window.__appVersion = $vCode; " +
                         "document.documentElement.classList.toggle('android-tv', $tvFlag); " +
                         "if ($tvFlag && !$isAmazon) { " +
