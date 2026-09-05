@@ -203,10 +203,7 @@ class PlayerActivity : AppCompatActivity() {
 
         val fileSize = intent.getLongExtra(EXTRA_FILE_SIZE, 0L)
         val multipartTotalSize = multipartParts?.sumOf { it.size } ?: 0L
-        var effectiveFileSize = if (multipartTotalSize > 0L) multipartTotalSize else fileSize
-        if (effectiveFileSize <= 0) {
-            effectiveFileSize = 2_000_000_000L
-        }
+        val effectiveFileSize = if (multipartTotalSize > 0L) multipartTotalSize else fileSize
 
         val engine = TelegramEngine.getInstance(this)
 
@@ -405,12 +402,10 @@ class PlayerActivity : AppCompatActivity() {
             // LibVLC automatically and seamlessly falls back to FFmpeg software decoding (libhevc)!
             add("--avcodec-hw=any")
 
-            // Network caching for local loopback proxy (127.0.0.1)
-            // 300ms provides ultra-fast startup while loopback latency is 0ms
-            add("--network-caching=300")
-            add("--file-caching=300")
-            add("--live-caching=300")
-            add("--clock-jitter=0")
+            // Network caching for local HTTP proxy (2000ms ensures smooth playback over Telegram CDN latency)
+            add("--network-caching=2000")
+            add("--file-caching=2000")
+            add("--live-caching=2000")
 
             // Performance optimizations for TV multi-core CPUs
             add("--avcodec-skiploopfilter=1")
@@ -425,11 +420,12 @@ class PlayerActivity : AppCompatActivity() {
         mediaPlayer = MediaPlayer(libVLC)
         mediaPlayer?.attachViews(vlcVideoLayout, null, true, false)
 
-        // Configuración de audio passthrough (5.1 surround por defecto; estéreo si el usuario activó compatibilidad)
+        // Configuración de audio: Modo PCM universal (estéreo/envolvente por software) por defecto.
+        // El passthrough digital bitstream (5.1/7.1 directo) solo se activa si el usuario lo solicita explícitamente en ajustes.
         val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-        val forceStereo = prefs.getBoolean("force_software_audio", false)
-        mediaPlayer?.setAudioDigitalOutputEnabled(!forceStereo)
-        Log.i(TAG, "LibVLC digital audio passthrough (5.1): ${!forceStereo}")
+        val enablePassthrough = prefs.getBoolean("enable_audio_passthrough", false)
+        mediaPlayer?.setAudioDigitalOutputEnabled(enablePassthrough)
+        Log.i(TAG, "LibVLC digital audio passthrough (bitstream 5.1/7.1): $enablePassthrough")
 
         mediaPlayer?.setEventListener { event ->
             when (event.type) {
@@ -457,8 +453,16 @@ class PlayerActivity : AppCompatActivity() {
                 MediaPlayer.Event.EncounteredError -> {
                     loadingSpinner.visibility = View.GONE
                     Log.e(TAG, "LibVLC EncounteredError during playback")
-                    Toast.makeText(this@PlayerActivity, "Error en reproducción LibVLC", Toast.LENGTH_SHORT).show()
-                    finish()
+                    if (!isFallbackRetrying && lastPlayedUrl != null) {
+                        isFallbackRetrying = true
+                        Log.w(TAG, "EncounteredError: reintentando automáticamente con decodificación software FFmpeg y audio seguro PCM")
+                        mediaPlayer?.setAudioDigitalOutputEnabled(false)
+                        val currentTime = mediaPlayer?.time?.let { if (it > 0) it / 1000L else 0L } ?: lastResumeSeconds
+                        playUrl(lastPlayedUrl!!, resumeSeconds = currentTime, forceSoftware = true)
+                    } else {
+                        Toast.makeText(this@PlayerActivity, "Error en reproducción", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
                 }
                 MediaPlayer.Event.TimeChanged -> {
                     if (loadingSpinner.visibility == View.VISIBLE && event.timeChanged > 300) {
@@ -477,7 +481,13 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun playUrl(url: String, resumeSeconds: Long = 0L) {
+    private var isFallbackRetrying = false
+    private var lastPlayedUrl: String? = null
+    private var lastResumeSeconds: Long = 0L
+
+    private fun playUrl(url: String, resumeSeconds: Long = 0L, forceSoftware: Boolean = false) {
+        lastPlayedUrl = url
+        lastResumeSeconds = resumeSeconds
         loadingSpinner.visibility = View.GONE
         
         val vlc = libVLC ?: return
@@ -485,9 +495,16 @@ class PlayerActivity : AppCompatActivity() {
 
         try {
             val media = Media(vlc, Uri.parse(url)).apply {
-                setHWDecoderEnabled(true, false)
-                addOption(":network-caching=300")
-                addOption(":clock-jitter=0")
+                if (forceSoftware) {
+                    setHWDecoderEnabled(false, false)
+                    addOption(":codec=all")
+                    Log.i(TAG, "playUrl: fallback pure SOFTWARE decoding (libhevc/FFmpeg)")
+                } else {
+                    setHWDecoderEnabled(true, false)
+                }
+                addOption(":network-caching=2000")
+                addOption(":file-caching=2000")
+                addOption(":live-caching=2000")
                 addOption(":no-video-title-show")
                 addOption(":http-reconnect=true")
                 if (resumeSeconds > 5) {
@@ -549,19 +566,19 @@ class PlayerActivity : AppCompatActivity() {
         audioColumn.addView(audioTitle)
 
         val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-        val isStereoCompat = prefs.getBoolean("force_software_audio", false)
+        val isPassthroughEnabled = prefs.getBoolean("enable_audio_passthrough", false)
 
-        val cbForceStereo = android.widget.CheckBox(this).apply {
-            text = "Compatibilidad Estéreo"
+        val cbPassthrough = android.widget.CheckBox(this).apply {
+            text = "Passthrough Digital (Receptor 5.1 / HDMI ARC)"
             setTextColor(android.graphics.Color.LTGRAY)
             textSize = 12f
             buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
-            isChecked = isStereoCompat
+            isChecked = isPassthroughEnabled
             isFocusable = true
             setPadding(0, 0, 0, dpToPx(8))
             setOnCheckedChangeListener { _, isChecked ->
-                prefs.edit().putBoolean("force_software_audio", isChecked).apply()
-                mp.setAudioDigitalOutputEnabled(!isChecked)
+                prefs.edit().putBoolean("enable_audio_passthrough", isChecked).apply()
+                mp.setAudioDigitalOutputEnabled(isChecked)
                 val currentTrack = mp.audioTrack
                 if (currentTrack != -1) {
                     mp.audioTrack = -1
@@ -569,7 +586,7 @@ class PlayerActivity : AppCompatActivity() {
                 }
                 Toast.makeText(
                     this@PlayerActivity,
-                    if (isChecked) "Modo estéreo compatible activado" else "Sonido 5.1 directo activado",
+                    if (isChecked) "Passthrough digital (5.1 directo) activado" else "Modo estéreo/PCM estándar activado",
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -583,7 +600,7 @@ class PlayerActivity : AppCompatActivity() {
                 }
             }
         }
-        audioColumn.addView(cbForceStereo)
+        audioColumn.addView(cbPassthrough)
 
         val audioGroup = android.widget.RadioGroup(this)
         val audioTracks = mp.audioTracks

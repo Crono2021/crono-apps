@@ -94,7 +94,7 @@ class StreamProxyServer(
             return fileSize
         }
 
-        val deadline = System.currentTimeMillis() + 10_000L
+        val deadline = System.currentTimeMillis() + 5_000L
         while (System.currentTimeMillis() < deadline) {
             val state = engine.getFileStateFlow(fileId).value
             if (state != null && state.expectedSize > 0) {
@@ -104,15 +104,27 @@ class StreamProxyServer(
             }
             Thread.sleep(100)
         }
-        Log.w(TAG, "resolveFileSize -> $fileSize (fallback from Intent)")
-        resolvedFileSize = fileSize
-        return fileSize
+        val fallback = if (fileSize > 0L) fileSize else 2_000_000_000L
+        Log.w(TAG, "resolveFileSize -> $fallback (fallback)")
+        resolvedFileSize = fallback
+        return fallback
     }
 
     override fun serve(session: IHTTPSession): Response {
-        Log.d(TAG, "serve() URI=${session.uri} Range=${session.headers["range"]}")
+        Log.d(TAG, "serve() URI=${session.uri} Method=${session.method} Range=${session.headers["range"]}")
 
         val actualFileSize = resolveFileSize()
+
+        if (session.method == Method.HEAD) {
+            val response = newFixedLengthResponse(
+                Response.Status.OK,
+                mimeType,
+                null,
+                actualFileSize
+            )
+            response.addHeader("Accept-Ranges", "bytes")
+            return response
+        }
         val rangeHeader = session.headers["range"]
 
         if (rangeHeader == null) {
