@@ -1,9 +1,9 @@
-﻿{
+{
   "versionCode": 22,
   "versionName": "1.4.3c",
   "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/cineflix-android/cineflix.apk",
-  "sha256": "0983896b920bb982a7c258b6b3cb65bee3bfff031aa8578420f0d922e7a87140",
-  "changelog": "• Solucionado fallo de audio en televisores y altavoces estéreo (audio universal PCM activo por defecto)\n• Corregido error de reproducción LibVLC en Android TV\n• Aumentada caché de red a 2000ms para mayor fluidez\n• Auto-recuperación por software ante fallos de hardware",
+  "sha256": "8be3f353d1d0799e662b92ab975ae2524abd848619e12d429a88ddfa71cc6d7e",
+  "changelog": "• Solucionado fallo de audio en televisores y altavoces estéreo (audio universal PCM activo por defecto)\n• Corrección de teclado virtual en móviles\n• Corregido error de reproducción LibVLC en Android TV\n• Aumentada caché de red a 2000ms para mayor fluidez\n• Auto-recuperación por software ante fallos de hardware",
   "mandatory": false,
   "minVersionCode": 1
 }
