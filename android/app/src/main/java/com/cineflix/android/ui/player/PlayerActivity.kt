@@ -2,6 +2,9 @@ package com.cineflix.android.ui.player
 
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -393,10 +396,103 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Determines whether the current audio output setup (HDMI ARC / eARC / AV Receiver)
+     * natively supports digital surround passthrough (bitstream AC3, E-AC3, DTS, 5.1+).
+     * If false (e.g. standard TV stereo speakers, phone speakers, headphones),
+     * LibVLC performs full software decoding via FFmpeg and downmixes to pristine PCM stereo.
+     */
+    private fun isSurroundSoundSupported(): Boolean {
+        try {
+            // 1. Check sticky HDMI Audio Plug broadcast intent
+            val filter = IntentFilter(AudioManager.ACTION_HDMI_AUDIO_PLUG)
+            val stickyIntent = registerReceiver(null, filter)
+            if (stickyIntent != null) {
+                val isPlugged = stickyIntent.getIntExtra(AudioManager.EXTRA_AUDIO_PLUG_STATE, 0) == 1
+                val maxChannels = stickyIntent.getIntExtra(AudioManager.EXTRA_MAX_CHANNEL_COUNT, 2)
+                if (isPlugged && maxChannels >= 6) {
+                    Log.i(TAG, "isSurroundSoundSupported: HDMI plug state=1, maxChannels=$maxChannels -> 5.1/7.1 SURROUND DETECTED")
+                    return true
+                }
+            }
+
+            // 2. Check connected output devices on Android 6.0+ (API 23+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                val devices = audioManager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) ?: emptyArray()
+                for (device in devices) {
+                    when (device.type) {
+                        AudioDeviceInfo.TYPE_HDMI,
+                        AudioDeviceInfo.TYPE_HDMI_ARC,
+                        AudioDeviceInfo.TYPE_LINE_DIGITAL -> {
+                            Log.i(TAG, "isSurroundSoundSupported: Device ${device.type} connected -> SURROUND PASSTHROUGH CAPABLE")
+                            return true
+                        }
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        if (device.type == AudioDeviceInfo.TYPE_HDMI_EARC) {
+                            Log.i(TAG, "isSurroundSoundSupported: HDMI_EARC connected -> SURROUND PASSTHROUGH CAPABLE")
+                            return true
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not query system audio capabilities", e)
+        }
+        Log.i(TAG, "isSurroundSoundSupported: Standard 2-channel stereo environment detected -> PCM STEREO DOWNMIX")
+        return false
+    }
+
+    private var hasAutoSelectedTrack = false
+
+    private fun autoSelectSpanishAudioTrack() {
+        if (hasAutoSelectedTrack) return
+        val mp = mediaPlayer ?: return
+        val tracks = mp.audioTracks ?: return
+        if (tracks.size <= 1) return
+
+        val currentId = mp.audioTrack
+        val currentTrack = tracks.firstOrNull { it.id == currentId }
+        val currentName = currentTrack?.name?.lowercase() ?: ""
+
+        if (currentName.contains("spa") || currentName.contains("esp") || currentName.contains("castell")) {
+            hasAutoSelectedTrack = true
+            return
+        }
+
+        val spanishTrack = tracks.firstOrNull { track ->
+            val name = track.name.lowercase()
+            name.contains("spa") || name.contains("esp") || name.contains("castell") || name.contains("spanish")
+        }
+
+        if (spanishTrack != null && spanishTrack.id != currentId) {
+            Log.i(TAG, "Auto-switching audio track from ${currentTrack?.name} to Spanish track: ${spanishTrack.name}")
+            mp.audioTrack = spanishTrack.id
+            hasAutoSelectedTrack = true
+        }
+    }
+
+    private fun applyPassthroughSetting(enable: Boolean) {
+        val mp = mediaPlayer ?: return
+        mp.setAudioDigitalOutputEnabled(enable)
+        val currentTrack = mp.audioTrack
+        if (currentTrack != -1) {
+            mp.audioTrack = -1
+            mp.audioTrack = currentTrack
+        }
+    }
+
     private fun initLibVlc() {
         val options = ArrayList<String>().apply {
-            // Audio output: use default Android AudioTrack sink (avoids OpenSL ES sample rate issues on Android 14/Samsung)
+            // Audio output: use default Android AudioTrack sink with SoXR resampler
+            add("--aout=android_audiotrack")
             add("--audio-time-stretch")
+            add("--audio-resampler=soxr")
+
+            // Language preferences: automatically prioritize Spanish audio & subtitles
+            add("--audio-language=es,spa,es-ES,es-419,Castellano,Spanish")
+            add("--sub-language=es,spa,es-ES,es-419,Castellano,Spanish")
 
             // Hardware decoding: try MediaCodec first; if it exceeds chip capabilities (e.g. HEVC 10-bit),
             // LibVLC automatically and seamlessly falls back to FFmpeg software decoding (libhevc)!
@@ -419,13 +515,22 @@ class PlayerActivity : AppCompatActivity() {
         libVLC = LibVLC(this, options)
         mediaPlayer = MediaPlayer(libVLC)
         mediaPlayer?.attachViews(vlcVideoLayout, null, true, false)
+        mediaPlayer?.setAudioOutput("android_audiotrack")
+        mediaPlayer?.volume = 100
 
-        // Configuración de audio: Modo PCM universal (estéreo/envolvente por software) por defecto.
-        // El passthrough digital bitstream (5.1/7.1 directo) solo se activa si el usuario lo solicita explícitamente en ajustes.
+        // Configuración de audio inteligente 100% AUTOMÁTICA:
+        // Si el usuario no ha forzado un ajuste manual ("auto"), detectamos el hardware:
+        // - Equipo 5.1/7.1 o HDMI ARC conectado -> Activa passthrough digital bitstream automáticamente.
+        // - Altavoces de TV estándar (2 canales) -> Decodifica vía FFmpeg a PCM estéreo con SoXR.
         val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-        val enablePassthrough = prefs.getBoolean("enable_audio_passthrough", false)
+        val audioMode = prefs.getString("audio_output_mode", "auto") ?: "auto"
+        val enablePassthrough = when (audioMode) {
+            "passthrough" -> true
+            "stereo" -> false
+            else -> isSurroundSoundSupported()
+        }
         mediaPlayer?.setAudioDigitalOutputEnabled(enablePassthrough)
-        Log.i(TAG, "LibVLC digital audio passthrough (bitstream 5.1/7.1): $enablePassthrough")
+        Log.i(TAG, "LibVLC audio initialized: passthrough=$enablePassthrough (mode=$audioMode, autoDetected=${isSurroundSoundSupported()})")
 
         mediaPlayer?.setEventListener { event ->
             when (event.type) {
@@ -440,6 +545,7 @@ class PlayerActivity : AppCompatActivity() {
                     loadingSpinner.visibility = View.GONE
                     btnPlayPause.setImageResource(android.R.drawable.ic_media_pause)
                     scheduleHideControls()
+                    autoSelectSpanishAudioTrack()
                 }
                 MediaPlayer.Event.Paused -> {
                     btnPlayPause.setImageResource(android.R.drawable.ic_media_play)
@@ -468,6 +574,9 @@ class PlayerActivity : AppCompatActivity() {
                     if (loadingSpinner.visibility == View.VISIBLE && event.timeChanged > 300) {
                         loadingSpinner.visibility = View.GONE
                     }
+                    if (event.timeChanged > 1000 && !hasAutoSelectedTrack) {
+                        autoSelectSpanishAudioTrack()
+                    }
                     updateProgress(event.timeChanged)
                 }
                 MediaPlayer.Event.LengthChanged -> {
@@ -488,6 +597,7 @@ class PlayerActivity : AppCompatActivity() {
     private fun playUrl(url: String, resumeSeconds: Long = 0L, forceSoftware: Boolean = false) {
         lastPlayedUrl = url
         lastResumeSeconds = resumeSeconds
+        hasAutoSelectedTrack = false
         loadingSpinner.visibility = View.GONE
         
         val vlc = libVLC ?: return
@@ -566,41 +676,78 @@ class PlayerActivity : AppCompatActivity() {
         audioColumn.addView(audioTitle)
 
         val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-        val isPassthroughEnabled = prefs.getBoolean("enable_audio_passthrough", false)
+        val audioMode = prefs.getString("audio_output_mode", "auto") ?: "auto"
+        val isHardwareSurround = isSurroundSoundSupported()
 
-        val cbPassthrough = android.widget.CheckBox(this).apply {
-            text = "Passthrough Digital (Receptor 5.1 / HDMI ARC)"
+        val modeLabel = TextView(this).apply {
+            text = "MODO DE SALIDA"
+            setTextColor(android.graphics.Color.parseColor("#aaaaaa"))
+            textSize = 11f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, dpToPx(4))
+        }
+        audioColumn.addView(modeLabel)
+
+        val modeGroup = android.widget.RadioGroup(this).apply {
+            setPadding(0, 0, 0, dpToPx(12))
+        }
+
+        val autoDescription = if (isHardwareSurround) "5.1 HDMI ARC detectado" else "Estéreo PCM detectado"
+        val rbAuto = android.widget.RadioButton(this).apply {
+            text = "Automático ($autoDescription)"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 12f
+            buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
+            isChecked = (audioMode == "auto")
+            setPadding(0, dpToPx(4), 0, dpToPx(4))
+            setOnClickListener {
+                prefs.edit().putString("audio_output_mode", "auto").apply()
+                applyPassthroughSetting(isSurroundSoundSupported())
+                Toast.makeText(this@PlayerActivity, "Audio Automático: " + (if (isSurroundSoundSupported()) "5.1 Digital" else "Estéreo PCM"), Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        val rbPassthrough = android.widget.RadioButton(this).apply {
+            text = "Forzar 5.1 Digital (HDMI ARC)"
             setTextColor(android.graphics.Color.LTGRAY)
             textSize = 12f
             buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
-            isChecked = isPassthroughEnabled
-            isFocusable = true
-            setPadding(0, 0, 0, dpToPx(8))
-            setOnCheckedChangeListener { _, isChecked ->
-                prefs.edit().putBoolean("enable_audio_passthrough", isChecked).apply()
-                mp.setAudioDigitalOutputEnabled(isChecked)
-                val currentTrack = mp.audioTrack
-                if (currentTrack != -1) {
-                    mp.audioTrack = -1
-                    mp.audioTrack = currentTrack
-                }
-                Toast.makeText(
-                    this@PlayerActivity,
-                    if (isChecked) "Passthrough digital (5.1 directo) activado" else "Modo estéreo/PCM estándar activado",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-            setOnFocusChangeListener { v, hasFocus ->
-                if (hasFocus) {
-                    v.animate().scaleX(1.05f).scaleY(1.05f).setDuration(150).start()
-                    (v as? android.widget.CheckBox)?.setTextColor(android.graphics.Color.WHITE)
-                } else {
-                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(150).start()
-                    (v as? android.widget.CheckBox)?.setTextColor(android.graphics.Color.LTGRAY)
-                }
+            isChecked = (audioMode == "passthrough")
+            setPadding(0, dpToPx(4), 0, dpToPx(4))
+            setOnClickListener {
+                prefs.edit().putString("audio_output_mode", "passthrough").apply()
+                applyPassthroughSetting(true)
+                Toast.makeText(this@PlayerActivity, "Forzado 5.1 Digital (Bitstream)", Toast.LENGTH_SHORT).show()
             }
         }
-        audioColumn.addView(cbPassthrough)
+
+        val rbStereo = android.widget.RadioButton(this).apply {
+            text = "Forzar Estéreo PCM (Universal)"
+            setTextColor(android.graphics.Color.LTGRAY)
+            textSize = 12f
+            buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
+            isChecked = (audioMode == "stereo")
+            setPadding(0, dpToPx(4), 0, dpToPx(4))
+            setOnClickListener {
+                prefs.edit().putString("audio_output_mode", "stereo").apply()
+                applyPassthroughSetting(false)
+                Toast.makeText(this@PlayerActivity, "Forzado Estéreo PCM (Altavoces TV)", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        modeGroup.addView(rbAuto)
+        modeGroup.addView(rbPassthrough)
+        modeGroup.addView(rbStereo)
+        audioColumn.addView(modeGroup)
+
+        val tracksLabel = TextView(this).apply {
+            text = "PISTA ACTIVA"
+            setTextColor(android.graphics.Color.parseColor("#aaaaaa"))
+            textSize = 11f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, dpToPx(4), 0, dpToPx(4))
+        }
+        audioColumn.addView(tracksLabel)
 
         val audioGroup = android.widget.RadioGroup(this)
         val audioTracks = mp.audioTracks
