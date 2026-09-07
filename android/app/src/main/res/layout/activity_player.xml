@@ -1,19 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/player_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000"
     android:fitsSystemWindows="false"
     android:descendantFocusability="afterDescendants">
 
-    <!-- LibVLC Video Surface -->
-    <org.videolan.libvlc.util.VLCVideoLayout
+    <!-- ExoPlayer Video Surface -->
+    <androidx.media3.ui.PlayerView
         android:id="@+id/video_surface"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_gravity="center" />
+        android:layout_gravity="center"
+        app:use_controller="false"
+        app:surface_type="surface_view" />
 
     <!-- Título Flotante (arriba centro) -->
     <TextView
@@ -299,6 +300,6 @@
         android:layout_height="64dp"
         android:layout_gravity="center"
         android:indeterminateTint="#7c3aed"
-        android:visibility="gone" />
+        android:visibility="visible" />
 
 </FrameLayout>
