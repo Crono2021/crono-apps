@@ -728,6 +728,21 @@ class AndroidBridge(
         val request = GramJSStreamManager.activeRequests.remove(requestId) ?: return
         request.deferred.complete(Result.failure(Exception(error)))
     }
+
+    // --- Audio Output Mode (Stereo PCM vs 5.1 Passthrough) ---
+    @JavascriptInterface
+    fun setAudioOutputMode(mode: String) {
+        context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("audio_output_mode", mode)
+            .apply()
+    }
+
+    @JavascriptInterface
+    fun getAudioOutputMode(): String {
+        return context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+            .getString("audio_output_mode", "stereo") ?: "stereo"
+    }
 }
 
 data class PendingGramJSRequest(

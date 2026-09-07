@@ -422,7 +422,6 @@ class PlayerActivity : AppCompatActivity() {
                 val devices = audioManager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) ?: emptyArray()
                 for (device in devices) {
                     when (device.type) {
-                        AudioDeviceInfo.TYPE_HDMI,
                         AudioDeviceInfo.TYPE_HDMI_ARC,
                         AudioDeviceInfo.TYPE_LINE_DIGITAL -> {
                             Log.i(TAG, "isSurroundSoundSupported: Device ${device.type} connected -> SURROUND PASSTHROUGH CAPABLE")
@@ -518,19 +517,14 @@ class PlayerActivity : AppCompatActivity() {
         mediaPlayer?.setAudioOutput("android_audiotrack")
         mediaPlayer?.volume = 100
 
-        // Configuración de audio inteligente 100% AUTOMÁTICA:
-        // Si el usuario no ha forzado un ajuste manual ("auto"), detectamos el hardware:
-        // - Equipo 5.1/7.1 o HDMI ARC conectado -> Activa passthrough digital bitstream automáticamente.
-        // - Altavoces de TV estándar (2 canales) -> Decodifica vía FFmpeg a PCM estéreo con SoXR.
+        // Configuración de audio universal y segura:
+        // Por defecto: Estéreo PCM universal (100% libre de fallos y cuelgues en televisores).
+        // Solo si el usuario activa "Audio 5.1" se envía bitstream digital directo (passthrough).
         val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-        val audioMode = prefs.getString("audio_output_mode", "auto") ?: "auto"
-        val enablePassthrough = when (audioMode) {
-            "passthrough" -> true
-            "stereo" -> false
-            else -> isSurroundSoundSupported()
-        }
+        val audioMode = prefs.getString("audio_output_mode", "stereo") ?: "stereo"
+        val enablePassthrough = (audioMode == "passthrough")
         mediaPlayer?.setAudioDigitalOutputEnabled(enablePassthrough)
-        Log.i(TAG, "LibVLC audio initialized: passthrough=$enablePassthrough (mode=$audioMode, autoDetected=${isSurroundSoundSupported()})")
+        Log.i(TAG, "LibVLC audio initialized: passthrough=$enablePassthrough (mode=$audioMode)")
 
         mediaPlayer?.setEventListener { event ->
             when (event.type) {
@@ -1275,6 +1269,8 @@ class PlayerActivity : AppCompatActivity() {
         } catch (_: Exception) {}
 
         try {
+            mediaPlayer?.setAudioDigitalOutputEnabled(false)
+            mediaPlayer?.volume = 0
             mediaPlayer?.stop()
             mediaPlayer?.detachViews()
             mediaPlayer?.release()
