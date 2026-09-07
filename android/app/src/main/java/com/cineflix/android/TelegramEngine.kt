@@ -656,7 +656,12 @@ class TelegramEngine(private val context: Context) {
             latch.countDown()
         } ?: return null
 
-        latch.await(3_000, java.util.concurrent.TimeUnit.MILLISECONDS)
+        try {
+            latch.await(3_000, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return null
+        }
         return chunk
     }
 
@@ -677,8 +682,13 @@ class TelegramEngine(private val context: Context) {
         } ?: return null
 
         // Wait up to 10s for TDLib to fetch from Telegram CDN (faster fallback/retry)
-        if (!downloadLatch.await(10_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-            Log.w(TAG, "downloadRangeAndRead TIMEOUT offset=$offset count=$count")
+        try {
+            if (!downloadLatch.await(10_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "downloadRangeAndRead TIMEOUT offset=$offset count=$count")
+                return null
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
             return null
         }
 

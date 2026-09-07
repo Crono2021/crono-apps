@@ -469,32 +469,39 @@ class MainActivity : ComponentActivity() {
                         
                         // Fallback
                         if (typeof window.playNextEpisodeFromNative === 'function') {
-                            clearInterval(interval);
-                            try {
-                                var arr = window.currentPlaylistArray;
-                                if (arr && !window.currentPlayingVideoMsgId) {
-                                    for (var i = 0; i < arr.length; i++) {
-                                        var title = arr[i].displayTitle || arr[i].caption || arr[i].fileName || "";
-                                        var match = title.match(/(\d+)[x\-×X](\d+)/);
-                                        if (match && parseInt(match[1]) === $season && parseInt(match[2]) === $episode) {
-                                            window.currentPlayingVideoMsgId = arr[i].msgId;
-                                            break;
+                            var arr = window.currentPlaylistArray;
+                            if ((arr && arr.length > 0) || attempts > 15) {
+                                clearInterval(interval);
+                                try {
+                                    if (arr) {
+                                        var found = false;
+                                        if (window.currentPlayingVideoMsgId) {
+                                            found = arr.some(function(v) { return v.msgId === window.currentPlayingVideoMsgId; });
+                                        }
+                                        if (!found) {
+                                            for (var i = 0; i < arr.length; i++) {
+                                                var title = arr[i].displayTitle || arr[i].caption || arr[i].fileName || "";
+                                                var match = title.match(/(\d+)[x\-×X](\d+)/);
+                                                if (match && parseInt(match[1]) === $season && parseInt(match[2]) === $episode) {
+                                                    window.currentPlayingVideoMsgId = arr[i].msgId;
+                                                    break;
+                                                }
+                                            }
                                         }
                                     }
+                                    
+                                    window.currentWatchContext = {
+                                        content_id: '$contentId',
+                                        season: $season,
+                                        episode: nextE
+                                    };
+                                    
+                                    console.log('[NativeBridge] Fallback Executing pending next episode from Android S$season E' + nextE);
+                                    window.playNextEpisodeFromNative('$contentId', $season, $episode);
+                                } catch (e) {
+                                    console.error('[NativeBridge] JS Crash:', e.message);
                                 }
-                                
-                                // FORCE update the watch context to the next episode to fix ancient WebApp caches
-                                // that failed to update this variable, causing Native Android to loop the same episode.
-                                window.currentWatchContext = {
-                                    content_id: '$contentId',
-                                    season: $season,
-                                    episode: nextE
-                                };
-                                
-                                console.log('[NativeBridge] Fallback Executing pending next episode from Android');
-                                window.playNextEpisodeFromNative('$contentId', $season, $episode);
-                            } catch (e) {
-                                console.error('[NativeBridge] JS Crash:', e.message);
+                                return;
                             }
                         } else if (attempts > 50) {
                             clearInterval(interval);

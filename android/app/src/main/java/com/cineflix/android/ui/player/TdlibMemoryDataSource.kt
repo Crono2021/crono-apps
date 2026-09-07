@@ -1,4 +1,4 @@
-﻿package com.cineflix.android.ui.player
+package com.cineflix.android.ui.player
 
 import android.net.Uri
 import android.util.Log
@@ -40,6 +40,9 @@ class TdlibMemoryDataSource(
 
     override fun open(dataSpec: DataSpec): Long {
         try {
+            if (Thread.currentThread().isInterrupted) {
+                throw java.io.InterruptedIOException("DataSource open interrupted")
+            }
             val uri = dataSpec.uri
             val host = uri.host
             
@@ -57,12 +60,20 @@ class TdlibMemoryDataSource(
                 var expectedSize = -1L
                 val deadline = System.currentTimeMillis() + 10_000L
                 while (System.currentTimeMillis() < deadline) {
+                    if (Thread.currentThread().isInterrupted) {
+                        throw java.io.InterruptedIOException("DataSource open wait interrupted")
+                    }
                     val state = engine.getFileStateFlow(parsedFileId).value
                     if (state != null && state.expectedSize > 0) {
                         expectedSize = state.expectedSize.toLong()
                         break
                     }
-                    Thread.sleep(100)
+                    try {
+                        Thread.sleep(100)
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw java.io.InterruptedIOException("DataSource open sleep interrupted")
+                    }
                 }
                 
                 if (expectedSize > 0) {
@@ -98,11 +109,12 @@ class TdlibMemoryDataSource(
             transferInitializing(dataSpec)
             transferStarted(dataSpec)
             
-            Log.i(TAG, "DataSource opened. totalSize: $totalSize, parts: $effectiveParts, bytesRemaining: $bytesRemaining")
+            Log.i(TAG, "DataSource opened. position=${dataSpec.position}, totalSize=$totalSize, parts=$effectiveParts, bytesRemaining=$bytesRemaining")
             return this.bytesRemaining
         } catch (e: Exception) {
+            if (e is IOException) throw e
             throw HttpDataSource.HttpDataSourceException(
-                if (e is IOException) e else IOException(e),
+                IOException(e),
                 dataSpec,
                 400,
                 1
@@ -184,24 +196,32 @@ class TdlibMemoryDataSource(
             chunkSizeToDownload = maxAvailable
         }
 
-        if (bytesSinceLastClear >= 20L * 1024 * 1024) {
-            Log.i(TAG, "Disk quota reached (20MB). Wiping TDLib cache for fileId=$activeFileId")
-            engine.cancelAndDeleteVideoSync(activeFileId, 2000)
-            bytesSinceLastClear = 0L
-        } else if (bytesSinceLastClear % (5L * 1024 * 1024) < CHUNK_SIZE && bytesSinceLastClear > CHUNK_SIZE) {
-            Log.d(TAG, "Cache progress: ${bytesSinceLastClear / (1024 * 1024)}MB / 20MB")
-        }
-
         // Fetch
         var fetchedBytes: ByteArray? = null
         var retries = 0
         while (retries < 3) {
-            fetchedBytes = engine.downloadRangeAndRead(activeFileId, alignedOffset, chunkSizeToDownload)
-            if (fetchedBytes != null && fetchedBytes.isNotEmpty()) {
-                break
+            if (Thread.currentThread().isInterrupted) {
+                throw java.io.InterruptedIOException("DataSource read interrupted")
+            }
+            try {
+                fetchedBytes = engine.downloadRangeAndRead(activeFileId, alignedOffset, chunkSizeToDownload)
+                if (fetchedBytes != null && fetchedBytes.isNotEmpty()) {
+                    break
+                }
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw java.io.InterruptedIOException("DataSource read interrupted: ${e.message}")
+            }
+            if (Thread.currentThread().isInterrupted) {
+                throw java.io.InterruptedIOException("DataSource thread interrupted")
             }
             retries++
-            Thread.sleep(200)
+            try {
+                Thread.sleep(200)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw java.io.InterruptedIOException("DataSource sleep interrupted")
+            }
         }
         
         if (fetchedBytes != null && fetchedBytes.isNotEmpty()) {
@@ -227,15 +247,13 @@ class TdlibMemoryDataSource(
                 throw IOException("Fetched chunk at $alignedOffset does not contain localOffset $localOffset")
             }
         } else {
+            if (Thread.currentThread().isInterrupted) {
+                throw java.io.InterruptedIOException("DataSource read interrupted after retries")
+            }
             // EOF check for part
             val state = engine.getFileStateFlow(activeFileId).value
             if (state != null && state.expectedSize > 0 && localOffset >= state.expectedSize) {
                 Log.d(TAG, "EOF reached at part localOffset=$localOffset")
-                // Allow the next read loop to jump to the next part (if it exists) by not throwing an exception here.
-                // Wait, if we return -1 here, we throw EOF to ExoPlayer early.
-                // We shouldn't return -1 if there are next parts! 
-                // But wait, getPartForOffset already checks totalSize. If localOffset >= expectedSize, it means part.size was wrong.
-                // If part.size is strictly correct, we shouldn't hit this unless TDLib fails.
             }
             throw IOException("Failed to fetch TDLib chunk at offset=$alignedOffset (Timeout or Error)")
         }
@@ -250,11 +268,7 @@ class TdlibMemoryDataSource(
             this.opened = false
             transferEnded()
             this.dataSpec = null
-            
-            for (part in effectiveParts) {
-                Log.i(TAG, "DataSource closed. Wiping TDLib cache for fileId=${part.fileId}")
-                engine.cancelAndDeleteVideo(part.fileId)
-            }
+            Log.d(TAG, "DataSource closed safely without terminating TDLib download")
         }
     }
 }
