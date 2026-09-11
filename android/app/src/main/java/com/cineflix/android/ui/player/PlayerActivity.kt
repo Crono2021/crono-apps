@@ -87,6 +87,8 @@ class PlayerActivity : AppCompatActivity() {
     private var introSkipped = false
     private var nextEpisodeTriggered = false
     private var currentEffectiveFileSize: Long = 0L
+    private var ioErrorRetryCount = 0
+    private var lastIoErrorTimeMs = 0L
 
     // Cast
     private var castContext: CastContext? = null
@@ -448,6 +450,7 @@ class PlayerActivity : AppCompatActivity() {
                 } else {
                     loadingSpinner.visibility = View.GONE
                     if (playbackState == Player.STATE_READY) {
+                        ioErrorRetryCount = 0
                         pendingResumePositionMs?.let { resumePos ->
                             pendingResumePositionMs = null
                             if (player?.isCurrentMediaItemSeekable == true) {
@@ -482,6 +485,37 @@ class PlayerActivity : AppCompatActivity() {
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 Log.e(TAG, "onPlayerError: ${error.errorCodeName} - ${error.message}", error)
+                val isIoError = error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
+                                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+                                error.errorCodeName.startsWith("ERROR_CODE_IO_")
+
+                val now = System.currentTimeMillis()
+                if (isIoError && ioErrorRetryCount < 3) {
+                    ioErrorRetryCount++
+                    lastIoErrorTimeMs = now
+                    val currentPos = player?.currentPosition ?: 0L
+                    Log.w(TAG, "IO error detected ($ioErrorRetryCount/3). Attempting auto-recovery at position ${currentPos}ms...")
+                    Toast.makeText(this@PlayerActivity, "Reconectando con el servidor ($ioErrorRetryCount/3)...", Toast.LENGTH_SHORT).show()
+                    loadingSpinner.visibility = View.VISIBLE
+
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (!isFinishing && !isDestroyed) {
+                            if (currentPos > 0) {
+                                try {
+                                    player?.seekTo(currentPos)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Failed pre-seek: ${e.message}")
+                                }
+                            }
+                            pendingResumePositionMs = currentPos
+                            player?.prepare()
+                            player?.play()
+                        }
+                    }, 1500L)
+                    return
+                }
+
                 Toast.makeText(this@PlayerActivity, "Error de reproducción: ${error.errorCodeName}", Toast.LENGTH_SHORT).show()
                 finish()
             }
@@ -1200,6 +1234,7 @@ class PlayerActivity : AppCompatActivity() {
         player = null
 
         try { proxyServer?.stop() } catch (_: Exception) {}
+        com.cineflix.android.GramJSStreamManager.currentPlaybackId = ""
         scope.cancel()
 
         val fileId = intent.getIntExtra(EXTRA_FILE_ID, -1)

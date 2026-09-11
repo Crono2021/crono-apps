@@ -413,11 +413,15 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
 
-    /** Only pause WebView timers + rendering when activity is fully stopped (backgrounded) */
+    /** Only pause WebView timers + rendering when activity is fully stopped (backgrounded) AND not streaming */
     override fun onStop() {
         super.onStop()
-        webView.onPause()
-        webView.pauseTimers()
+        if (GramJSStreamManager.currentPlaybackId.isEmpty()) {
+            webView.onPause()
+            webView.pauseTimers()
+        } else {
+            android.util.Log.i("CineflixMain", "Preserving WebView timers during active GramJS streaming: ${GramJSStreamManager.currentPlaybackId}")
+        }
     }
 
     /** Resume WebView timers + rendering when app comes back to foreground */

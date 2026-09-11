@@ -551,6 +551,27 @@ class AndroidBridge(
         runOnUiThread { webView.evaluateJavascript(
             "window.onTelegramAuthStateChanged && window.onTelegramAuthStateChanged('$state')", null
         )}
+
+        // When auth reaches READY, proactively inject the user's phone into WebView localStorage
+        // so that getUserPhone() always finds it at Priority 1 (cross-device sync for favorites/progress)
+        if (state == "READY") {
+            engine.getMe { user ->
+                if (user != null) {
+                    val phone = (user.phoneNumber?.takeIf { it.isNotEmpty() } ?: user.id.toString())
+                        .replace("+", "").trim()
+                    runOnUiThread {
+                        webView.evaluateJavascript("""
+                            (function() {
+                                localStorage.setItem('user_phone', '$phone');
+                                localStorage.setItem('cineflix_current_phone', '$phone');
+                                sessionStorage.setItem('cineflix_current_phone', '$phone');
+                                console.log('[Native] Auth READY — phone synced to localStorage: $phone');
+                            })();
+                        """.trimIndent(), null)
+                    }
+                }
+            }
+        }
     }
 
     private fun sendAuthError(msg: String) {

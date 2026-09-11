@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Cine en Castellano HD</title>
+    <meta name="description" content="Streaming de series y películas desde Telegram. Tu videoclub personal.">
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <link rel="apple-touch-icon" href="./favicon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Cineflix">
+    <meta name="theme-color" content="#0a0a12">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        // Polyfill globalThis for old Android TV WebViews (pre-Chrome 71)
+        if (typeof globalThis === 'undefined') {
+            if (typeof self !== 'undefined') self.globalThis = self;
+            else if (typeof window !== 'undefined') window.globalThis = window;
+            else if (typeof global !== 'undefined') global.globalThis = global;
+        }
+        window.onerror = function(msg, url, line, col, err) {
+            var d = document.getElementById('js-error-diag');
+            if (d) d.innerHTML += '<br>[ERROR] ' + msg + ' (line ' + line + ')';
+        };
+    </script>
+  <script type="module" crossorigin src="./assets/index-knz2t7Ew.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-BdFzASah.css">
+</head>
+<body>
+    <!-- SPLASH SCREEN — visible while auth loads, hidden by JS -->
+    <div id="splash-quotes" style="
+        position: fixed; inset: 0; z-index: 9999;
+        background: #0a0a0f;
+        display: flex; flex-direction: column;
+        justify-content: center; align-items: center;
+        padding: 40px 24px; text-align: center;
+        transition: opacity 0.5s ease;
+    ">
+        <div id="splash-quote-text" style="
+            font-size: 1.35rem; font-style: italic; color: #e4e4e7;
+            max-width: 600px; line-height: 1.6; letter-spacing: 0.02em;
+            opacity: 0; transition: opacity 0.6s ease;
+        "></div>
+        <div id="splash-quote-author" style="
+            margin-top: 18px; font-size: 0.9rem; color: #7c3aed;
+            font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+            opacity: 0; transition: opacity 0.6s ease 0.3s;
+        "></div>
+        <div id="splash-spinner" style="
+            margin-top: 40px; width: 28px; height: 28px;
+            border: 3px solid rgba(124,58,237,0.3);
+            border-top-color: #7c3aed;
+            border-radius: 50%;
+        "></div>
+    </div>
+    <script>
+    (function() {
+        var quotes = [
+            ['"Francamente, querida, me importa un bledo."', 'Rhett Butler — Lo que el viento se llevó'],
+            ['"Que la Fuerza te acompañe."', 'Obi-Wan Kenobi — Star Wars'],
+            ['"Voy a hacerle una oferta que no podrá rechazar."', 'Don Vito Corleone — El Padrino'],
+            ['"Houston, tenemos un problema."', 'Jim Lovell — Apolo 13'],
+            ['"Hasta la vista, baby."', 'T-800 — Terminator 2'],
+            ['"La vida es como una caja de bombones, nunca sabes lo que te va a tocar."', 'Forrest Gump — Forrest Gump'],
+            ['"Siempre nos quedará París."', 'Rick Blaine — Casablanca'],
+            ['"Mi nombre es Bond, James Bond."', 'James Bond — Dr. No'],
+            ['"No hay lugar como el hogar."', 'Dorothy — El mago de Oz'],
+            ['"Te mereces a alguien que te mire como si fueras magia."', 'Frida — Frida'],
+            ['"Después de todo, mañana será otro día."', 'Scarlett O\'Hara — Lo que el viento se llevó'],
+            ['"Soy el rey del mundo."', 'Jack Dawson — Titanic'],
+            ['"¿Por qué caemos? Para aprender a levantarnos."', 'Thomas Wayne — Batman Begins'],
+            ['"Los caminos del destino son inescrutables."', 'Anton Chigurh — No es país para viejos'],
+            ['"Si construyes algo, ellos vendrán."', 'La voz — Campo de sueños'],
+            ['"No se trata de quién soy por dentro, sino de lo que hago, lo que me define."', 'Batman — Batman Begins'],
+            ['"Están vivos... es que están vivos."', 'Dr. Alan Grant — Jurassic Park'],
+            ['"Yo soy tu padre."', 'Darth Vader — El Imperio contraataca'],
+            ['"Mi tesoro..."', 'Gollum — El Señor de los Anillos'],
+            ['"Al infinito y más allá."', 'Buzz Lightyear — Toy Story'],
+            ['"Solo sé que no sé nada... pero sé que me gusta el cine."', 'Cineflix — Ahora mismo'],
+            ['"No llores porque se acabó, sonríe porque sucedió."', 'El Doctor — Patch Adams'],
+            ['"Volveré."', 'T-800 — Terminator'],
+            ['"A veces las personas más pequeñas son las que ocupan más lugar en tu corazón."', 'Winnie the Pooh'],
+            ['"Carpe diem. Aprovechen el día, muchachos."', 'John Keating — El club de los poetas muertos'],
+            ['"Con gran poder conlleva una gran responsabilidad."', 'Tío Ben — Spider-Man'],
+            ['"Puedes llamarme Joker."', 'Arthur Fleck — Joker'],
+            ['"Toto, tengo la sensación de que ya no estamos en Kansas."', 'Dorothy — El mago de Oz'],
+            ['"¡Corre, Forrest, corre!"', 'Jenny — Forrest Gump'],
+            ['"Elemental, querido Watson."', 'Sherlock Holmes']
+        ];
+        // Reuse the same quote if the page reloads (e.g. SW update)
+        var saved = null;
+        try { saved = JSON.parse(sessionStorage.getItem('_splashQ')); } catch(e){}
+        var pick = saved || quotes[Math.floor(Math.random() * quotes.length)];
+        if (!saved) try { sessionStorage.setItem('_splashQ', JSON.stringify(pick)); } catch(e){}
+
+        var qt = document.getElementById('splash-quote-text');
+        var qa = document.getElementById('splash-quote-author');
+        if (qt) { qt.textContent = pick[0]; qt.style.opacity = '1'; }
+        if (qa) { qa.textContent = pick[1]; qa.style.opacity = '1'; }
+
+        // Use the FIRST load time (survives reloads) for the 3.5s minimum
+        var startKey = '_splashT';
+        var startTime = parseInt(sessionStorage.getItem(startKey)) || Date.now();
+        try { sessionStorage.setItem(startKey, String(startTime)); } catch(e){}
+
+        window.__splashReady = false;
+        window.__splashDismissRequested = false;
+        function doFade() {
+            var s = document.getElementById('splash-quotes');
+            if (s) { s.style.opacity = '0'; setTimeout(function(){ s.style.display = 'none'; }, 500); }
+            try { sessionStorage.removeItem('_splashQ'); sessionStorage.removeItem(startKey); } catch(e){}
+        }
+        var elapsed = Date.now() - startTime;
+        var wait = Math.max(0, 800 - elapsed);
+        setTimeout(function() {
+            window.__splashReady = true;
+            if (window.__splashDismissRequested) doFade();
+        }, wait);
+        window.__dismissSplash = function() {
+            if (window.__splashReady) { doFade(); }
+            else { window.__splashDismissRequested = true; }
+        };
+    })();
+    </script>
+
+    <div id="app">
+        <!-- LOGIN -->
+        <div id="view-login" class="view">
+            <div class="login-container">
+                <h1 class="login-title">Cine en Castellano HD</h1>
+                <p class="login-subtitle">Tu videoclub en streaming (v2.2)</p>
+                <div id="remote-login-section" style="display:none; margin-top: 24px; text-align: center;">
+                    <p style="font-size: 1.1rem; font-weight: bold; margin-bottom: 8px;">Conexión Rápida TV</p>
+                    <div id="remote-qr-canvas" style="margin: 0 auto; max-width: 220px; padding: 8px; background: white; border-radius: 8px; display: flex; justify-content: center; align-items: center;"></div>
+                    <div id="remote-loading" class="qr-loading" style="padding: 20px 0;">
+                        <div class="spinner"></div>
+                        <p style="font-size: 0.85rem; color: #a1a1aa;">Generando código...</p>
+                    </div>
+                    <div id="remote-pin-info" style="margin-top: 12px; display: none;">
+                        <p style="font-size: 0.9rem; margin-bottom: 4px;">Escanea este código o visita:</p>
+                        <p style="font-size: 1rem; color: #3b82f6; font-weight: bold;" id="remote-url-text"></p>
+                        <p style="font-size: 0.9rem; margin-top: 8px;">Y escribe el PIN:</p>
+                        <p style="font-size: 2rem; font-weight: bold; letter-spacing: 4px; color: #fff; margin: 4px 0;" id="remote-pin-display">----</p>
+                    </div>
+                    <p id="remote-status" style="margin-top: 12px; font-size: 0.9rem; color: #10b981; font-weight: bold; display: none;"></p>
+                    
+                    <div style="margin: 24px 0 12px; border-top: 1px solid rgba(255,255,255,0.1); position: relative;">
+                        <span style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #1a1a2e; padding: 0 12px; font-size: 0.8rem; color: #71717a; border-radius: 4px;">O USA EL MANDO</span>
+                    </div>
+                </div>
+
+                <div id="step-phone" class="login-step active" style="margin-top: 16px;">
+                    <label>Número de teléfono</label>
+                    <div class="input-row">
+                        <input type="tel" id="input-phone" placeholder="+34 600 000 000" value="+34" autocomplete="off">
+                        <button id="btn-phone" class="btn-primary">Enviar</button>
+                    </div>
+                    <p id="phone-error" class="error-text"></p>
+                </div>
+
+                <div id="step-otp" class="login-step">
+                    <label>Código de verificación</label>
+                    <p class="hint">Te hemos enviado un código a Telegram</p>
+                    <div class="input-row">
+                        <input type="text" id="input-otp" placeholder="12345" maxlength="5" autocomplete="one-time-code">
+                        <button id="btn-otp" class="btn-primary">Verificar</button>
+                    </div>
+                    <p id="otp-error" class="error-text"></p>
+                    <p id="otp-resend" style="margin-top: 8px; text-align: center;">
+                        <a href="#" id="btn-resend-code" style="color: #8b5cf6; font-size: 0.85rem; text-decoration: none;">¿No recibiste el código? Reenviar</a>
+                    </p>
+                </div>
+
+                <div id="step-2fa" class="login-step">
+                    <label>Contraseña 2FA</label>
+                    <p class="hint">Tu cuenta tiene verificación en dos pasos</p>
+                    <div class="input-row">
+                        <input type="password" id="input-2fa" placeholder="Contraseña">
+                        <button id="btn-2fa" class="btn-primary">Entrar</button>
+                    </div>
+                    <p id="twofa-error" class="error-text"></p>
+                </div>
+
+                <div id="login-loading" class="login-step">
+                    <div class="spinner"></div>
+                    <p>Conectando con Telegram...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- APP SHELL: Unified Header, Main Nav & Viewport -->
+        <div id="app-shell" class="hidden">
+            <header id="main-topbar" class="topbar has-search">
+                <div class="topbar-main">
+                    <h1 class="topbar-title">Cine en Castellano HD</h1>
+                    <div class="topbar-actions">
+                        <button id="btn-admin-toggle-payload" class="btn-icon" style="display:none; color: #22c55e; font-size: 0.9rem;" title="Modo Dios: Fuente MP4">🎥 MP4</button>
+                        <button id="btn-admin-create-movie" class="btn-icon" style="display:none; color: #8b5cf6; font-size: 0.9rem;" title="Modo Dios: Crear Película">✨ Crear Ficha</button>
+                        <button id="btn-remote" class="btn-icon focusable btn-remote-trigger" title="Mando remoto" style="font-size:1.1rem;"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg></button>
+                        <button id="btn-logout" class="btn-icon focusable" title="Cerrar sesión">🚪</button>
+                    </div>
+                </div>
+                <div class="topbar-search">
+                    <input type="text" id="search-input" placeholder="🔍 Buscar películas, series...">
+                </div>
+            </header>
+
+            <!-- Main nav tabs: Movies / Series / Platforms / Favorites / My Content -->
+            <nav id="main-nav-bar" class="main-nav">
+                <div class="nav-tabs">
+                    <button id="nav-movies" class="main-nav-btn active">🎬 Películas</button>
+                    <button id="nav-series" class="main-nav-btn">📺 Series</button>
+                    <button id="nav-platforms" class="main-nav-btn">🌐 Plataformas</button>
+                    <button id="nav-favorites" class="main-nav-btn">⭐ Favoritos</button>
+                    <button id="nav-mycontent" class="main-nav-btn">📁 Mi Contenido</button>
+                </div>
+            </nav>
+
+            <div id="views-viewport">
+                <!-- MOVIES VIEW — Netflix layout -->
+                <div id="view-movies" class="view active">
+                    <!-- Genre tabs -->
+                    <div id="movies-genre-tabs" class="genre-tabs"></div>
+
+                    <!-- Search / Genre result grid -->
+                    <div id="movies-search-results" class="search-results">
+                        <div class="search-header">
+                            <span id="movies-count" class="search-count"></span>
+                        </div>
+                        <div id="movies-grid" class="catalog-grid"></div>
+                    </div>
+
+                    <!-- Carruseles de películas -->
+                    <div id="movies-content">
+                        <!-- Hero: 5 estrenos recientes del catálogo -->
+                        <div id="movies-hero" class="hero-section">
+                            <div id="movies-hero-backdrop" class="hero-backdrop"></div>
+                            <div class="hero-overlay"></div>
+                            <div class="hero-content">
+                                <div class="hero-badge">🎬 Estrenos</div>
+                                <h2 id="movies-hero-title" class="hero-title"></h2>
+                                <div id="movies-hero-meta" class="hero-meta"></div>
+                                <p id="movies-hero-overview" class="hero-overview"></p>
+                                <div class="hero-buttons">
+                                    <button id="movies-hero-play-btn" class="hero-btn hero-btn-primary">▶ Ver ahora</button>
+                                </div>
+                            </div>
+                            <div id="movies-hero-dots" class="hero-dots"></div>
+                        </div>
+                        <div id="continue-watching-movies" class="catalog-rows"></div>
+                        <div id="movies-rows" class="catalog-rows"></div>
+                    </div>
+                </div>
+
+                <!-- CATALOG (SERIES) -->
+                <div id="view-catalog" class="view">
+                    <!-- Genre tabs — always visible -->
+                    <div id="genre-tabs" class="genre-tabs"></div>
+
+                    <!-- Search / Genre result grid -->
+                    <div id="search-results" class="search-results">
+                        <div class="search-header">
+                            <span id="search-count" class="search-count"></span>
+                        </div>
+                        <div id="catalog-grid" class="catalog-grid"></div>
+                    </div>
+
+                    <!-- Netflix-style home -->
+                    <div id="netflix-content">
+                        <!-- Hero -->
+                        <div id="catalog-hero" class="hero-section">
+                            <div id="hero-backdrop" class="hero-backdrop"></div>
+                            <div class="hero-overlay"></div>
+                            <div class="hero-content">
+                                <div class="hero-badge">🔥 Tendencia</div>
+                                <h2 id="hero-title" class="hero-title">Cargando...</h2>
+                                <div id="hero-meta" class="hero-meta"></div>
+                                <p id="hero-overview" class="hero-overview"></p>
+                                <div class="hero-buttons">
+                                    <button id="hero-play-btn" class="hero-btn hero-btn-primary">▶ Ver ahora</button>
+                                </div>
+                            </div>
+                            <div id="hero-dots" class="hero-dots"></div>
+                        </div>
+
+                        <!-- Content rows -->
+                        <div id="continue-watching-series" class="catalog-rows"></div>
+                        <div id="catalog-rows" class="catalog-rows"></div>
+                    </div>
+                </div>
+
+                <!-- PLATFORMS VIEW -->
+                <div id="view-platforms" class="view">
+                    <div id="platforms-grid" class="platforms-grid">
+                        <!-- Logos dinámicos aquí -->
+                    </div>
+                    
+                    <div id="platform-content-section" class="hidden">
+                        <div class="search-header" style="margin-top: 16px; padding-bottom: 8px;">
+                            <button id="btn-back-platforms" class="btn-back" style="display:inline-block; margin-right: 12px; margin-bottom: 0;">←</button>
+                            <span id="platform-title" class="search-count" style="display:inline-block; font-size: 1.2rem; color: #fff; font-weight: 700;"></span>
+                        </div>
+
+                        <nav class="main-nav" id="platform-subnav" style="position: relative; top: 0; padding-top: 0; border-bottom: none; background: transparent;">
+                            <div class="nav-tabs">
+                                <button id="platform-nav-movies" class="main-nav-btn">🎬 Películas</button>
+                                <button id="platform-nav-series" class="main-nav-btn active">📺 Series</button>
+                            </div>
+                        </nav>
+                        <div id="platform-genre-tabs" class="genre-tabs" style="position: relative; top: 0; margin-bottom: 8px; border-bottom: none; background: transparent; padding-top: 0;"></div>
+
+                        <div id="platform-results-container" class="catalog-rows" style="padding-top: 0;"></div>
+                        
+                        <div id="platform-all-grid" class="catalog-grid hidden" style="padding-top: 0;"></div>
+
+                        <div id="platform-loading" class="center-message hidden">
+                            <div class="spinner"></div>
+                            <p>Buscando en catálogo...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- FAVORITES VIEW -->
+                <div id="view-favorites" class="view">
+                    <div id="favorites-tabs" class="genre-tabs-bar" style="display:flex;gap:8px;padding:10px 16px;">
+                        <button class="genre-tab active" id="fav-tab-series">📺 Series</button>
+                        <button class="genre-tab" id="fav-tab-movies">🎬 Películas</button>
+                    </div>
+                    <div id="favorites-grid" class="catalog-grid" style="padding:0 16px 20px;"></div>
+                    <div id="favorites-empty" class="center-message hidden">
+                        <p>Aún no has añadido favoritos</p>
+                    </div>
+                </div>
+
+                <!-- MI CONTENIDO VIEW -->
+                <div id="view-my-content" class="view">
+                    <div id="mycontent-wait-state" class="center-message">
+                        <div class="spinner"></div>
+                        <p style="font-size: 1.1rem; font-weight: bold; margin-bottom: 0.5rem;">Modo Escucha Activado</p>
+                        <p>Abre el bot de Telegram, envíale tus vídeos y escribe <strong style="color: #fff">/fin</strong> cuando termines.</p>
+                    </div>
+                    
+                    <div id="mycontent-results" class="search-results hidden" style="display: none;">
+                        <div class="search-header">
+                            <span id="mycontent-count" class="search-count"></span>
+                        </div>
+                        <div id="mycontent-grid" class="catalog-grid"></div>
+                    </div>
+                </div>
+
+                <!-- CONTINUE WATCHING VIEW -->
+                <div id="view-continue" class="view">
+                    <div id="continue-loading" class="center-message hidden">
+                        <div class="spinner"></div>
+                        <p>Cargando lista de reproducción...</p>
+                    </div>
+                    
+                    <div id="continue-results" class="search-results" style="display: block; margin-top: 2rem;">
+                        <div class="search-header">
+                            <span id="continue-count" class="search-count"></span>
+                        </div>
+                        <div id="continue-grid" class="catalog-grid"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ ACTOR PROFILE VIEW ═══ -->
+        <div id="view-actor-profile" class="view">
+            <div class="topbar">
+                <button class="btn-icon focusable" id="btn-actor-profile-back" title="Volver">⬅️</button>
+                <h1 id="actor-profile-title">Perfil</h1>
+            </div>
+            <div class="actor-profile-container">
+                <div class="actor-profile-sidebar">
+                    <img id="actor-profile-img" src="" alt="Foto">
+                    <div id="actor-profile-info"></div>
+                    <button class="btn-primary focusable" id="btn-actor-view-content">
+                        VER SU CONTENIDO
+                    </button>
+                </div>
+                <div class="actor-profile-main">
+                    <h2 id="actor-profile-name"></h2>
+                    <div id="actor-profile-bio" tabindex="0" class="focusable" role="region" aria-label="Biografía"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ ACTOR RESULTS VIEW ═══ -->
+        <div id="view-actor-results" class="view">
+            <div class="topbar">
+                <button class="btn-icon focusable" id="btn-actor-back" title="Volver">⬅️</button>
+                <h1 id="actor-results-title"></h1>
+            </div>
+            <div id="actor-results-grid" class="catalog-grid"></div>
+        </div>
+
+        <!-- SERIES/MOVIE DETAIL MODAL (ficha con carátula, sinopsis, puntuación) -->
+        <div id="series-detail-modal" class="modal-overlay hidden">
+            <div class="series-detail-card">
+                <div id="modal-video-container" class="modal-video-container"></div>
+                <div class="series-detail-backdrop" id="series-detail-backdrop"></div>
+                <div class="series-detail-backdrop-overlay" id="series-detail-backdrop-overlay"></div>
+                <button id="modal-mute-btn" class="series-detail-mute-btn hidden" data-muted="true">🔊 Activar sonido</button>
+                <button id="series-detail-close" class="btn-icon series-detail-close-btn">✕</button>
+                <div class="series-detail-content">
+                    <div class="series-detail-poster" id="series-detail-poster"></div>
+                    <div class="series-detail-info">
+                        <h2 id="series-detail-title" class="series-detail-title"></h2>
+                        <div id="series-detail-meta" class="series-detail-meta"></div>
+                        <div id="series-detail-genres" class="series-detail-genres"></div>
+                        <div class="series-detail-buttons">
+                            <button id="series-detail-play" class="series-detail-play-btn">▶ Reproducir</button>
+                            <button id="series-detail-trailer" class="series-detail-trailer-btn">🎬 Ver trailer</button>
+                            <button id="series-detail-fav" class="series-detail-fav-btn">⭐ Añadir a favoritos</button>
+                        </div>
+                        <p id="series-detail-overview" class="series-detail-overview"></p>
+                        <div id="series-detail-cast" class="series-detail-cast"></div>
+                    </div>
+                </div>
+                <!-- Files section (shown when Reproducir is pressed for movies) -->
+                <div id="detail-files-section" class="detail-files-section hidden">
+                    <h3 id="detail-files-title" class="detail-files-title"></h3>
+                    <div id="detail-files-loading" class="center-message">
+                        <div class="spinner"></div>
+                        <p>Buscando archivos…</p>
+                    </div>
+                    <div id="detail-files-list" class="modal-files-list hidden"></div>
+                    <div id="detail-files-error" class="modal-error hidden"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FULLSCREEN TRAILER MODAL -->
+        <div id="fullscreen-trailer-modal" class="modal-overlay hidden">
+            <div class="fullscreen-trailer-container">
+                <button id="fullscreen-trailer-close" class="fullscreen-trailer-close-btn" title="Cerrar trailer">✕</button>
+                <div id="fullscreen-trailer-wrapper" class="fullscreen-trailer-wrapper"></div>
+            </div>
+        </div>
+
+        <!-- MOVIE FILES MODAL (overlay shown when bot searches) -->
+        <div id="movie-files-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <div class="modal-header-info">
+                        <h2 id="modal-movie-title" class="modal-title"></h2>
+                        <p id="modal-movie-year" class="modal-year"></p>
+                <button id="modal-movie-fav" class="modal-fav-btn" title="Favorito">⭐</button>
+                    </div>
+                    <button id="modal-close" class="btn-icon modal-close-btn">✕</button>
+                </div>
+                <div id="modal-tmdb-info" class="modal-tmdb-info"></div>
+                <div id="modal-loading" class="center-message">
+                    <div class="spinner"></div>
+                    <p>Buscando en el bot…</p>
+                </div>
+                <div id="modal-files-list" class="modal-files-list hidden"></div>
+                <div id="modal-error" class="modal-error hidden"></div>
+            </div>
+        </div>
+
+                <!-- SERIES RESUME MODAL -->
+        <div id="series-resume-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <div class="modal-header-info">
+                        <h2 id="resume-series-title" class="modal-title"></h2>
+                        <p class="modal-year">Continuar reproducción</p>
+                    </div>
+                    <button id="resume-series-modal-close" class="btn-icon modal-close-btn">✖</button>
+                </div>
+                <div class="resume-options">
+                    <button id="btn-resume-series-ep" class="movie-file-item resume-btn primary">
+                        <div class="movie-file-icon">▶</div>
+                        <div class="movie-file-info">
+                            <div class="movie-file-name" id="resume-series-ep-name"></div>
+                            <div class="movie-file-meta">Continuar viendo</div>
+                        </div>
+                    </button>
+                    <button id="btn-resume-series-detail" class="movie-file-item resume-btn secondary">
+                        <div class="movie-file-icon">📺</div>
+                        <div class="movie-file-info">
+                            <div class="movie-file-name">Ver capítulos</div>
+                            <div class="movie-file-meta">Abrir detalles de la serie</div>
+                        </div>
+                    </button>
+                    <button id="btn-resume-series-seen" class="movie-file-item resume-btn danger focusable" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.4);">
+                        <div class="movie-file-icon" style="color: #ef4444;">👁️</div>
+                        <div class="movie-file-info">
+                            <div class="movie-file-name" style="color: #ef4444;">Ya visto</div>
+                            <div class="movie-file-meta">Quitar de Seguir Viendo y reiniciar</div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MOVIE RESUME MODAL (prompt to resume specific file or select another) -->
+        <div id="movie-resume-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <div class="modal-header-info">
+                        <h2 id="resume-movie-title" class="modal-title"></h2>
+                        <p class="modal-year">Continuar reproducción</p>
+                    </div>
+                    <button id="resume-modal-close" class="btn-icon modal-close-btn">✕</button>
+                </div>
+                <div class="resume-options">
+                    <button id="btn-resume-file" class="movie-file-item resume-btn primary">
+                        <div class="movie-file-icon">▶</div>
+                        <div class="movie-file-info">
+                            <div class="movie-file-name" id="resume-file-name"></div>
+                            <div class="movie-file-meta">Continuar viendo</div>
+                        </div>
+                    </button>
+                    <button id="btn-resume-other" class="movie-file-item resume-btn secondary">
+                        <div class="movie-file-icon">📂</div>
+                        <div class="movie-file-info">
+                            <div class="movie-file-name">Elegir otro archivo</div>
+                            <div class="movie-file-meta">Empezar de cero con otra versión</div>
+                        </div>
+                    </button>
+                    <button id="btn-resume-movie-seen" class="movie-file-item resume-btn danger focusable" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.4);">
+                        <div class="movie-file-icon" style="color: #ef4444;">👁️</div>
+                        <div class="movie-file-info">
+                            <div class="movie-file-name" style="color: #ef4444;">Ya visto</div>
+                            <div class="movie-file-meta">Quitar de Seguir Viendo y reiniciar</div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- CONTINUE WATCHING CONTEXT MODAL (Long-press on Continue Watching card) -->
+        <div id="continue-context-modal" class="modal-overlay hidden" style="z-index: 99999;">
+            <div class="modal-card" style="max-width: 380px; text-align: center; padding: 24px;">
+                <div class="modal-header" style="margin-bottom: 12px; justify-content: center; position: relative;">
+                    <div class="modal-header-info">
+                        <h2 id="continue-context-title" class="modal-title" style="font-size: 1.25rem;"></h2>
+                        <p class="modal-year">Opciones de reproducción</p>
+                    </div>
+                    <button id="continue-context-close" class="btn-icon modal-close-btn" style="position: absolute; right: 0; top: 0;">✕</button>
+                </div>
+                <div class="resume-options">
+                    <button id="btn-context-seen" class="movie-file-item resume-btn danger focusable" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.4);">
+                        <div class="movie-file-icon" style="color: #ef4444;">👁️</div>
+                        <div class="movie-file-info">
+                            <div class="movie-file-name" style="color: #ef4444;">Ya visto</div>
+                            <div class="movie-file-meta">Quitar del carrusel y reiniciar progreso</div>
+                        </div>
+                    </button>
+                    <button id="btn-context-cancel" class="movie-file-item resume-btn secondary focusable">
+                        <div class="movie-file-icon">↩</div>
+                        <div class="movie-file-info">
+                            <div class="movie-file-name">Cancelar</div>
+                            <div class="movie-file-meta">Volver atrás</div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- SERIES DETAIL (seasons from bot) -->
+        <div id="view-series" class="view">
+            <header class="topbar">
+                <button id="btn-back-catalog" class="btn-back">←</button>
+                <h1 id="series-title" class="topbar-title"></h1>
+            </header>
+            <div id="alt-version-toggle" class="alt-version-toggle hidden">
+                <button id="btn-alt-version" class="btn-alt-version">🎬 Versión: Blanco y Negro</button>
+            </div>
+            <div id="series-loading" class="center-message">
+                <div class="spinner"></div>
+                <p>Consultando temporadas...</p>
+            </div>
+            <div id="seasons-list" class="seasons-list"></div>
+        </div>
+
+        <!-- EPISODES -->
+        <div id="view-episodes" class="view">
+            <header class="topbar">
+                <button id="btn-back-series" class="btn-back">←</button>
+                <h1 id="episodes-title" class="topbar-title"></h1>
+            </header>
+            <div id="season-recap-container" class="season-recap-container hidden"></div>
+            <div id="episodes-loading" class="center-message">
+                <div class="spinner"></div>
+                <p>Cargando episodios...</p>
+            </div>
+            <div id="episodes-list" class="episodes-list"></div>
+        </div>
+
+        <!-- PLAYER -->
+        <div id="view-player" class="view">
+            <header class="topbar">
+                <button id="btn-back-player" class="btn-back">←</button>
+                <div class="topbar-info">
+                    <h1 id="player-title" class="topbar-title"></h1>
+                    <p id="player-subtitle" class="topbar-sub"></p>
+                </div>
+            </header>
+            <div id="player-container" style="position: relative; width: 100%; flex: 1; background: #000; display: flex; flex-direction: column;">
+                <div id="player-download" class="download-overlay">
+                    <div class="download-card">
+                        <div class="spinner"></div>
+                        <p id="download-text">Preparando vídeo...</p>
+                        <div class="progress-bar">
+                            <div id="download-progress" class="progress-fill"></div>
+                        </div>
+                        <p id="download-percent">0%</p>
+                    </div>
+                </div>
+                <video id="video-player" controls style="position:relative;z-index:1;width:100%;height:100%;background:transparent;"></video>
+                <button id="btn-skip-intro" class="skip-btn hidden">Saltar Intro</button>
+                <button id="btn-next-episode" class="skip-btn hidden">▶ Siguiente Capítulo</button>
+            </div>
+        </div>
+        
+        <!-- MPV Loading Overlay -->
+        <div id="mpv-loader" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,10,12,0.95);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:9999;">
+            <div class="spinner" style="width:50px;height:50px;border-width:4px;"></div>
+            <h2 style="margin-top:20px;font-size:1.5rem;font-weight:600;">Cambiando a MPV...</h2>
+            <p style="color:#8b8e96;margin-top:8px;">Aceleración por hardware iniciada</p>
+        </div>
+
+
+        <!-- ADMIN EDIT MODAL -->
+        <div id="admin-edit-modal" class="hidden">
+            <div class="admin-edit-card">
+                <h2>✏️ Editar Ficha</h2>
+                <input type="hidden" id="admin-edit-id">
+                <input type="hidden" id="admin-edit-type">
+                <div class="admin-form-group">
+                    <label>Título</label>
+                    <input type="text" id="admin-edit-title">
+                </div>
+                <div class="admin-form-group">
+                    <label>Search Title (Bot)</label>
+                    <input type="text" id="admin-edit-search-title" placeholder="Ej: matrix 1999">
+                </div>
+                <div class="admin-form-group">
+                    <label>Año TMDB</label>
+                    <input type="number" id="admin-edit-year" min="1900" max="2030">
+                </div>
+                <div class="admin-form-group">
+                    <label>TMDB ID (Forzar metadata)</label>
+                    <input type="number" id="admin-edit-tmdb-id" placeholder="Ej: 12345">
+                </div>
+                <div class="admin-form-group" id="admin-edit-payload-group">
+                    <label>Payload (solo bot)</label>
+                    <input type="text" id="admin-edit-payload">
+                </div>
+                <div class="admin-modal-actions">
+                    <button class="btn-admin-actualizar" id="admin-btn-actualizar" style="background:#8b5cf6; border:none; color:white; padding:0.6rem 1rem; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.9rem; margin-right:auto; display:none;">⏱ ACTUALIZAR</button>
+                    <button class="btn-admin-cancel" id="admin-btn-cancel">Cancelar</button>
+                    <button class="btn-admin-save" id="admin-btn-save">💾 Guardar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- RECAP MODAL (Ponte al día) -->
+        <div id="recap-modal" class="modal-overlay hidden">
+            <div class="recap-modal-card">
+                <button id="recap-modal-close" class="btn-icon recap-close-btn">✕</button>
+                <div class="recap-content-wrapper">
+                    <div class="recap-poster" id="recap-modal-poster"></div>
+                    <div class="recap-text-container">
+                        <h2 id="recap-modal-title" class="recap-title">Anteriormente en...</h2>
+                        <div id="recap-modal-text" class="recap-text"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ REMOTE CONTROL MODAL ═══ -->
+    <div id="remote-modal" class="modal-overlay hidden">
+        <div class="remote-modal-card">
+            <button id="remote-modal-close" class="btn-icon" style="position:absolute;top:12px;right:12px;font-size:1.5rem;z-index:2;">✕</button>
+            
+            <!-- TV MODE: show pairing code -->
+            <div id="remote-tv-mode" class="hidden">
+                <div class="remote-icon">📺</div>
+                <h2>Mando Remoto</h2>
+                <p class="remote-subtitle">Abre Cineflix en tu móvil y pulsa 📱 Mando</p>
+                <div id="remote-code-display" class="remote-code">----</div>
+                <p id="remote-tv-status" class="remote-status">Esperando conexión...</p>
+                <a href="#" id="remote-switch-to-mobile" class="remote-switch-link">¿Quieres usar este dispositivo como mando?</a>
+            </div>
+
+            <!-- MOBILE MODE: enter code then show controller -->
+            <div id="remote-mobile-mode" class="hidden">
+                <!-- Step 1: Enter code -->
+                <div id="remote-join-step">
+                    <div class="remote-icon">📱</div>
+                    <h2>Conectar a TV</h2>
+                    <p class="remote-subtitle">Introduce el código que aparece en la TV</p>
+                    <div class="remote-code-input-row">
+                        <input type="tel" id="remote-code-input" maxlength="4" placeholder="0000" class="remote-code-input" autocomplete="off">
+                        <button id="remote-join-btn" class="remote-join-btn">Conectar</button>
+                    </div>
+                    <p id="remote-join-error" class="remote-error hidden"></p>
+                    <a href="#" id="remote-switch-to-tv" class="remote-switch-link">¿Quieres mostrar el código aquí?</a>
+                </div>
+
+                <!-- Step 2: Controller pad -->
+                <div id="remote-pad-step" class="hidden">
+                    <p id="remote-mobile-status" class="remote-status remote-connected">✓ Conectado a la TV</p>
+                    <div class="remote-top-shortcuts" style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px;">
+                        <button class="remote-action-btn" data-key="NavMovies" style="font-size:0.8rem; padding:8px 6px;">🎬 Películas</button>
+                        <button class="remote-action-btn" data-key="NavSeries" style="font-size:0.8rem; padding:8px 6px;">📺 Series</button>
+                        <button class="remote-action-btn" id="btn-remote-platforms" style="font-size:0.8rem; padding:8px 6px;">🌐 Plataformas</button>
+                        <button class="remote-action-btn" data-key="NavFavorites" style="font-size:0.8rem; padding:8px 6px;">⭐ Favoritos</button>
+                    </div>
+                    <!-- Platforms quick-menu (hidden by default) -->
+                    <div id="remote-platforms-panel" class="hidden" style="margin-bottom: 12px;">
+                        <div id="remote-platforms-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; padding:8px; background:rgba(255,255,255,0.04); border-radius:12px;"></div>
+                    </div>
+                    <div style="display: flex; justify-content: center; margin-bottom: 15px;">
+                        <button id="btn-remote-total" class="remote-action-btn" style="background:#8b5cf6; color:white; font-weight:bold; width: 100%; display: none;">🎮 CONTROL TOTAL</button>
+                    </div>
+                    <div class="remote-dpad">
+                        <button class="remote-dpad-btn remote-dpad-up" data-key="ArrowUp">▲</button>
+                        <button class="remote-dpad-btn remote-dpad-left" data-key="ArrowLeft">◄</button>
+                        <button class="remote-dpad-btn remote-dpad-ok" data-key="Enter">OK</button>
+                        <button class="remote-dpad-btn remote-dpad-right" data-key="ArrowRight">►</button>
+                        <button class="remote-dpad-btn remote-dpad-down" data-key="ArrowDown">▼</button>
+                    </div>
+                    <div class="remote-actions">
+                        <button class="remote-action-btn" data-key="Backspace" title="Atrás">⬅️ Atrás</button>
+                        <button class="remote-action-btn" data-key="PlayPause" title="Play/Pausa">⏯️</button>
+                        <button id="remote-kb-btn" class="remote-action-btn" title="Teclado">⌨️ Buscar</button>
+                    </div>
+                    <div id="remote-kb-row" class="remote-kb-row hidden">
+                        <input type="text" id="remote-text-input" placeholder="Escribe para buscar..." class="remote-text-input" autocomplete="off">
+                        <button id="remote-text-send" class="remote-join-btn">Enviar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="total-control-indicator" class="hidden" style="position:fixed; top:20px; left:50%; transform:translateX(-50%); background:rgba(139,92,246,0.95); color:white; padding:12px 24px; border-radius:30px; box-shadow:0 10px 25px rgba(0,0,0,0.5); z-index:9999; display:flex; align-items:center; gap:12px; font-weight:600; font-size:0.95rem; backdrop-filter:blur(10px);">
+        🎮 Control Total Activo
+        <button id="btn-exit-total-control" style="background:rgba(255,255,255,0.2); border:none; color:white; padding:6px 12px; border-radius:15px; cursor:pointer; font-weight:bold; transition:background 0.2s;">Salir</button>
+    </div>
+
+    <!-- VIRTUAL KEYBOARD FOR TV SEARCH -->
+    <div id="vk-overlay" class="vk-overlay hidden">
+        <div class="vk-container">
+            <div class="vk-preview">
+                <span class="vk-label">🔍 Buscar:</span>
+                <span id="vk-text" class="vk-text"></span>
+                <span class="vk-cursor">|</span>
+            </div>
+            <div class="vk-rows" id="vk-rows">
+                <div class="vk-row">
+                    <button class="vk-key" data-char="1">1</button>
+                    <button class="vk-key" data-char="2">2</button>
+                    <button class="vk-key" data-char="3">3</button>
+                    <button class="vk-key" data-char="4">4</button>
+                    <button class="vk-key" data-char="5">5</button>
+                    <button class="vk-key" data-char="6">6</button>
+                    <button class="vk-key" data-char="7">7</button>
+                    <button class="vk-key" data-char="8">8</button>
+                    <button class="vk-key" data-char="9">9</button>
+                    <button class="vk-key" data-char="0">0</button>
+                </div>
+                <div class="vk-row">
+                    <button class="vk-key" data-char="Q">Q</button>
+                    <button class="vk-key" data-char="W">W</button>
+                    <button class="vk-key" data-char="E">E</button>
+                    <button class="vk-key" data-char="R">R</button>
+                    <button class="vk-key" data-char="T">T</button>
+                    <button class="vk-key" data-char="Y">Y</button>
+                    <button class="vk-key" data-char="U">U</button>
+                    <button class="vk-key" data-char="I">I</button>
+                    <button class="vk-key" data-char="O">O</button>
+                    <button class="vk-key" data-char="P">P</button>
+                </div>
+                <div class="vk-row">
+                    <button class="vk-key" data-char="A">A</button>
+                    <button class="vk-key" data-char="S">S</button>
+                    <button class="vk-key" data-char="D">D</button>
+                    <button class="vk-key" data-char="F">F</button>
+                    <button class="vk-key" data-char="G">G</button>
+                    <button class="vk-key" data-char="H">H</button>
+                    <button class="vk-key" data-char="J">J</button>
+                    <button class="vk-key" data-char="K">K</button>
+                    <button class="vk-key" data-char="L">L</button>
+                    <button class="vk-key" data-char="Ñ">Ñ</button>
+                </div>
+                <div class="vk-row">
+                    <button class="vk-key" data-char="Z">Z</button>
+                    <button class="vk-key" data-char="X">X</button>
+                    <button class="vk-key" data-char="C">C</button>
+                    <button class="vk-key" data-char="V">V</button>
+                    <button class="vk-key" data-char="B">B</button>
+                    <button class="vk-key" data-char="N">N</button>
+                    <button class="vk-key" data-char="M">M</button>
+                </div>
+                <div class="vk-row vk-row-actions">
+                    <button class="vk-key vk-space" data-action="space">Espacio</button>
+                    <button class="vk-key vk-delete" data-action="delete">⌫ Borrar</button>
+                    <button class="vk-key vk-search" data-action="search">🔍 Buscar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // TV detection flag — only true for actual TV platforms, never for phones/tablets
+        window._cineflixIsTV = false;
+        (function(){
+            var ua = navigator.userAgent;
+            // If it's clearly a phone/tablet, never flag as TV
+            if (/Android.+Mobile|iPhone|iPad|iPod/i.test(ua)) return;
+            // Only flag actual TV platforms
+            if (/\bTV\b|Smart\-?TV|Tizen|WebOS|CrKey|FireTV|AFT[MBTSK]|Bravia|Viera|Roku/i.test(ua)) {
+                window._cineflixIsTV = true;
+            }
+            // Allow ?tv=1 for testing VK on desktop
+            if (new URLSearchParams(window.location.search).get('tv') === '1') {
+                window._cineflixIsTV = true;
+            }
+        })();
+    </script>
+    <script src="./qrcode.min.js"></script>
+    <script src="./tv-nav.js?v=2.54" defer></script>
+
+</body>
+</html>
+  

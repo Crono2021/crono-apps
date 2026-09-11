@@ -21,7 +21,9 @@ class TdlibMemoryDataSource(
     companion object {
         private const val TAG = "TdlibMemoryDataSource"
         private const val ALIGNMENT = 131072L
-        private const val CHUNK_SIZE = 131072L // 128 KB
+        private const val PROBE_CHUNK_SIZE = 128L * 1024L        // 128 KB for headers / small probes
+        private const val FIRST_CHUNK_SIZE = 512L * 1024L        // 512 KB for instant initial frame
+        private const val STREAM_CHUNK_SIZE = 2L * 1024L * 1024L  // 2 MB for smooth continuous playback
     }
 
     private var effectiveParts: List<FilePart> = emptyList()
@@ -186,41 +188,58 @@ class TdlibMemoryDataSource(
             }
         }
 
-        // Align request to CHUNK_SIZE
-        val alignedOffset = localOffset - (localOffset % ALIGNMENT)
-        
-        // Clamp chunk size
-        var chunkSizeToDownload = CHUNK_SIZE
-        val maxAvailable = partLoc.partSize - alignedOffset
-        if (maxAvailable > 0 && maxAvailable < CHUNK_SIZE) {
-            chunkSizeToDownload = maxAvailable
+        // Determine optimal chunk size
+        val desiredChunk = if (localOffset < 256L * 1024L && ramBuffer == null) {
+            PROBE_CHUNK_SIZE
+        } else if (ramBuffer == null) {
+            FIRST_CHUNK_SIZE
+        } else {
+            STREAM_CHUNK_SIZE
         }
 
-        // Fetch
-        var fetchedBytes: ByteArray? = null
-        var retries = 0
-        while (retries < 3) {
-            if (Thread.currentThread().isInterrupted) {
-                throw java.io.InterruptedIOException("DataSource read interrupted")
-            }
-            try {
-                fetchedBytes = engine.downloadRangeAndRead(activeFileId, alignedOffset, chunkSizeToDownload)
-                if (fetchedBytes != null && fetchedBytes.isNotEmpty()) {
-                    break
+        // Align request to ALIGNMENT (128 KB boundary)
+        val alignedOffset = localOffset - (localOffset % ALIGNMENT)
+        val maxAvailable = partLoc.partSize - alignedOffset
+        if (maxAvailable <= 0L) return -1
+
+        val blocks = ((desiredChunk + ALIGNMENT - 1) / ALIGNMENT)
+        val chunkSizeToDownload = minOf(blocks * ALIGNMENT, maxAvailable)
+
+        // 1. Proactive background prefetch for the NEXT chunk immediately!
+        val nextOffset = alignedOffset + chunkSizeToDownload
+        if (desiredChunk >= FIRST_CHUNK_SIZE && nextOffset < partLoc.partSize) {
+            engine.hintDownloadOffset(activeFileId, nextOffset, STREAM_CHUNK_SIZE)
+        }
+
+        // 2. Fast-path: Check if TDLib already downloaded this chunk in memory/disk cache
+        var fetchedBytes: ByteArray? = engine.readFilePartSync(activeFileId, alignedOffset, chunkSizeToDownload)
+
+        // 3. Download synchronously from Telegram CDN if not yet in cache
+        if (fetchedBytes == null || fetchedBytes.isEmpty()) {
+            var retries = 0
+            while (retries < 5) {
+                if (Thread.currentThread().isInterrupted) {
+                    throw java.io.InterruptedIOException("DataSource read interrupted")
                 }
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                throw java.io.InterruptedIOException("DataSource read interrupted: ${e.message}")
-            }
-            if (Thread.currentThread().isInterrupted) {
-                throw java.io.InterruptedIOException("DataSource thread interrupted")
-            }
-            retries++
-            try {
-                Thread.sleep(200)
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                throw java.io.InterruptedIOException("DataSource sleep interrupted")
+                try {
+                    fetchedBytes = engine.downloadRangeAndRead(activeFileId, alignedOffset, chunkSizeToDownload)
+                    if (fetchedBytes != null && fetchedBytes.isNotEmpty()) {
+                        break
+                    }
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw java.io.InterruptedIOException("DataSource read interrupted: ${e.message}")
+                }
+                if (Thread.currentThread().isInterrupted) {
+                    throw java.io.InterruptedIOException("DataSource thread interrupted")
+                }
+                retries++
+                try {
+                    Thread.sleep(150L * retries)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw java.io.InterruptedIOException("DataSource sleep interrupted")
+                }
             }
         }
         
@@ -254,6 +273,7 @@ class TdlibMemoryDataSource(
             val state = engine.getFileStateFlow(activeFileId).value
             if (state != null && state.expectedSize > 0 && localOffset >= state.expectedSize) {
                 Log.d(TAG, "EOF reached at part localOffset=$localOffset")
+                return -1
             }
             throw IOException("Failed to fetch TDLib chunk at offset=$alignedOffset (Timeout or Error)")
         }
@@ -268,6 +288,9 @@ class TdlibMemoryDataSource(
             this.opened = false
             transferEnded()
             this.dataSpec = null
+            ramBuffer = null
+            ramBufferOffset = -1L
+            ramBufferFileId = -1
             Log.d(TAG, "DataSource closed safely without terminating TDLib download")
         }
     }

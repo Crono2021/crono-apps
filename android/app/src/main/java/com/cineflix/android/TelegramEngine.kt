@@ -651,13 +651,13 @@ class TelegramEngine(private val context: Context) {
                     chunk = result.data
                 }
             } else if (result is TdApi.Error) {
-                Log.w(TAG, "ReadFilePart error: ${result.code} ${result.message} fileId=$fileId offset=$offset count=$count")
+                Log.d(TAG, "ReadFilePart miss: ${result.code} ${result.message} fileId=$fileId offset=$offset count=$count")
             }
             latch.countDown()
         } ?: return null
 
         try {
-            latch.await(3_000, java.util.concurrent.TimeUnit.MILLISECONDS)
+            latch.await(5_000, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
             return null
@@ -681,9 +681,9 @@ class TelegramEngine(private val context: Context) {
             downloadLatch.countDown()
         } ?: return null
 
-        // Wait up to 10s for TDLib to fetch from Telegram CDN (faster fallback/retry)
+        // Wait up to 30s for TDLib to fetch from Telegram CDN (resilient against network spikes)
         try {
-            if (!downloadLatch.await(10_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+            if (!downloadLatch.await(30_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
                 Log.w(TAG, "downloadRangeAndRead TIMEOUT offset=$offset count=$count")
                 return null
             }

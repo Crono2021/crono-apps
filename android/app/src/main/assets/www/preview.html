@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cineflix - Animación Intro Preview (Fondo Blanco)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            background-color: #f3f4f6;
+            color: #111827;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .preview-container {
+            position: relative;
+            width: 900px;
+            height: 400px;
+            background: #ffffff;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* ── ANIMATIONS ── */
+        
+        /* Letters C I N E F L X */
+        .letter {
+            opacity: 0;
+            animation: fadeInLetter 0.5s ease-out forwards;
+        }
+        .letter-c { animation-delay: 0.1s; }
+        .letter-i1 { animation-delay: 0.2s; }
+        .letter-n { animation-delay: 0.3s; }
+        .letter-e { animation-delay: 0.4s; }
+        .letter-f { animation-delay: 0.5s; }
+        .letter-l { animation-delay: 0.6s; }
+        .letter-x { animation-delay: 0.7s; }
+        .popcorn-tub-group {
+            opacity: 0;
+            animation: fadeInLetter 0.5s ease-out forwards 0.65s;
+        }
+
+        @keyframes fadeInLetter {
+            0% { opacity: 0; filter: blur(10px); }
+            100% { opacity: 1; filter: blur(0); }
+        }
+
+        /* Playful Cat - Strolling Elegantly & Leaping */
+        #playful-cat {
+            opacity: 0;
+            transform-box: fill-box;
+            transform-origin: center;
+            /* 3.1s duration + 0.8s delay -> lands at 3.9s */
+            animation: catJourney 3.1s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards 0.8s;
+        }
+
+        @keyframes catJourney {
+            0% { transform: translate(-80px, 190px) scale(0.95) rotate(15deg); opacity: 0; }
+            5% { transform: translate(-20px, 195px) scale(0.95) rotate(0deg); opacity: 1; }
+            /* Slow, elegant crawl over C - I - N - E - F - L */
+            25% { transform: translate(110px, 182px) scale(0.95) rotate(-6deg); }
+            45% { transform: translate(250px, 185px) scale(0.95) rotate(6deg); }
+            65% { transform: translate(380px, 182px) scale(0.95) rotate(-6deg); }
+            80% { transform: translate(470px, 190px) scale(0.95) rotate(0deg); } /* Stops at L, prepares to leap */
+            84% { transform: translate(465px, 195px) scale(0.95) rotate(-15deg); } /* Winds up */
+            /* Elegant, higher leap */
+            90% { transform: translate(500px, 50px) scale(0.95) rotate(-40deg); }
+            95% { transform: translate(530px, 40px) scale(0.95) rotate(20deg); }
+            /* Dives into the tub (center x=555) */
+            98% { transform: translate(542px, 115px) scale(0.95) rotate(90deg); opacity: 1; }
+            100% { transform: translate(542px, 115px) scale(0.95) rotate(90deg); opacity: 0; }
+        }
+
+        /* Stuck Cat */
+        #stuck-cat {
+            opacity: 0;
+            animation: revealStuckCat 0.05s forwards 3.84s;
+        }
+
+        @keyframes revealStuckCat {
+            0% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+
+        /* Legs wiggle */
+        #left-leg {
+            transform-origin: 548px 140px;
+            animation: legWiggleLeft 0.25s ease-in-out infinite alternate 3.9s;
+        }
+        #right-leg {
+            transform-origin: 562px 140px;
+            animation: legWiggleRight 0.25s ease-in-out infinite alternate 3.95s;
+        }
+
+        @keyframes legWiggleLeft {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(-25deg); }
+        }
+        @keyframes legWiggleRight {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(25deg); }
+        }
+
+        /* Tail growth & curl */
+        #cat-tail {
+            stroke-dasharray: 100;
+            stroke-dashoffset: 100;
+            animation: drawTail 0.9s cubic-bezier(0.4, 0, 0.2, 1) forwards 3.9s;
+        }
+
+        @keyframes drawTail {
+            0% { stroke-dashoffset: 100; }
+            100% { stroke-dashoffset: 0; }
+        }
+
+        /* Glowing Dot */
+        #tail-dot {
+            opacity: 0;
+            transform-origin: 555px 45px;
+            transform: scale(0);
+            animation: glowShow 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards 4.7s;
+        }
+
+        @keyframes glowShow {
+            0% { transform: scale(0); opacity: 0; }
+            70% { transform: scale(1.6); opacity: 1; filter: drop-shadow(0 0 12px #e50914) brightness(1.2); }
+            100% { transform: scale(1); opacity: 1; filter: drop-shadow(0 0 6px #e50914); }
+        }
+
+        /* Popcorn Splash */
+        .popcorn-splash-piece {
+            opacity: 0;
+            transform-origin: center;
+        }
+        #splash-1 { animation: splashLeft 0.6s ease-out forwards 3.84s; }
+        #splash-2 { animation: splashRight 0.6s ease-out forwards 3.84s; }
+        #splash-3 { animation: splashFarLeft 0.6s ease-out forwards 3.84s; }
+        #splash-4 { animation: splashFarRight 0.6s ease-out forwards 3.84s; }
+
+        @keyframes splashLeft {
+            0% { transform: translate(0, 0) scale(1); opacity: 0; }
+            10% { opacity: 1; }
+            50% { transform: translate(-30px, -40px) scale(0.9); }
+            100% { transform: translate(-45px, -15px) scale(0.3); opacity: 0; }
+        }
+        @keyframes splashRight {
+            0% { transform: translate(0, 0) scale(1); opacity: 0; }
+            10% { opacity: 1; }
+            50% { transform: translate(30px, -45px) scale(0.9); }
+            100% { transform: translate(45px, -20px) scale(0.3); opacity: 0; }
+        }
+        @keyframes splashFarLeft {
+            0% { transform: translate(0, 0) scale(1); opacity: 0; }
+            10% { opacity: 1; }
+            50% { transform: translate(-50px, -20px) scale(0.8); }
+            100% { transform: translate(-65px, 5px) scale(0.2); opacity: 0; }
+        }
+        @keyframes splashFarRight {
+            0% { transform: translate(0, 0) scale(1); opacity: 0; }
+            10% { opacity: 1; }
+            50% { transform: translate(50px, -25px) scale(0.8); }
+            100% { transform: translate(65px, 0px) scale(0.2); opacity: 0; }
+        }
+
+        /* Controls */
+        .controls {
+            margin-top: 30px;
+            display: flex;
+            gap: 15px;
+            z-index: 10;
+        }
+
+        button {
+            background: #e50914;
+            color: #fff;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1rem;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 15px rgba(229, 9, 20, 0.3);
+        }
+
+        button:hover {
+            background: #ff1f2d;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(229, 9, 20, 0.5);
+        }
+
+        button:active {
+            transform: translateY(1px);
+        }
+
+        .info {
+            margin-top: 15px;
+            color: #6b7280;
+            font-size: 0.85rem;
+            max-width: 500px;
+            text-align: center;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+
+    <h1 style="font-size: 1.8rem; margin-bottom: 20px; font-weight: 800; color: #e50914; letter-spacing: 0.05em;">CINEFLIX INTRO PROTOTYPE</h1>
+
+    <div class="preview-container">
+        <svg viewBox="0 0 800 350" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <!-- Soft shadow for letters on white background -->
+                <filter id="soft-shadow" x="-10%" y="-10%" width="120%" height="120%">
+                    <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#000000" flood-opacity="0.1" />
+                    <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#e50914" flood-opacity="0.15" />
+                </filter>
+            </defs>
+
+            <!-- CINEFLIX Letters -->
+            <g font-family="'Inter', sans-serif" font-weight="900" font-size="105" fill="#e50914" filter="url(#soft-shadow)">
+                <text x="100" y="240" class="letter letter-c">C</text>
+                <text x="185" y="240" class="letter letter-i1">I</text>
+                <text x="225" y="240" class="letter letter-n">N</text>
+                <text x="315" y="240" class="letter letter-e">E</text>
+                <text x="395" y="240" class="letter letter-f">F</text>
+                <text x="470" y="240" class="letter letter-l">L</text>
+                
+                <!-- Popcorn Tub Group replacing the second I (centered at x=555) -->
+                <g class="popcorn-tub-group">
+                    <!-- Popcorn Pieces (yellow & white) -->
+                    <circle cx="540" cy="155" r="9" fill="#fffecd" stroke="#d4af37" stroke-width="1.5" />
+                    <circle cx="555" cy="151" r="11" fill="#fff" stroke="#d4af37" stroke-width="1.5" />
+                    <circle cx="570" cy="155" r="9" fill="#fffecd" stroke="#d4af37" stroke-width="1.5" />
+                    <circle cx="547" cy="148" r="8" fill="#fff" stroke="#d4af37" stroke-width="1.5" />
+                    <circle cx="563" cy="148" r="9" fill="#fffecd" stroke="#d4af37" stroke-width="1.5" />
+                    
+                    <!-- White Tub Base -->
+                    <polygon points="530,160 580,160 570,240 540,240" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" />
+                    <!-- Red Stripes -->
+                    <polygon points="537,160 543,160 544,240 541,240" fill="#e50914" />
+                    <polygon points="552,160 558,160 556,240 554,240" fill="#e50914" />
+                    <polygon points="567,160 573,160 568,240 566,240" fill="#e50914" />
+                    <!-- Tub Rim -->
+                    <rect x="527" y="157" width="56" height="5" rx="2" fill="#e50914" />
+                </g>
+
+                <text x="615" y="240" class="letter letter-x">X</text>
+            </g>
+
+            <!-- Playful Cat (Running/Jumping) - Made larger (scale 0.95 instead of 0.55) -->
+            <g id="playful-cat">
+                <!-- Cat Body Silhouette -->
+                <path d="M -15,5 Q 0,-15 15,5 Q 10,15 -15,5" fill="#111115" />
+                <!-- Head -->
+                <circle cx="15" cy="-4" r="10" fill="#111115" />
+                <!-- Ears -->
+                <polygon points="8,-10 11,-20 17,-12" fill="#111115" />
+                <polygon points="15,-12 21,-20 20,-10" fill="#111115" />
+                <!-- Green Eyes -->
+                <ellipse cx="12" cy="-5" rx="1.5" ry="2.5" fill="#39ff14" />
+                <ellipse cx="18" cy="-5" rx="1.5" ry="2.5" fill="#39ff14" />
+                <!-- Tail -->
+                <path d="M -13,5 Q -22,-3 -18,-15" stroke="#111115" stroke-width="3.5" fill="none" stroke-linecap="round" />
+            </g>
+
+            <!-- Stuck Cat (Butt & Legs wiggling, Tail curls) - Enlarged proportionally -->
+            <g id="stuck-cat">
+                <!-- Popcorn Splash particles (hidden initially, animate on impact) -->
+                <g id="popcorn-splash">
+                    <circle id="splash-1" class="popcorn-splash-piece" cx="545" cy="145" r="5" fill="#fffecd" stroke="#d4af37" stroke-width="1" />
+                    <circle id="splash-2" class="popcorn-splash-piece" cx="565" cy="145" r="4.5" fill="#fff" stroke="#d4af37" stroke-width="1" />
+                    <circle id="splash-3" class="popcorn-splash-piece" cx="540" cy="148" r="5.5" fill="#fffecd" />
+                    <circle id="splash-4" class="popcorn-splash-piece" cx="570" cy="148" r="4.5" fill="#fff" />
+                </g>
+
+                <!-- Butt stuck out of tub (Enlarged) -->
+                <ellipse cx="555" cy="140" rx="18" ry="15" fill="#111115" />
+                
+                <!-- Back legs (Enlarged) -->
+                <path id="left-leg" d="M 548,138 C 543,118 535,110 535,110" stroke="#111115" stroke-width="8" stroke-linecap="round" fill="none" />
+                <path id="right-leg" d="M 562,138 C 567,118 575,110 575,110" stroke="#111115" stroke-width="8" stroke-linecap="round" fill="none" />
+                
+                <!-- Animated Tail (Enlarged) -->
+                <path id="cat-tail" d="M 555,140 Q 535,105 545,85 T 555,70" stroke="#111115" stroke-width="8.5" stroke-linecap="round" fill="none" />
+                
+                <!-- Glowing I-dot at the end of the tail (Enlarged) -->
+                <circle id="tail-dot" cx="555" cy="45" r="11" fill="#e50914" />
+            </g>
+        </svg>
+    </div>
+
+    <div class="controls">
+        <button onclick="playIntro()">▶ Reproducir Animación</button>
+    </div>
+
+    <p class="info">
+        Actualizado: Fondo blanco para contraste, gata un 70% más grande y paseo ralentizado y elegante.<br>
+        Al pulsar "Reproducir Animación", se cargará y sincronizará el sonido TUDUM.
+    </p>
+
+    <script>
+        // Sincronización del Audio TUDUM
+        let audio = null;
+
+        function playIntro() {
+            // Re-mount the SVG elements to restart the animations
+            const container = document.querySelector('.preview-container');
+            const svgHTML = container.innerHTML;
+            container.innerHTML = '';
+            
+            // Play TUDUM Audio aligned with the jump
+            if (audio) {
+                audio.pause();
+                audio.currentTime = 0;
+            }
+            audio = new Audio('/tudum.mp3');
+            audio.volume = 0.8;
+            
+            // Trigger audio at 3.2 seconds (just as the cat begins the wind-up and leap)
+            // so the main bass impact hits exactly at 3.90s when it lands headfirst
+            setTimeout(() => {
+                audio.play().catch(err => console.log("Autoplay blocked:", err));
+            }, 3200);
+
+            // Re-render SVG to restart all CSS keyframes
+            container.innerHTML = svgHTML;
+        }
+
+        // Play on load
+        window.addEventListener('DOMContentLoaded', () => {
+            setTimeout(playIntro, 500);
+        });
+    </script>
+</body>
+</html>
