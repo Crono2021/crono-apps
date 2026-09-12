@@ -65,7 +65,11 @@ object ErrorLogCollector {
         sb.appendLine("Dispositivo: ${Build.DEVICE}")
         sb.appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         sb.appendLine("ABIs soportadas: ${Build.SUPPORTED_ABIS.joinToString(", ")}")
-        sb.appendLine("App Version: 1.4.3h (versionCode 29)")
+        val pkgInfo = try { context.packageManager.getPackageInfo(context.packageName, 0) } catch (_: Exception) { null }
+        val vName = pkgInfo?.versionName ?: "1.4.3i"
+        @Suppress("DEPRECATION")
+        val vCode = pkgInfo?.versionCode ?: 30
+        sb.appendLine("App Version: $vName (versionCode $vCode)")
         sb.appendLine()
 
         // 2. Memoria y Almacenamiento

@@ -99,7 +99,39 @@ class TelegramEngine(private val context: Context) {
 
     // ── Init ─────────────────────────────────────────────────────────────────
     init {
+        ensureDirectoriesExist()
         initClient()
+    }
+
+    /**
+     * Ensure TDLib database and cache directory hierarchy strictly exists on disk.
+     * Prevents native C++ POSIX ENOENT (errno: 2) errors when TDLib creates temp files or chunks.
+     */
+    fun ensureDirectoriesExist() {
+        try {
+            val dbDir = File(context.filesDir, "tdlib_data")
+            if (!dbDir.exists()) dbDir.mkdirs()
+            dbDir.setReadable(true, false)
+            dbDir.setWritable(true, false)
+            dbDir.setExecutable(true, false)
+
+            val cacheBase = File(context.cacheDir, "tdlib_files")
+            if (!cacheBase.exists()) cacheBase.mkdirs()
+            cacheBase.setReadable(true, false)
+            cacheBase.setWritable(true, false)
+            cacheBase.setExecutable(true, false)
+
+            val subdirs = listOf("temp", "videos", "documents", "thumbnails", "profile_photos")
+            for (sub in subdirs) {
+                val d = File(cacheBase, sub)
+                if (!d.exists()) d.mkdirs()
+                d.setReadable(true, false)
+                d.setWritable(true, false)
+                d.setExecutable(true, false)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error ensuring TDLib directory structure: ${e.message}", e)
+        }
     }
 
     private fun initClient() {
@@ -128,6 +160,7 @@ class TelegramEngine(private val context: Context) {
         Log.i(TAG, "Auth state: ${state.javaClass.simpleName}")
         when (state) {
             is TdApi.AuthorizationStateWaitTdlibParameters -> {
+                ensureDirectoriesExist()
                 val dbPath = File(context.filesDir, "tdlib_data").absolutePath
                 val cachePath = File(context.cacheDir, "tdlib_files").absolutePath
                 client?.send(TdApi.SetTdlibParameters(
@@ -153,15 +186,20 @@ class TelegramEngine(private val context: Context) {
                 client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeMobileRoaming())) {}
                 client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeOther())) {}
 
-                // Cleanup stray caches at boot to rescue TV storage
+                // Cleanup stray caches at boot to rescue TV storage (delete file contents, NOT directories)
                 try {
-                    // Clean new cache directory (including streaming temp chunks)
-                    val cacheTemp = java.io.File(context.cacheDir, "tdlib_files/temp")
-                    if (cacheTemp.exists()) cacheTemp.deleteRecursively()
-                    val cacheVideos = java.io.File(context.cacheDir, "tdlib_files/videos")
-                    if (cacheVideos.exists()) cacheVideos.deleteRecursively()
-                    val cacheDocs = java.io.File(context.cacheDir, "tdlib_files/documents")
-                    if (cacheDocs.exists()) cacheDocs.deleteRecursively()
+                    val cacheBase = File(context.cacheDir, "tdlib_files")
+                    val subdirs = listOf("temp", "videos", "documents", "thumbnails")
+                    for (sub in subdirs) {
+                        val d = File(cacheBase, sub)
+                        if (d.exists() && d.isDirectory) {
+                            d.listFiles()?.forEach { file ->
+                                try { file.delete() } catch (_: Exception) {}
+                            }
+                        } else {
+                            d.mkdirs()
+                        }
+                    }
                     
                     // Clean legacy files directory (to reclaim space from old versions)
                     val legacyVideos = java.io.File(context.filesDir, "tdlib_data/videos")
@@ -171,6 +209,7 @@ class TelegramEngine(private val context: Context) {
                     val legacyPhotos = java.io.File(context.filesDir, "tdlib_data/profile_photos")
                     if (legacyPhotos.exists()) legacyPhotos.deleteRecursively()
 
+                    ensureDirectoriesExist()
                     optimizeStorage(30L * 1024 * 1024)
                 } catch (_: Exception) {}
             }
@@ -595,6 +634,7 @@ class TelegramEngine(private val context: Context) {
      */
     suspend fun startDownloadReturnPath(fileId: Int, priority: Int = 32): String? =
         withContext(Dispatchers.IO) {
+            ensureDirectoriesExist()
             Log.d(TAG, "startDownloadReturnPath fileId=$fileId priority=$priority")
             val deferred = filePathEmitters.getOrPut(fileId) { CompletableDeferred() }
 
@@ -626,6 +666,7 @@ class TelegramEngine(private val context: Context) {
      */
     suspend fun downloadAndGetPath(fileId: Int, priority: Int = 32): String =
         withContext(Dispatchers.IO) {
+            ensureDirectoriesExist()
             val deferred = filePathEmitters.getOrPut(fileId) { CompletableDeferred() }
             client?.send(TdApi.DownloadFile(fileId, priority, 0, 0, false)) { result ->
                 if (result is TdApi.File) {
@@ -639,6 +680,7 @@ class TelegramEngine(private val context: Context) {
 
     /** Hint TDLib to prioritize bytes starting at offset (for seek support) */
     fun hintDownloadOffset(fileId: Int, offset: Long, limit: Long = 2L * 1024 * 1024) {
+        ensureDirectoriesExist()
         // Specify a concrete limit so TDLib knows exactly which range to prioritize
         // instead of "everything from offset to end" (limit=0) which is too vague for large files
         client?.send(TdApi.DownloadFile(fileId, 32, offset, limit, false)) {}
@@ -676,6 +718,7 @@ class TelegramEngine(private val context: Context) {
      * Returns the bytes, or null on timeout (30s).
      */
     fun downloadRangeAndRead(fileId: Int, offset: Long, count: Long): ByteArray? {
+        ensureDirectoriesExist()
         // Step 1: Tell TDLib to download this exact range. synchronous=true blocks until ready.
         val downloadLatch = java.util.concurrent.CountDownLatch(1)
         client?.send(TdApi.DownloadFile(fileId, 32, offset, count, true)) { result ->
