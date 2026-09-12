@@ -155,7 +155,9 @@ class TelegramEngine(private val context: Context) {
 
                 // Cleanup stray caches at boot to rescue TV storage
                 try {
-                    // Clean new cache directory
+                    // Clean new cache directory (including streaming temp chunks)
+                    val cacheTemp = java.io.File(context.cacheDir, "tdlib_files/temp")
+                    if (cacheTemp.exists()) cacheTemp.deleteRecursively()
                     val cacheVideos = java.io.File(context.cacheDir, "tdlib_files/videos")
                     if (cacheVideos.exists()) cacheVideos.deleteRecursively()
                     val cacheDocs = java.io.File(context.cacheDir, "tdlib_files/documents")
@@ -168,6 +170,8 @@ class TelegramEngine(private val context: Context) {
                     if (legacyDocs.exists()) legacyDocs.deleteRecursively()
                     val legacyPhotos = java.io.File(context.filesDir, "tdlib_data/profile_photos")
                     if (legacyPhotos.exists()) legacyPhotos.deleteRecursively()
+
+                    optimizeStorage(30L * 1024 * 1024)
                 } catch (_: Exception) {}
             }
             is TdApi.AuthorizationStateLoggingOut      -> _authState.value = AuthState.LoggingOut
@@ -755,6 +759,27 @@ class TelegramEngine(private val context: Context) {
         c.send(TdApi.CancelDownloadFile(fileId, false)) { latch.countDown() }
         c.send(TdApi.DeleteFile(fileId)) { latch.countDown() }
         return latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    /**
+     * Ask TDLib's native C++ engine to optimize disk usage by removing old cached chunks.
+     * Safe to call during or after playback as it does not abort active downloads.
+     */
+    fun optimizeStorage(maxSizeBytes: Long = 30L * 1024L * 1024L) {
+        val req = TdApi.OptimizeStorage(
+            maxSizeBytes,
+            0,
+            0,
+            0,
+            null,
+            null,
+            null,
+            false,
+            0
+        )
+        client?.send(req) { result ->
+            Log.d(TAG, "🧹 TDLib optimizeStorage completed: ${result.javaClass.simpleName}")
+        }
     }
 
     /**

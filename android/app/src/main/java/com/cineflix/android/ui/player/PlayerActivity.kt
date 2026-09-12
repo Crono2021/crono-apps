@@ -1204,6 +1204,16 @@ class PlayerActivity : AppCompatActivity() {
         savedPosition = savedInstanceState.getLong("savedPosition", 0L)
     }
 
+    @Volatile
+    private var isCleanedUp = false
+
+    override fun onStop() {
+        super.onStop()
+        if (isFinishing) {
+            cleanup()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         titleHandler.removeCallbacksAndMessages(null)
@@ -1214,6 +1224,9 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun cleanup() {
+        if (isCleanedUp) return
+        isCleanedUp = true
+
         val phone = intent.getStringExtra(EXTRA_PHONE) ?: ""
         val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
         val season = intent.getStringExtra(EXTRA_SEASON) ?: ""
@@ -1234,13 +1247,19 @@ class PlayerActivity : AppCompatActivity() {
         player = null
 
         try { proxyServer?.stop() } catch (_: Exception) {}
+        proxyServer = null
         com.cineflix.android.GramJSStreamManager.currentPlaybackId = ""
         scope.cancel()
 
+        val engine = TelegramEngine.getInstance(this)
         val fileId = intent.getIntExtra(EXTRA_FILE_ID, -1)
         if (fileId > 0) {
-            TelegramEngine.getInstance(this).cancelAndDeleteVideo(fileId)
+            engine.cancelAndDeleteVideo(fileId)
         }
+        multipartParts?.forEach { part ->
+            engine.cancelAndDeleteVideo(part.fileId)
+        }
+        engine.optimizeStorage(30L * 1024 * 1024)
 
         if (phone.isNotEmpty() && contentId.isNotEmpty() && finalPosition > 0) {
             CoroutineScope(Dispatchers.IO).launch {

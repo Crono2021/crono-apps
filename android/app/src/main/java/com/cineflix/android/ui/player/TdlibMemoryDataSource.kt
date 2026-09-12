@@ -24,6 +24,7 @@ class TdlibMemoryDataSource(
         private const val PROBE_CHUNK_SIZE = 128L * 1024L        // 128 KB for headers / small probes
         private const val FIRST_CHUNK_SIZE = 512L * 1024L        // 512 KB for instant initial frame
         private const val STREAM_CHUNK_SIZE = 2L * 1024L * 1024L  // 2 MB for smooth continuous playback
+        private const val ROLLING_QUOTA_BYTES = 100L * 1024L * 1024L // 100 MB rolling window threshold
     }
 
     private var effectiveParts: List<FilePart> = emptyList()
@@ -137,6 +138,22 @@ class TdlibMemoryDataSource(
         return null // EOF or out of bounds
     }
 
+    private fun checkRollingQuota(activeFileId: Int) {
+        if (this.bytesSinceLastClear >= ROLLING_QUOTA_BYTES) {
+            Log.i(TAG, "🧹 ROLLING GC TRIGGERED (100MB): Wiping TDLib disk cache for fileId=$activeFileId to recycle storage")
+            this.bytesSinceLastClear = 0L
+            try {
+                engine.cancelAndDeleteVideo(activeFileId)
+                engine.optimizeStorage(30L * 1024L * 1024L)
+                ramBuffer = null
+                ramBufferOffset = -1L
+                ramBufferFileId = -1
+            } catch (e: Exception) {
+                Log.w(TAG, "Error in checkRollingQuota: ${e.message}")
+            }
+        }
+    }
+
     override fun read(buffer: ByteArray, offset: Int, readLength: Int): Int {
         if (readLength == 0) return 0
         if (this.bytesRemaining == 0L) return -1
@@ -180,6 +197,9 @@ class TdlibMemoryDataSource(
                 )
                 
                 this.currentOffset += bytesToCopy
+                this.bytesSinceLastClear += bytesToCopy
+                checkRollingQuota(activeFileId)
+
                 if (this.bytesRemaining != -1L) {
                     this.bytesRemaining -= bytesToCopy
                 }
@@ -256,6 +276,7 @@ class TdlibMemoryDataSource(
                 System.arraycopy(ramBuffer!!, bufferIdx, buffer, offset, toRead)
                 this.currentOffset += toRead
                 this.bytesSinceLastClear += toRead
+                checkRollingQuota(activeFileId)
                 
                 if (bytesRemaining != -1L) {
                     bytesRemaining -= toRead
