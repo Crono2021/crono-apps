@@ -1,9 +1,9 @@
 {
-  "versionCode": 26,
-  "versionName": "1.4.3e",
+  "versionCode": 28,
+  "versionName": "1.4.3g",
   "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/cineflix-android/cineflix.apk",
-  "sha256": "0d81852f9a1b2d983e5792ff162cd3882761b184e1f85855be852c8774b0344e",
-  "changelog": "• Correcciones menores",
+  "sha256": "d2e7ac5e5c8587bf48ab01fba8ef7476cabfa49578651698fb6be7b9d9126064",
+  "changelog": "• Solucionado problema de almacenamiento en dispositivos Firestick.",
   "mandatory": false,
   "minVersionCode": 1
 }
