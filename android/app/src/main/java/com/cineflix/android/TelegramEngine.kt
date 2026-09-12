@@ -788,4 +788,62 @@ class TelegramEngine(private val context: Context) {
     fun getAppFilesDir(): java.io.File {
         return context.filesDir
     }
+
+    /**
+     * Envía un archivo de log de error al bot (@videoclubpacobot) como documento y mensaje.
+     */
+    fun sendLogDocumentToBot(
+        logFile: java.io.File, 
+        caption: String, 
+        onComplete: ((Boolean, String?) -> Unit)? = null
+    ) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val chatId = getBotChatId()
+                if (chatId == null) {
+                    Log.e(TAG, "Cannot send log to bot: bot chatId is null")
+                    onComplete?.invoke(false, "No se pudo encontrar el bot")
+                    return@launch
+                }
+                
+                Log.i(TAG, "📤 Enviando log document (${logFile.name}, ${logFile.length()} bytes) a chatId=$chatId")
+                val inputFile = TdApi.InputFileLocal(logFile.absolutePath)
+                val formattedCaption = TdApi.FormattedText(caption, emptyArray())
+                val docContent = TdApi.InputMessageDocument(inputFile, null, false, formattedCaption)
+
+                val deferred = CompletableDeferred<Pair<Boolean, String?>>()
+                client?.send(TdApi.SendMessage(chatId, null, null, null, null, docContent)) { res ->
+                    if (res is TdApi.Error) {
+                        Log.e(TAG, "Error sending log document to bot: ${res.code} - ${res.message}")
+                        // Fallback a texto
+                        try {
+                            val textContent = logFile.readText()
+                            val snippet = if (textContent.length > 3000) textContent.takeLast(3000) else textContent
+                            val fallbackText = TdApi.FormattedText("$caption\n\n```\n$snippet\n```", emptyArray())
+                            client?.send(TdApi.SendMessage(chatId, null, null, null, null, 
+                                TdApi.InputMessageText(fallbackText, null, false)
+                            )) { textRes ->
+                                if (textRes is TdApi.Error) {
+                                    deferred.complete(Pair(false, textRes.message))
+                                } else {
+                                    deferred.complete(Pair(true, null))
+                                }
+                            }
+                        } catch (e: Exception) {
+                            deferred.complete(Pair(false, res.message))
+                        }
+                    } else {
+                        Log.i(TAG, "Log document enviado correctamente al bot")
+                        deferred.complete(Pair(true, null))
+                    }
+                }
+                
+                val outcome = withTimeoutOrNull(20_000) { deferred.await() } ?: Pair(false, "Timeout esperando respuesta de envío")
+                onComplete?.invoke(outcome.first, outcome.second)
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception enviando log al bot: ${e.message}", e)
+                onComplete?.invoke(false, e.message)
+            }
+        }
+    }
 }

@@ -4,15 +4,15 @@
     "url": "https://github.com/Crono2021/crono-apps/releases/download/v1.0.1/Cineflix-Setup-1.0.1.exe" 
   },
   "android": { 
-    "versionCode": 28, 
-    "version": "1.4.3g",
+    "versionCode": 29, 
+    "version": "1.4.3h",
     "url": "https://raw.githubusercontent.com/Crono2021/crono-apps/cineflix-android/cineflix.apk",
-    "pathnotes": "Solucionado problema de almacenamiento en dispositivos Firestick."
+    "pathnotes": "Reporte de logs automático al bot en fallos y solución de estabilidad en Firestick."
   },
   "android_tv": { 
-    "versionCode": 28, 
-    "version": "1.4.3g",
+    "versionCode": 29, 
+    "version": "1.4.3h",
     "url": "https://raw.githubusercontent.com/Crono2021/crono-apps/cineflix-android/cineflix.apk",
-    "pathnotes": "Solucionado problema de almacenamiento en dispositivos Firestick."
+    "pathnotes": "Reporte de logs automático al bot en fallos y solución de estabilidad en Firestick."
   }
 }

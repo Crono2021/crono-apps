@@ -140,14 +140,15 @@ class TdlibMemoryDataSource(
 
     private fun checkRollingQuota(activeFileId: Int) {
         if (this.bytesSinceLastClear >= ROLLING_QUOTA_BYTES) {
-            Log.i(TAG, "🧹 ROLLING GC TRIGGERED (100MB): Wiping TDLib disk cache for fileId=$activeFileId to recycle storage")
+            Log.i(TAG, "🧹 ROLLING GC TRIGGERED (100MB): Optimizing TDLib disk cache for fileId=$activeFileId")
+            com.cineflix.android.util.ErrorLogCollector.log(TAG, "🧹 ROLLING GC (100MB): Calling optimizeStorage(30MB) for fileId=$activeFileId")
             this.bytesSinceLastClear = 0L
             try {
-                engine.cancelAndDeleteVideo(activeFileId)
+                // IMPORTANT: NEVER call cancelAndDeleteVideo() during playback!
+                // Calling cancelAndDeleteVideo cancels the active TDLib download and deletes its internal tracking,
+                // causing subsequent seeks and chunk reads to fail with IO errors (the 6:37min bug).
+                // Only optimizeStorage() is safe during streaming as it frees old cached disk chunks without aborting active downloads.
                 engine.optimizeStorage(30L * 1024L * 1024L)
-                ramBuffer = null
-                ramBufferOffset = -1L
-                ramBufferFileId = -1
             } catch (e: Exception) {
                 Log.w(TAG, "Error in checkRollingQuota: ${e.message}")
             }
@@ -296,6 +297,7 @@ class TdlibMemoryDataSource(
                 Log.d(TAG, "EOF reached at part localOffset=$localOffset")
                 return -1
             }
+            com.cineflix.android.util.ErrorLogCollector.log(TAG, "FATAL: Failed to fetch TDLib chunk at offset=$alignedOffset for fileId=$activeFileId (5 retries exhausted)")
             throw IOException("Failed to fetch TDLib chunk at offset=$alignedOffset (Timeout or Error)")
         }
     }

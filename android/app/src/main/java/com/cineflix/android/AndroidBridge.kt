@@ -764,6 +764,25 @@ class AndroidBridge(
         return context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
             .getString("audio_output_mode", "stereo") ?: "stereo"
     }
+
+    // --- Enviar Log al Bot de Telegram ---
+    @JavascriptInterface
+    fun sendLogToBot(reason: String) {
+        android.widget.Toast.makeText(context, "Enviando log de diagnóstico al bot...", android.widget.Toast.LENGTH_SHORT).show()
+        com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
+            context = context.applicationContext,
+            reason = reason.ifEmpty { "Reporte enviado desde la interfaz web" },
+            extraInfo = mapOf("source" to "WebView/Frontend")
+        ) { success, _ ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (success) {
+                    android.widget.Toast.makeText(context, "Log enviado con éxito a @videoclubpacobot", android.widget.Toast.LENGTH_LONG).show()
+                } else {
+                    android.widget.Toast.makeText(context, "No se pudo enviar al bot. Guardado localmente.", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 }
 
 data class PendingGramJSRequest(

@@ -68,7 +68,10 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var btnForward: ImageButton
     private lateinit var btnResize: ImageButton
     private lateinit var btnTracks: ImageButton
+    private lateinit var btnReportError: ImageButton
     private lateinit var loadingSpinner: ProgressBar
+    private var currentFileId: Int = -1
+    private var currentPlayUrl: String? = null
     private lateinit var castContainer: FrameLayout
     private lateinit var layoutNextEpisode: LinearLayout
     private lateinit var tvNextEpisodeCountdown: TextView
@@ -183,6 +186,29 @@ class PlayerActivity : AppCompatActivity() {
 
         currentMimeType = mimeType
         currentTitle = title
+        currentFileId = fileId
+
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                Log.e(TAG, "Uncaught exception in PlayerActivity: ${throwable.message}", throwable)
+                val extra = mapOf(
+                    "title" to currentTitle,
+                    "fileId" to currentFileId,
+                    "position" to (player?.currentPosition ?: 0L).toString()
+                )
+                com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
+                    context = applicationContext,
+                    reason = "Crash No Controlado: ${throwable.javaClass.simpleName} - ${throwable.message}",
+                    extraInfo = extra,
+                    throwable = throwable
+                )
+                Thread.sleep(1500)
+            } catch (e: Exception) {
+                // ignore
+            }
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
 
         Log.i(TAG, "▶ onCreate: fileId=$fileId fileSize=$fileSize mimeType=$mimeType title=$title contentId=$contentId")
         // Diagnostic: dump ALL TheIntroDB extras
@@ -312,6 +338,7 @@ class PlayerActivity : AppCompatActivity() {
         btnForward = findViewById(R.id.btn_forward)
         btnResize = findViewById(R.id.btn_resize)
         btnTracks = findViewById(R.id.btn_tracks)
+        btnReportError = findViewById(R.id.btn_report_error)
         loadingSpinner = findViewById(R.id.loading_spinner)
         castContainer = findViewById(R.id.cast_button_container)
         layoutNextEpisode = findViewById(R.id.layout_next_episode)
@@ -325,12 +352,41 @@ class PlayerActivity : AppCompatActivity() {
         btnForward.setOnClickListener { seekRelative(10000); showControls() }
         btnResize.setOnClickListener { toggleResizeMode() }
         btnTracks.setOnClickListener { showTrackSelectorBottomSheet() }
+        btnReportError.setOnClickListener {
+            val currentPos = player?.currentPosition ?: 0L
+            val duration = player?.duration ?: 0L
+            val posStr = "${currentPos / 1000 / 60}:${String.format("%02d", (currentPos / 1000) % 60)}"
+            val durStr = "${duration / 1000 / 60}:${String.format("%02d", (duration / 1000) % 60)}"
+
+            val extra = mapOf(
+                "title" to currentTitle,
+                "fileId" to currentFileId,
+                "position" to "$posStr / $durStr (${currentPos}ms)",
+                "url" to (currentPlayUrl ?: "N/A"),
+                "state" to "Reporte manual desde reproductor"
+            )
+            Toast.makeText(this@PlayerActivity, "Enviando reporte de diagnóstico al bot...", Toast.LENGTH_SHORT).show()
+            com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
+                context = applicationContext,
+                reason = "Reporte manual del usuario durante la reproducción",
+                extraInfo = extra
+            ) { success, _ ->
+                Handler(Looper.getMainLooper()).post {
+                    if (success) {
+                        Toast.makeText(applicationContext, "Log enviado con éxito a @videoclubpacobot", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(applicationContext, "No se pudo enviar al bot. Guardado localmente.", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
 
         setupFocusAnimation(btnPlayPause)
         setupFocusAnimation(btnRewind)
         setupFocusAnimation(btnForward)
         setupFocusAnimation(btnResize)
         setupFocusAnimation(btnTracks)
+        setupFocusAnimation(btnReportError)
 
         seekBar.setOnFocusChangeListener { v, hasFocus ->
             if (hasFocus) {
@@ -516,12 +572,40 @@ class PlayerActivity : AppCompatActivity() {
                     return
                 }
 
-                Toast.makeText(this@PlayerActivity, "Error de reproducción: ${error.errorCodeName}", Toast.LENGTH_SHORT).show()
+                // Error definitivo o reintentos agotados: Generar y enviar reporte al bot
+                val currentPos = player?.currentPosition ?: 0L
+                val duration = player?.duration ?: 0L
+                val posStr = "${currentPos / 1000 / 60}:${String.format("%02d", (currentPos / 1000) % 60)}"
+                val durStr = "${duration / 1000 / 60}:${String.format("%02d", (duration / 1000) % 60)}"
+
+                val extra = mapOf(
+                    "title" to currentTitle,
+                    "fileId" to currentFileId,
+                    "position" to "$posStr / $durStr (${currentPos}ms)",
+                    "error" to "${error.errorCodeName}: ${error.message}",
+                    "retryCount" to ioErrorRetryCount,
+                    "url" to (currentPlayUrl ?: "N/A")
+                )
+
+                Toast.makeText(this@PlayerActivity, "Error de reproducción. Enviando log al bot...", Toast.LENGTH_LONG).show()
+                com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
+                    context = applicationContext,
+                    reason = "ExoPlayer Error: ${error.errorCodeName} - ${error.message}",
+                    extraInfo = extra,
+                    throwable = error
+                ) { success, _ ->
+                    Handler(Looper.getMainLooper()).post {
+                        if (success) {
+                            Toast.makeText(applicationContext, "Reporte de error enviado a @videoclubpacobot", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
                 finish()
             }
         })
     }
     private fun playUrl(url: String) {
+        currentPlayUrl = url
         loadingSpinner.visibility = View.VISIBLE
         
         val engine = TelegramEngine.getInstance(this)
