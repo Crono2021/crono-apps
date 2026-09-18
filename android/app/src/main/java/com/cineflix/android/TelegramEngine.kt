@@ -210,7 +210,7 @@ class TelegramEngine(private val context: Context) {
                     if (legacyPhotos.exists()) legacyPhotos.deleteRecursively()
 
                     ensureDirectoriesExist()
-                    optimizeStorage(30L * 1024 * 1024)
+                    optimizeStorage(30L * 1024 * 1024, immunityDelaySec = 0)
                 } catch (_: Exception) {}
             }
             is TdApi.AuthorizationStateLoggingOut      -> _authState.value = AuthState.LoggingOut
@@ -808,12 +808,12 @@ class TelegramEngine(private val context: Context) {
      * Ask TDLib's native C++ engine to optimize disk usage by removing old cached chunks.
      * Safe to call during or after playback as it does not abort active downloads.
      */
-    fun optimizeStorage(maxSizeBytes: Long = 30L * 1024L * 1024L) {
+    fun optimizeStorage(maxSizeBytes: Long = 30L * 1024L * 1024L, immunityDelaySec: Int = 300) {
         val req = TdApi.OptimizeStorage(
             maxSizeBytes,
-            0,
-            0,
-            0,
+            0,            // ttl: 0 = eligible for deletion regardless of age
+            0,            // count: 0 = no count limit
+            immunityDelaySec, // immunityDelay: protect files accessed in the last N seconds
             null,
             null,
             null,
@@ -821,7 +821,7 @@ class TelegramEngine(private val context: Context) {
             0
         )
         client?.send(req) { result ->
-            Log.d(TAG, "🧹 TDLib optimizeStorage completed: ${result.javaClass.simpleName}")
+            Log.d(TAG, "🧹 TDLib optimizeStorage completed (immunity=${immunityDelaySec}s): ${result.javaClass.simpleName}")
         }
     }
 

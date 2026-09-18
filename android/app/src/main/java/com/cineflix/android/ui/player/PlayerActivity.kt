@@ -461,10 +461,10 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun initExoPlayer() {
-        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-        val forceSoftware = prefs.getBoolean("force_software_audio", false)
-        val mode = if (forceSoftware) DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER 
-                   else DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+        // FFmpeg via NextLib: MODE_ON = Hardware decoders first (accurate colors, HDR, deep blacks).
+        // If hardware CANNOT decode the video (unsupported codec/profile) or audio (DTS, AC3, TrueHD),
+        // or if hardware fails during playback, it automatically falls back to FFmpeg software!
+        val mode = DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
 
         val customMediaCodecSelector = androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
             val decoders = androidx.media3.exoplayer.mediacodec.MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
@@ -477,7 +477,7 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
 
-        val renderersFactory = DefaultRenderersFactory(this)
+        val renderersFactory = io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory(this)
             .setExtensionRendererMode(mode)
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(customMediaCodecSelector)
@@ -1343,7 +1343,7 @@ class PlayerActivity : AppCompatActivity() {
         multipartParts?.forEach { part ->
             engine.cancelAndDeleteVideo(part.fileId)
         }
-        engine.optimizeStorage(30L * 1024 * 1024)
+        engine.optimizeStorage(30L * 1024 * 1024, immunityDelaySec = 0) // Safe: playback ended, full cleanup
 
         if (phone.isNotEmpty() && contentId.isNotEmpty() && finalPosition > 0) {
             CoroutineScope(Dispatchers.IO).launch {

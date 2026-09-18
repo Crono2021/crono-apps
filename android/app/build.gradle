@@ -1,16 +1,17 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-kapt'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 
 android {
     namespace "com.cineflix.android"
-    compileSdk 34
+    compileSdk 35
     defaultConfig {
         applicationId "com.cineflix.android"
         minSdkVersion 21
         targetSdkVersion 34
-        versionCode 30
-        versionName "1.4.3i"
+        versionCode 33
+        versionName "1.4.4"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters 'armeabi-v7a', 'arm64-v8a'
@@ -42,9 +43,6 @@ android {
     }
     buildFeatures {
         compose true
-    }
-    composeOptions {
-        kotlinCompilerExtensionVersion '1.5.10'
     }
     compileOptions {
         coreLibraryDesugaringEnabled true
@@ -113,12 +111,16 @@ dependencies {
     // Coil (image loading)
     implementation "io.coil-kt:coil-compose:2.5.0"
 
-    // ExoPlayer (Media3)
-    implementation "androidx.media3:media3-exoplayer:1.2.0"
-    implementation "androidx.media3:media3-ui:1.2.0"
+    // ExoPlayer (Media3 1.7.1)
+    implementation "androidx.media3:media3-exoplayer:1.7.1"
+    implementation "androidx.media3:media3-ui:1.7.1"
     
-    // Jellyfin FFmpeg Extension for Software Audio Decoding (DTS, AC3, TrueHD)
-    implementation "org.jellyfin.media3:media3-ffmpeg-decoder:1.2.0+1"
+    // NextLib — Full FFmpeg (libavcodec, libavformat, libswscale) integrated with ExoPlayer
+    // Provides NextRenderersFactory with software video+audio decoders for ALL codecs:
+    // Video: HEVC/H.265, AV1, VP9, MPEG-2, etc. (software fallback when hardware fails)
+    // Audio: DTS, AC3, EAC-3, TrueHD, Vorbis, FLAC, Opus, AAC, MP3
+    implementation "io.github.anilbeesetti:nextlib-media3ext:1.7.1-0.9.0"
+    implementation "io.github.anilbeesetti:nextlib-mediainfo:1.7.1-0.9.0"
 
 
     // HTTP (for GitHub catalog + TMDB â€” NOT for streaming)

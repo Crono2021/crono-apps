@@ -24,7 +24,7 @@ class TdlibMemoryDataSource(
         private const val PROBE_CHUNK_SIZE = 128L * 1024L        // 128 KB for headers / small probes
         private const val FIRST_CHUNK_SIZE = 512L * 1024L        // 512 KB for instant initial frame
         private const val STREAM_CHUNK_SIZE = 2L * 1024L * 1024L  // 2 MB for smooth continuous playback
-        private const val ROLLING_QUOTA_BYTES = 100L * 1024L * 1024L // 100 MB rolling window threshold
+        private const val ROLLING_QUOTA_BYTES = 250L * 1024L * 1024L // 250 MB rolling window (was 100MB — caused 19min freeze)
     }
 
     private var effectiveParts: List<FilePart> = emptyList()
@@ -140,15 +140,16 @@ class TdlibMemoryDataSource(
 
     private fun checkRollingQuota(activeFileId: Int) {
         if (this.bytesSinceLastClear >= ROLLING_QUOTA_BYTES) {
-            Log.i(TAG, "🧹 ROLLING GC TRIGGERED (100MB): Optimizing TDLib disk cache for fileId=$activeFileId")
-            com.cineflix.android.util.ErrorLogCollector.log(TAG, "🧹 ROLLING GC (100MB): Calling optimizeStorage(30MB) for fileId=$activeFileId")
+            Log.i(TAG, "🧹 ROLLING GC TRIGGERED (250MB): Optimizing TDLib disk cache for fileId=$activeFileId")
+            com.cineflix.android.util.ErrorLogCollector.log(TAG, "🧹 ROLLING GC (250MB): Calling optimizeStorage(30MB, immunity=300s) for fileId=$activeFileId")
             this.bytesSinceLastClear = 0L
             try {
                 // IMPORTANT: NEVER call cancelAndDeleteVideo() during playback!
                 // Calling cancelAndDeleteVideo cancels the active TDLib download and deletes its internal tracking,
                 // causing subsequent seeks and chunk reads to fail with IO errors (the 6:37min bug).
                 // Only optimizeStorage() is safe during streaming as it frees old cached disk chunks without aborting active downloads.
-                engine.optimizeStorage(30L * 1024L * 1024L)
+                // immunityDelaySec=300 → protects any chunk accessed in the last 5 minutes from eviction.
+                engine.optimizeStorage(30L * 1024L * 1024L, immunityDelaySec = 300)
             } catch (e: Exception) {
                 Log.w(TAG, "Error in checkRollingQuota: ${e.message}")
             }
