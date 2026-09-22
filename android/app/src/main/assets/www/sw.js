@@ -76,32 +76,57 @@ self.addEventListener('fetch', (e) => {
     const CHUNK_SIZE = 1024 * 1024; // 1MB per Telegram request
     const totalRequested = end - start + 1;
 
-    // Build a ReadableStream that pumps 1MB at a time from main thread
-    let pos = start;
-    const readableStream = new ReadableStream({
-        async pull(controller) {
-            if (pos > end) {
-                controller.close();
-                return;
-            }
-            const size = Math.min(CHUNK_SIZE, end - pos + 1);
-            try {
-                const chunk = await fetchChunk(streamId, pos, size);
-                controller.enqueue(chunk);
-                pos += chunk.byteLength;
-                if (pos > end) controller.close();
-            } catch (err) {
-                controller.error(err);
-            }
-        }
-    });
-
     const headers = {
         'Content-Type': meta.mimeType || 'video/mp4',
         'Accept-Ranges': 'bytes',
         'Content-Length': String(totalRequested),
         'Content-Range': `bytes ${start}-${end}/${meta.fileSize}`,
     };
+
+    // Fast path: If the requested range is 1MB or less (probes, small ranges),
+    // serve as a static ArrayBuffer response. This is 100% compatible with all Smart TV browsers.
+    if (totalRequested <= CHUNK_SIZE) {
+        e.respondWith((async () => {
+            try {
+                const chunk = await fetchChunk(streamId, start, totalRequested);
+                return new Response(chunk, {
+                    status: rangeHeader ? 206 : 200,
+                    headers,
+                });
+            } catch (err) {
+                return new Response('Stream fetch error: ' + err.message, { status: 500 });
+            }
+        })());
+        return;
+    }
+
+    // Build a ReadableStream that pumps 1MB at a time from main thread for larger ranges
+    let pos = start;
+    let isCancelled = false;
+    const readableStream = new ReadableStream({
+        async pull(controller) {
+            if (pos > end || isCancelled) {
+                controller.close();
+                return;
+            }
+            const size = Math.min(CHUNK_SIZE, end - pos + 1);
+            try {
+                const chunk = await fetchChunk(streamId, pos, size);
+                if (isCancelled) {
+                    controller.close();
+                    return;
+                }
+                controller.enqueue(chunk);
+                pos += chunk.byteLength;
+                if (pos > end) controller.close();
+            } catch (err) {
+                if (!isCancelled) controller.error(err);
+            }
+        },
+        cancel() {
+            isCancelled = true;
+        }
+    });
 
     e.respondWith(new Response(readableStream, {
         status: rangeHeader ? 206 : 200,

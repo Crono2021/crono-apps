@@ -196,6 +196,22 @@
                 android:contentDescription="Fullscreen"
                 android:focusable="true"
                 android:nextFocusLeft="@+id/btn_tracks"
+                android:nextFocusRight="@+id/btn_report_error"
+                android:nextFocusUp="@+id/seek_bar" />
+
+            <!-- Enviar Log / Reportar Error al Bot -->
+            <ImageButton
+                android:id="@+id/btn_report_error"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="12dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_info_details"
+                android:scaleType="fitCenter"
+                android:padding="8dp"
+                android:contentDescription="Reportar Error"
+                android:focusable="true"
+                android:nextFocusLeft="@+id/btn_resize"
                 android:nextFocusUp="@+id/seek_bar" />
 
             <!-- Duración -->

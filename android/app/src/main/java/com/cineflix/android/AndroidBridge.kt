@@ -1,6 +1,7 @@
 package com.cineflix.android
 
 import android.content.Context
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -12,12 +13,12 @@ import org.json.JSONObject
 import org.drinkless.tdlib.TdApi
 
 /**
- * AndroidBridge — injected as window.AndroidBridge in the WebView.
+ * AndroidBridge â€” injected as window.AndroidBridge in the WebView.
  *
  * Replaces all Capacitor plugin calls from telegram.js:
  *   - Auth: requestAuthState / loginWithPhone / signInWithCode / signInWithPassword / logOut
  *   - Bot:  sendBotCommand / clickInlineButton / searchMovieByPayload
- *   - Play: playVideo  →  launches PlayerActivity (TVGram approach)
+ *   - Play: playVideo  â†’  launches PlayerActivity (TVGram approach)
  *
  * Async results are delivered back to JS via:
  *   - window.onTelegramAuthStateChanged(state) for auth
@@ -30,9 +31,13 @@ class AndroidBridge(
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    // ──────────────────────────────────────────────────────────────────────────
+    init {
+        GramJSStreamManager.webView = webView
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Auth methods (called by callNativeAsync in telegram.js)
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @JavascriptInterface
     fun requestAuthState() {
@@ -116,6 +121,21 @@ class AndroidBridge(
         engine.logout { sendAuthState("WAIT_PHONE") }
     }
 
+    @JavascriptInterface
+    fun getMe(queryId: String) {
+        engine.getMe { user ->
+            if (user != null) {
+                val json = JSONObject().apply {
+                    put("id", user.id)
+                    put("phoneNumber", user.phoneNumber ?: "")
+                }.toString()
+                callback(queryId, true, json)
+            } else {
+                callback(queryId, false, "Not logged in")
+            }
+        }
+    }
+
     /**
      * Request QR code login. TDLib will transition to WaitOtherDeviceConfirmation
      * with a tg://login?token=... link. We send it to JS and keep watching for
@@ -150,20 +170,20 @@ class AndroidBridge(
                         is TelegramEngine.AuthState.WaitPassword -> sendAuthState("WAIT_PASSWORD")
                         is TelegramEngine.AuthState.WaitPhone    -> sendAuthState("WAIT_PHONE")
                         is TelegramEngine.AuthState.Error        -> sendAuthError((finalState as TelegramEngine.AuthState.Error).message)
-                        null -> sendAuthError("QR expirado. Inténtalo de nuevo.")
+                        null -> sendAuthError("QR expirado. IntÃ©ntalo de nuevo.")
                         else -> {}
                     }
                 }
                 is TelegramEngine.AuthState.Error -> sendAuthError((qrState as TelegramEngine.AuthState.Error).message)
-                null -> sendAuthError("Timeout: TDLib no generó el código QR")
+                null -> sendAuthError("Timeout: TDLib no generÃ³ el cÃ³digo QR")
                 else -> sendAuthError("Estado inesperado: $qrState")
             }
         }
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Bot methods (called by callNativeDataAsync in telegram.js)
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * Native storage for the most recent sendBotCommand result.
@@ -174,7 +194,7 @@ class AndroidBridge(
     /**
      * sendBotCommand(queryId, payload)
      * Returns JSON: { messageId, chatId, buttons: [{text, data, msgId}], text }
-     * button.data is the button INDEX ("0", "1", ...) — JS passes it back to
+     * button.data is the button INDEX ("0", "1", ...) â€” JS passes it back to
      * clickInlineButton which looks up the native SeasonButton to get real TDLib bytes.
      */
     @JavascriptInterface
@@ -183,10 +203,10 @@ class AndroidBridge(
             try {
                 val response = engine.sendBotCommand(payload)
                 if (response == null) {
-                    callback(queryId, false, "Bot no respondió")
+                    callback(queryId, false, "Bot no respondiÃ³")
                     return@launch
                 }
-                // Store entire response natively — buttons' raw TDLib bytes are never serialized to JS
+                // Store entire response natively â€” buttons' raw TDLib bytes are never serialized to JS
                 lastBotResponse = response
                 val buttons = JSONArray()
                 for ((index, btn) in response.buttons.withIndex()) {
@@ -214,29 +234,29 @@ class AndroidBridge(
      *
      * buttonIndex is the integer index returned by sendBotCommand ("0", "1", ...).
      * The raw TDLib callback bytes come from the natively-stored lastBotResponse
-     * — they NEVER go through JavaScript, eliminating all base64 round-trip issues.
+     * â€” they NEVER go through JavaScript, eliminating all base64 round-trip issues.
      */
     @JavascriptInterface
     fun clickInlineButton(queryId: String, msgIdStr: String, buttonIndex: String) {
         scope.launch {
             try {
                 val response = lastBotResponse ?: run {
-                    callback(queryId, false, "No hay respuesta del bot en memoria — reinicia la búsqueda")
+                    callback(queryId, false, "No hay respuesta del bot en memoria â€” reinicia la bÃºsqueda")
                     return@launch
                 }
                 val idx = buttonIndex.toIntOrNull() ?: run {
-                    callback(queryId, false, "Índice de botón inválido: $buttonIndex")
+                    callback(queryId, false, "Ãndice de botÃ³n invÃ¡lido: $buttonIndex")
                     return@launch
                 }
                 val button = response.buttons.getOrNull(idx) ?: run {
-                    callback(queryId, false, "Botón $idx no encontrado (total: ${response.buttons.size})")
+                    callback(queryId, false, "BotÃ³n $idx no encontrado (total: ${response.buttons.size})")
                     return@launch
                 }
                 val chatId = engine.getBotChatIdPublic() ?: run {
                     callback(queryId, false, "No se pudo obtener chatId del bot")
                     return@launch
                 }
-                // Use stored native msgId and raw TDLib bytes directly — no JS serialization
+                // Use stored native msgId and raw TDLib bytes directly â€” no JS serialization
                 val videos = engine.clickInlineButton(chatId, response.messageId, button.dataBase64)
                 callback(queryId, true, videosToJson(videos, chatId))
             } catch (e: Exception) {
@@ -300,9 +320,9 @@ class AndroidBridge(
         }
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Playback — launches PlayerActivity (TVGram approach)
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Playback â€” launches PlayerActivity (TVGram approach)
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * playVideo(chatId, msgId, fileId, fileSize, mimeType, title)
@@ -373,34 +393,108 @@ class AndroidBridge(
         launcher?.invoke(intent) ?: context.startActivity(intent)
     }
 
+
+
+    private fun playVideoInternal(
+        chatId: String, msgId: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String,
+        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String,
+        fileId: String? = null, fileSize: String? = null, multipartJson: String? = null,
+        progress: String? = null
+    ) {
+
+        val intent = Intent(context, PlayerActivity::class.java).apply {
+            putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
+            putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
+            putExtra("EXTRA_PLAYBACK_ID", GramJSStreamManager.currentPlaybackId)
+            
+            if (multipartJson != null) {
+                putExtra(PlayerActivity.EXTRA_MULTIPART_JSON, multipartJson)
+                if (!fileSize.isNullOrEmpty()) {
+                    putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
+                }
+            } else {
+                putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId?.toIntOrNull()    ?: 0)
+                putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize?.toLongOrNull() ?: 0L)
+            }
+            
+            putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
+            putExtra(PlayerActivity.EXTRA_TITLE,     title)
+            
+            putExtra(PlayerActivity.EXTRA_PHONE,      phone)
+            putExtra(PlayerActivity.EXTRA_CONTENT_ID, contentId)
+            putExtra(PlayerActivity.EXTRA_SEASON,     season)
+            putExtra(PlayerActivity.EXTRA_EPISODE,    episode)
+            
+            putExtra(PlayerActivity.EXTRA_CREDITS_START, creditsStart)
+            putExtra(PlayerActivity.EXTRA_INTRO_START_MS, introStart)
+            putExtra(PlayerActivity.EXTRA_INTRO_END_MS, introEnd)
+            putExtra(PlayerActivity.EXTRA_INTRODB_CREDITS_MS, introDbCreditsMs)
+
+            if (!progress.isNullOrEmpty()) {
+                putExtra(PlayerActivity.EXTRA_PROGRESS, progress)
+            }
+        }
+        launcher?.invoke(intent) ?: context.startActivity(intent)
+    }
+
     @JavascriptInterface
     fun playVideoWithIntroDB(
         chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String,
         phone: String, contentId: String, season: String, episode: String,
         creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String
     ) {
-        val intent = Intent(context, PlayerActivity::class.java).apply {
-            putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
-            putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
-            putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId.toIntOrNull()    ?: 0)
-            putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
-            putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
-            putExtra(PlayerActivity.EXTRA_TITLE,     title)
-            putExtra(PlayerActivity.EXTRA_PHONE,      phone)
-            putExtra(PlayerActivity.EXTRA_CONTENT_ID, contentId)
-            putExtra(PlayerActivity.EXTRA_SEASON,     season)
-            putExtra(PlayerActivity.EXTRA_EPISODE,    episode)
-            putExtra(PlayerActivity.EXTRA_CREDITS_START, creditsStart)
-            putExtra(PlayerActivity.EXTRA_INTRO_START_MS, introStart)
-            putExtra(PlayerActivity.EXTRA_INTRO_END_MS, introEnd)
-            putExtra(PlayerActivity.EXTRA_INTRODB_CREDITS_MS, introDbCreditsMs)
-        }
-        launcher?.invoke(intent) ?: context.startActivity(intent)
+        playVideoInternal(
+            chatId, msgId, mimeType, title, phone, contentId, season, episode,
+            creditsStart, introStart, introEnd, introDbCreditsMs,
+            fileId = fileId, fileSize = fileSize
+        )
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
+    @JavascriptInterface
+    fun playVideoWithIntroDBAndProgress(
+        chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String,
+        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String,
+        progress: String
+    ) {
+        playVideoInternal(
+            chatId, msgId, mimeType, title, phone, contentId, season, episode,
+            creditsStart, introStart, introEnd, introDbCreditsMs,
+            fileId = fileId, fileSize = fileSize, progress = progress
+        )
+    }
+
+    @JavascriptInterface
+    fun playMultipartVideoWithIntroDB(
+        chatId: String, msgId: String, multipartJson: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String,
+        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String
+    ) {
+        playVideoInternal(
+            chatId, msgId, mimeType, title, phone, contentId, season, episode,
+            creditsStart, introStart, introEnd, introDbCreditsMs,
+            multipartJson = multipartJson
+        )
+    }
+
+    @JavascriptInterface
+    fun playMultipartVideoWithIntroDBAndProgress(
+        chatId: String, msgId: String, multipartJson: String, mimeType: String, title: String,
+        phone: String, contentId: String, season: String, episode: String,
+        creditsStart: String, introStart: String, introEnd: String, introDbCreditsMs: String,
+        progress: String
+    ) {
+        playVideoInternal(
+            chatId, msgId, mimeType, title, phone, contentId, season, episode,
+            creditsStart, introStart, introEnd, introDbCreditsMs,
+            multipartJson = multipartJson, progress = progress
+        )
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // OTA Update: Download and install new APK
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @JavascriptInterface
     fun downloadAndInstallUpdate(url: String) {
@@ -414,7 +508,7 @@ class AndroidBridge(
 
             val req = android.app.DownloadManager.Request(android.net.Uri.parse(url))
             req.setTitle("Cineflix Update")
-            req.setDescription("Descargando nueva versión...")
+            req.setDescription("Descargando nueva versiÃ³n...")
             req.setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             req.setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, "cineflix_update.apk")
             
@@ -449,14 +543,35 @@ class AndroidBridge(
         }
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Helpers
-    // ──────────────────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private fun sendAuthState(state: String) {
         runOnUiThread { webView.evaluateJavascript(
             "window.onTelegramAuthStateChanged && window.onTelegramAuthStateChanged('$state')", null
         )}
+
+        // When auth reaches READY, proactively inject the user's phone into WebView localStorage
+        // so that getUserPhone() always finds it at Priority 1 (cross-device sync for favorites/progress)
+        if (state == "READY") {
+            engine.getMe { user ->
+                if (user != null) {
+                    val phone = (user.phoneNumber?.takeIf { it.isNotEmpty() } ?: user.id.toString())
+                        .replace("+", "").trim()
+                    runOnUiThread {
+                        webView.evaluateJavascript("""
+                            (function() {
+                                localStorage.setItem('user_phone', '$phone');
+                                localStorage.setItem('cineflix_current_phone', '$phone');
+                                sessionStorage.setItem('cineflix_current_phone', '$phone');
+                                console.log('[Native] Auth READY — phone synced to localStorage: $phone');
+                            })();
+                        """.trimIndent(), null)
+                    }
+                }
+            }
+        }
     }
 
     private fun sendAuthError(msg: String) {
@@ -536,10 +651,7 @@ class AndroidBridge(
             try {
                 webView.requestFocus()
                 val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                // SHOW_FORCED works on Sony/Philips TVs where SHOW_IMPLICIT is ignored
-                imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_FORCED)
-                // Fallback: toggleSoftInput for older Android TV WebViews
-                imm.toggleSoftInput(android.view.inputmethod.InputMethodManager.SHOW_FORCED, 0)
+                imm.showSoftInput(webView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -555,7 +667,7 @@ class AndroidBridge(
         if (isTv && !isAmazon) {
             // En Android TV, al abrir el teclado el WebView pierde el foco de ventana.
             // Esto dispara un evento 'blur' en JS que hace que tv-nav.js llame a hideKeyboard() al instante.
-            // Si la llamada ocurre justo después de abrirlo (menos de 1.5s), la ignoramos.
+            // Si la llamada ocurre justo despuÃ©s de abrirlo (menos de 1.5s), la ignoramos.
             if (System.currentTimeMillis() - lastShowKeyboardTime < 1500) {
                 android.util.Log.d("CineflixMain", "Ignored hideKeyboard() due to TV window focus blur")
                 return
@@ -601,15 +713,143 @@ class AndroidBridge(
                 
             dialog.setOnShowListener {
                 editText.requestFocus()
-                // Delayed keyboard show: Sony TVs need a frame to register the new window
-                editText.postDelayed({
-                    val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                    imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_FORCED)
-                }, 200)
+                val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                imm.showSoftInput(editText, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
             }
             dialog.show()
         }
     }
 
     fun cleanup() { scope.cancel() }
+
+    // --- GramJS Bridge (Phase 1 & 2) ---
+    @JavascriptInterface
+    fun supportsGramJSStreaming(): Boolean = true
+
+    @JavascriptInterface
+    fun getTelegramSession(): String {
+        return context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+            .getString("tg_session", "") ?: ""
+    }
+
+    @JavascriptInterface
+    fun saveTelegramSession(session: String) {
+        context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("tg_session", session)
+            .apply()
+    }
+
+    @JavascriptInterface
+    fun setPlaybackSession(playbackId: String) {
+        android.util.Log.i("AndroidBridge", "⚡ setPlaybackSession: $playbackId")
+        GramJSStreamManager.currentPlaybackId = playbackId
+    }
+
+    @JavascriptInterface
+    fun startGramJSStream(
+        fileSize: String,
+        mimeType: String,
+        title: String,
+        phone: String,
+        contentId: String,
+        season: String,
+        episode: String,
+        creditsStart: String,
+        introStart: String,
+        introEnd: String,
+        introDbCreditsMs: String
+    ) {
+        android.util.Log.i("AndroidBridge", "🚀 startGramJSStream: playbackId=${GramJSStreamManager.currentPlaybackId}, size=$fileSize, title=$title")
+        val intent = Intent(context, PlayerActivity::class.java).apply {
+            putExtra("EXTRA_PLAYBACK_ID", GramJSStreamManager.currentPlaybackId)
+            putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
+            putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
+            putExtra(PlayerActivity.EXTRA_TITLE, title)
+            putExtra(PlayerActivity.EXTRA_PHONE, phone)
+            putExtra(PlayerActivity.EXTRA_CONTENT_ID, contentId)
+            putExtra(PlayerActivity.EXTRA_SEASON, season)
+            putExtra(PlayerActivity.EXTRA_EPISODE, episode)
+            putExtra(PlayerActivity.EXTRA_CREDITS_START, creditsStart)
+            putExtra(PlayerActivity.EXTRA_INTRO_START_MS, introStart)
+            putExtra(PlayerActivity.EXTRA_INTRO_END_MS, introEnd)
+            putExtra(PlayerActivity.EXTRA_INTRODB_CREDITS_MS, introDbCreditsMs)
+        }
+        launcher?.invoke(intent) ?: context.startActivity(intent)
+    }
+
+    @JavascriptInterface
+    fun deliverChunkBase64(requestId: String, base64Data: String) {
+        val request = GramJSStreamManager.activeRequests.remove(requestId) ?: return
+        
+        try {
+            if (base64Data.isEmpty()) {
+                request.deferred.complete(Result.success(ByteArray(0)))
+                return
+            }
+            val bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+            request.deferred.complete(Result.success(bytes))
+        } catch (e: Exception) {
+            request.deferred.complete(Result.failure(Exception("Base64 Decode Error: " + e.message)))
+        }
+    }
+
+    @JavascriptInterface
+    fun deliverChunkError(requestId: String, error: String) {
+        val request = GramJSStreamManager.activeRequests.remove(requestId) ?: return
+        request.deferred.complete(Result.failure(Exception(error)))
+    }
+
+    // --- Audio Output Mode (Stereo PCM vs 5.1 Passthrough) ---
+    @JavascriptInterface
+    fun setAudioOutputMode(mode: String) {
+        context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("audio_output_mode", mode)
+            .apply()
+    }
+
+    @JavascriptInterface
+    fun getAudioOutputMode(): String {
+        return context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+            .getString("audio_output_mode", "stereo") ?: "stereo"
+    }
+
+    // --- Enviar Log al Bot de Telegram ---
+    @JavascriptInterface
+    fun sendLogToBot(reason: String) {
+        android.widget.Toast.makeText(context, "Enviando log de diagnóstico al bot...", android.widget.Toast.LENGTH_SHORT).show()
+        com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
+            context = context.applicationContext,
+            reason = reason.ifEmpty { "Reporte enviado desde la interfaz web" },
+            extraInfo = mapOf("source" to "WebView/Frontend")
+        ) { success, _ ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (success) {
+                    android.widget.Toast.makeText(context, "Log enviado con éxito a @videoclubpacobot", android.widget.Toast.LENGTH_LONG).show()
+                } else {
+                    android.widget.Toast.makeText(context, "No se pudo enviar al bot. Guardado localmente.", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 }
+
+data class PendingGramJSRequest(
+    val generation: Int,
+    val virtualOffset: Long,
+    val deferred: kotlinx.coroutines.CompletableDeferred<Result<ByteArray>>
+)
+
+@SuppressLint("StaticFieldLeak")
+object GramJSStreamManager {
+    @Volatile
+    var webView: WebView? = null
+    
+    val activeRequests = java.util.concurrent.ConcurrentHashMap<String, PendingGramJSRequest>()
+    
+    @Volatile
+    var currentPlaybackId: String = ""
+}
+
+

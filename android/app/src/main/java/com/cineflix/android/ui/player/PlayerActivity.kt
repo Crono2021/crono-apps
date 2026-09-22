@@ -52,6 +52,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
     private var proxyServer: StreamProxyServer? = null
+    private var multipartParts: List<FilePart>? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // UI
@@ -67,7 +68,10 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var btnForward: ImageButton
     private lateinit var btnResize: ImageButton
     private lateinit var btnTracks: ImageButton
+    private lateinit var btnReportError: ImageButton
     private lateinit var loadingSpinner: ProgressBar
+    private var currentFileId: Int = -1
+    private var currentPlayUrl: String? = null
     private lateinit var castContainer: FrameLayout
     private lateinit var layoutNextEpisode: LinearLayout
     private lateinit var tvNextEpisodeCountdown: TextView
@@ -82,6 +86,12 @@ class PlayerActivity : AppCompatActivity() {
     private var currentScaleIndex = 0
     private var wasPlaying = false
     private var savedPosition = 0L
+    private var pendingResumePositionMs: Long? = null
+    private var introSkipped = false
+    private var nextEpisodeTriggered = false
+    private var currentEffectiveFileSize: Long = 0L
+    private var ioErrorRetryCount = 0
+    private var lastIoErrorTimeMs = 0L
 
     // Cast
     private var castContext: CastContext? = null
@@ -94,6 +104,7 @@ class PlayerActivity : AppCompatActivity() {
     private var castButton: MediaRouteButton? = null
 
     companion object {
+        const val EXTRA_MULTIPART_JSON = "multipart_json"
         const val EXTRA_FILE_ID   = "file_id"
         const val EXTRA_FILE_SIZE = "file_size"
         const val EXTRA_MIME_TYPE = "mime_type"
@@ -111,6 +122,7 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_INTRO_START_MS       = "intro_start_ms"
         const val EXTRA_INTRO_END_MS         = "intro_end_ms"
         const val EXTRA_INTRODB_CREDITS_MS   = "introdb_credits_ms"
+        const val EXTRA_PROGRESS             = "progress"
 
         private const val TAG = "PlayerActivity"
     }
@@ -136,7 +148,30 @@ class PlayerActivity : AppCompatActivity() {
         bindViews()
         setupListeners()
 
-        val fileId   = intent.getIntExtra(EXTRA_FILE_ID, -1)
+        val multipartJson = intent.getStringExtra(EXTRA_MULTIPART_JSON)
+        if (!multipartJson.isNullOrEmpty()) {
+            try {
+                val partsArray = org.json.JSONArray(multipartJson)
+                val parts = mutableListOf<FilePart>()
+                for (i in 0 until partsArray.length()) {
+                    val obj = partsArray.getJSONObject(i)
+                    parts.add(FilePart(obj.getInt("fileId"), obj.getLong("size")))
+                }
+                if (parts.isNotEmpty()) {
+                    multipartParts = parts
+                    Log.i(TAG, "Loaded multipart video with ${parts.size} parts")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse EXTRA_MULTIPART_JSON", e)
+                Toast.makeText(this, "Error parsing multipart video data", Toast.LENGTH_LONG).show()
+                finish()
+                return
+            }
+        }
+        var fileId   = intent.getIntExtra(EXTRA_FILE_ID, -1)
+        if (multipartParts != null && multipartParts!!.isNotEmpty()) {
+            fileId = multipartParts!![0].fileId
+        }
         val fileSize = intent.getLongExtra(EXTRA_FILE_SIZE, 0L)
         val mimeType = intent.getStringExtra(EXTRA_MIME_TYPE) ?: "video/mp4"
         val title    = intent.getStringExtra(EXTRA_TITLE) ?: ""
@@ -145,19 +180,43 @@ class PlayerActivity : AppCompatActivity() {
         val contentId  = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
         val season     = intent.getStringExtra(EXTRA_SEASON) ?: ""
         val episode    = intent.getStringExtra(EXTRA_EPISODE) ?: ""
+        val jsProgress = intent.getStringExtra(EXTRA_PROGRESS)
         
         val engine   = TelegramEngine.getInstance(this)
 
         currentMimeType = mimeType
         currentTitle = title
+        currentFileId = fileId
 
-        Log.i(TAG, "▶ onCreate — fileId=$fileId fileSize=$fileSize mimeType=$mimeType title=$title contentId=$contentId")
-        // ── Diagnostic: dump ALL TheIntroDB extras ──
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                Log.e(TAG, "Uncaught exception in PlayerActivity: ${throwable.message}", throwable)
+                val extra = mapOf(
+                    "title" to currentTitle,
+                    "fileId" to currentFileId,
+                    "position" to (player?.currentPosition ?: 0L).toString()
+                )
+                com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
+                    context = applicationContext,
+                    reason = "Crash No Controlado: ${throwable.javaClass.simpleName} - ${throwable.message}",
+                    extraInfo = extra,
+                    throwable = throwable
+                )
+                Thread.sleep(1500)
+            } catch (e: Exception) {
+                // ignore
+            }
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
+
+        Log.i(TAG, "▶ onCreate: fileId=$fileId fileSize=$fileSize mimeType=$mimeType title=$title contentId=$contentId")
+        // Diagnostic: dump ALL TheIntroDB extras
         val dbgIntroStart = intent.getStringExtra(EXTRA_INTRO_START_MS) ?: "(null)"
         val dbgIntroEnd   = intent.getStringExtra(EXTRA_INTRO_END_MS)   ?: "(null)"
         val dbgCreditsMs  = intent.getStringExtra(EXTRA_INTRODB_CREDITS_MS) ?: "(null)"
         val dbgCreditsStart = intent.getStringExtra(EXTRA_CREDITS_START) ?: "(null)"
-        Log.w(TAG, "🎬 DIAG IntroDB extras — introStart='$dbgIntroStart' introEnd='$dbgIntroEnd' introDbCredits='$dbgCreditsMs' creditsStart='$dbgCreditsStart' contentId='$contentId' season='$season' episode='$episode'")
+        Log.i(TAG, "🔍 DIAG IntroDB: introStart='$dbgIntroStart' introEnd='$dbgIntroEnd' introDbCredits='$dbgCreditsMs' creditsStart='$dbgCreditsStart' contentId='$contentId' season='$season' episode='$episode'")
 
         if (fileId <= 0) {
             Toast.makeText(this, "Error: fileId inválido ($fileId)", Toast.LENGTH_LONG).show()
@@ -169,58 +228,95 @@ class PlayerActivity : AppCompatActivity() {
         if (effectiveFileSize <= 0) {
             effectiveFileSize = 2_000_000_000L
         }
+        currentEffectiveFileSize = multipartParts?.sumOf { it.size }?.takeIf { it > 0 } ?: effectiveFileSize
+        introSkipped = false
+        nextEpisodeTriggered = false
 
-        // 1. Start StreamProxyServer
-        val proxy = StreamProxyServer(
-            engine   = engine,
-            fileId   = fileId,
-            fileSize = effectiveFileSize,
-            mimeType = mimeType,
-        )
-        proxy.start()
-        proxyServer = proxy
-        val port = proxy.listeningPort
-        Log.i(TAG, "▶ StreamProxyServer started on port $port")
+        val useNodeJsProxy = intent.getBooleanExtra("USE_NODEJS_PROXY", false)
+        val port: Int
+        
+        val intentPlaybackId = intent.getStringExtra("EXTRA_PLAYBACK_ID")
+        val currentPlaybackId = com.cineflix.android.GramJSStreamManager.currentPlaybackId
+        val playbackId = intentPlaybackId ?: currentPlaybackId
+        val isGramJsActive = playbackId.isNotEmpty()
+        
+        if (useNodeJsProxy) {
+            port = 3000
+            Log.i(TAG, "- Using NodeJS StreamProxyServer on port 3000")
+        } else if (isGramJsActive) {
+            port = 8080 // Dummy port, not used for casting yet for GramJS
+            Log.i(TAG, "- Using GramJS memory proxy, completely bypassing TDLib background downloads.")
+        } else {
+            // 1. Start StreamProxyServer
+            val proxy = StreamProxyServer(
+                engine   = engine,
+                fileId   = fileId,
+                fileSize = effectiveFileSize,
+                mimeType = mimeType,
+                multipartParts = multipartParts,
+            )
+            proxy.start()
+            proxyServer = proxy
+            port = proxy.listeningPort
+            Log.i(TAG, "- StreamProxyServer started on port $port")
 
-        // 2. Register file with TDLib
-        scope.launch {
-            try {
-                engine.startDownloadReturnPath(fileId, priority = 32)
-                engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
-            } catch (e: Exception) {
-                Log.e(TAG, "▶ TDLib registration error: ${e.message}", e)
+            // 2. Register file with TDLib
+            scope.launch {
+                try {
+                    if (multipartParts != null && multipartParts!!.isNotEmpty()) {
+                        val firstPart = multipartParts!![0]
+                        engine.startDownloadReturnPath(firstPart.fileId, priority = 32)
+                        engine.hintDownloadOffset(firstPart.fileId, 0L, 20L * 1024L * 1024L)
+                    } else {
+                        engine.startDownloadReturnPath(fileId, priority = 32)
+                        engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "- TDLib registration error: ${e.message}", e)
+                }
             }
         }
 
         // 3. Build stream URLs
         val localStreamUrl = "tdlib://$fileId"
         val wifiIp = getWifiIpAddress()
-        castStreamUrl = if (wifiIp != null) "http://$wifiIp:$port/stream" else null
+        castStreamUrl = if (wifiIp != null && !isGramJsActive) "http://$wifiIp:$port/stream" else null
         
         setupCastButton()
 
         // 4. Iniciar ExoPlayer
         initExoPlayer()
-        playUrl(localStreamUrl)
 
-        // 5. Fetch saved progress y trackear
-        if (phone.isNotEmpty() && contentId.isNotEmpty()) {
+        // 5. Apply progress and start tracking
+        val p = jsProgress?.toFloatOrNull()?.toInt() ?: 0
+        if (p > 5) {
+            pendingResumePositionMs = p * 1000L
+            playUrl(localStreamUrl)
+            player?.seekTo(p * 1000L)
+            Toast.makeText(this@PlayerActivity, "Reanudado en ${p/60}m", Toast.LENGTH_SHORT).show()
+        } else if (phone.isNotEmpty() && contentId.isNotEmpty()) {
             scope.launch {
                 try {
                     val savedProgress = fetchSavedProgress(phone, contentId, season, episode)
-                    if (savedProgress > 30) {
-                        withContext(Dispatchers.Main) {
-                            // Delay to ensure buffer starts before seek
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                player?.let {
-                                    it.seekTo(savedProgress * 1000L)
-                                    Toast.makeText(this@PlayerActivity, "Reanudado en ${savedProgress/60}m", Toast.LENGTH_SHORT).show()
-                                }
-                            }, 1000)
+                    withContext(Dispatchers.Main) {
+                        if (savedProgress > 5) {
+                            pendingResumePositionMs = savedProgress * 1000L
+                            playUrl(localStreamUrl)
+                            player?.seekTo(savedProgress * 1000L)
+                            Toast.makeText(this@PlayerActivity, "Reanudado en ${savedProgress/60}m", Toast.LENGTH_SHORT).show()
+                        } else {
+                            playUrl(localStreamUrl)
                         }
                     }
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { playUrl(localStreamUrl) }
+                }
             }
+        } else {
+            playUrl(localStreamUrl)
+        }
+
+        if (phone.isNotEmpty() && contentId.isNotEmpty()) {
             startProgressTracking(phone, contentId, season, episode)
         }
 
@@ -242,6 +338,7 @@ class PlayerActivity : AppCompatActivity() {
         btnForward = findViewById(R.id.btn_forward)
         btnResize = findViewById(R.id.btn_resize)
         btnTracks = findViewById(R.id.btn_tracks)
+        btnReportError = findViewById(R.id.btn_report_error)
         loadingSpinner = findViewById(R.id.loading_spinner)
         castContainer = findViewById(R.id.cast_button_container)
         layoutNextEpisode = findViewById(R.id.layout_next_episode)
@@ -255,12 +352,41 @@ class PlayerActivity : AppCompatActivity() {
         btnForward.setOnClickListener { seekRelative(10000); showControls() }
         btnResize.setOnClickListener { toggleResizeMode() }
         btnTracks.setOnClickListener { showTrackSelectorBottomSheet() }
+        btnReportError.setOnClickListener {
+            val currentPos = player?.currentPosition ?: 0L
+            val duration = player?.duration ?: 0L
+            val posStr = "${currentPos / 1000 / 60}:${String.format("%02d", (currentPos / 1000) % 60)}"
+            val durStr = "${duration / 1000 / 60}:${String.format("%02d", (duration / 1000) % 60)}"
+
+            val extra = mapOf(
+                "title" to currentTitle,
+                "fileId" to currentFileId,
+                "position" to "$posStr / $durStr (${currentPos}ms)",
+                "url" to (currentPlayUrl ?: "N/A"),
+                "state" to "Reporte manual desde reproductor"
+            )
+            Toast.makeText(this@PlayerActivity, "Enviando reporte de diagnóstico al bot...", Toast.LENGTH_SHORT).show()
+            com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
+                context = applicationContext,
+                reason = "Reporte manual del usuario durante la reproducción",
+                extraInfo = extra
+            ) { success, errorMsg ->
+                Handler(Looper.getMainLooper()).post {
+                    if (success) {
+                        Toast.makeText(applicationContext, "✅ Reporte .txt enviado con éxito a @videoclubpacobot", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(applicationContext, "❌ No se pudo enviar al bot: ${errorMsg ?: "Error de red"}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
 
         setupFocusAnimation(btnPlayPause)
         setupFocusAnimation(btnRewind)
         setupFocusAnimation(btnForward)
         setupFocusAnimation(btnResize)
         setupFocusAnimation(btnTracks)
+        setupFocusAnimation(btnReportError)
 
         seekBar.setOnFocusChangeListener { v, hasFocus ->
             if (hasFocus) {
@@ -281,7 +407,10 @@ class PlayerActivity : AppCompatActivity() {
         playerView.setOnClickListener { toggleControls() }
         
         layoutNextEpisode.setOnClickListener {
-            triggerNextEpisode()
+            if (!nextEpisodeTriggered) {
+                nextEpisodeTriggered = true
+                triggerNextEpisode()
+            }
         }
         
         layoutNextEpisode.setOnFocusChangeListener { v, hasFocus ->
@@ -297,9 +426,12 @@ class PlayerActivity : AppCompatActivity() {
         layoutSkipIntro.setOnClickListener {
             val introEndMs = (intent.getStringExtra(EXTRA_INTRO_END_MS) ?: "").toLongOrNull()
             if (introEndMs != null && introEndMs > 0) {
-                player?.seekTo(introEndMs)
+                introSkipped = true
+                layoutSkipIntro.animate().cancel()
                 layoutSkipIntro.visibility = View.GONE
-                Log.i(TAG, "⏭ Skip Intro → seekTo($introEndMs ms)")
+                val targetSeek = introEndMs + 1000L
+                player?.seekTo(targetSeek)
+                Log.i(TAG, "⏩ Skip Intro: seekTo($targetSeek ms)")
             }
         }
 
@@ -329,16 +461,39 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun initExoPlayer() {
-        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-        val forceSoftware = prefs.getBoolean("force_software_audio", false)
-        val mode = if (forceSoftware) DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER 
-                   else DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+        // FFmpeg via NextLib: MODE_ON = Hardware decoders first (accurate colors, HDR, deep blacks).
+        // If hardware CANNOT decode the video (unsupported codec/profile) or audio (DTS, AC3, TrueHD),
+        // or if hardware fails during playback, it automatically falls back to FFmpeg software!
+        val mode = DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
 
-        val renderersFactory = DefaultRenderersFactory(this)
+        val customMediaCodecSelector = androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+            val decoders = androidx.media3.exoplayer.mediacodec.MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+            if (mimeType.equals(androidx.media3.common.MimeTypes.VIDEO_H265, ignoreCase = true)) {
+                decoders.sortedBy { decoder ->
+                    if (decoder.name.contains("exynos", ignoreCase = true)) 1 else 0
+                }
+            } else {
+                decoders
+            }
+        }
+
+        val renderersFactory = io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory(this)
             .setExtensionRendererMode(mode)
+            .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(customMediaCodecSelector)
+
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                60_000, // minBufferMs (60 segundos)
+                120_000, // maxBufferMs (120 segundos)
+                2_500, // bufferForPlaybackMs
+                5_000 // bufferForPlaybackAfterRebufferMs
+            )
+            .build()
 
         player = ExoPlayer.Builder(this)
             .setRenderersFactory(renderersFactory)
+            .setLoadControl(loadControl)
             .build()
             
         playerView.player = player
@@ -350,10 +505,28 @@ class PlayerActivity : AppCompatActivity() {
                     loadingSpinner.visibility = View.VISIBLE
                 } else {
                     loadingSpinner.visibility = View.GONE
-                }
+                    if (playbackState == Player.STATE_READY) {
+                        ioErrorRetryCount = 0
+                        pendingResumePositionMs?.let { resumePos ->
+                            pendingResumePositionMs = null
+                            if (player?.isCurrentMediaItemSeekable == true) {
+                                Log.i(TAG, "▶ STATE_READY reached: seeking to resume position ${resumePos}ms (${resumePos / 60000}m)")
+                                player?.seekTo(resumePos)
+                            } else {
+                                Log.w(TAG, "▶ Media item is not seekable (no Cues index). Playing from start.")
+                            }
+                        }
+                    }
 
-                if (playbackState == Player.STATE_ENDED) {
-                    triggerNextEpisode()
+                    if (playbackState == Player.STATE_ENDED) {
+                        val dur = player?.duration ?: 0L
+                        val pos = player?.currentPosition ?: 0L
+                        // Only auto-trigger next episode if playback actually reached near the end of the video
+                        if (dur > 30_000L && pos >= dur - 15_000L && !nextEpisodeTriggered) {
+                            nextEpisodeTriggered = true
+                            triggerNextEpisode()
+                        }
+                    }
                 }
             }
 
@@ -367,28 +540,103 @@ class PlayerActivity : AppCompatActivity() {
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                Toast.makeText(this@PlayerActivity, "Error de reproducción", Toast.LENGTH_SHORT).show()
+                Log.e(TAG, "onPlayerError: ${error.errorCodeName} - ${error.message}", error)
+                val isIoError = error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
+                                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+                                error.errorCodeName.startsWith("ERROR_CODE_IO_")
+
+                val now = System.currentTimeMillis()
+                if (isIoError && ioErrorRetryCount < 3) {
+                    ioErrorRetryCount++
+                    lastIoErrorTimeMs = now
+                    val currentPos = player?.currentPosition ?: 0L
+                    Log.w(TAG, "IO error detected ($ioErrorRetryCount/3). Attempting auto-recovery at position ${currentPos}ms...")
+                    Toast.makeText(this@PlayerActivity, "Reconectando con el servidor ($ioErrorRetryCount/3)...", Toast.LENGTH_SHORT).show()
+                    loadingSpinner.visibility = View.VISIBLE
+
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (!isFinishing && !isDestroyed) {
+                            if (currentPos > 0) {
+                                try {
+                                    player?.seekTo(currentPos)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Failed pre-seek: ${e.message}")
+                                }
+                            }
+                            pendingResumePositionMs = currentPos
+                            player?.prepare()
+                            player?.play()
+                        }
+                    }, 1500L)
+                    return
+                }
+
+                // Error definitivo o reintentos agotados: Generar y enviar reporte al bot
+                val currentPos = player?.currentPosition ?: 0L
+                val duration = player?.duration ?: 0L
+                val posStr = "${currentPos / 1000 / 60}:${String.format("%02d", (currentPos / 1000) % 60)}"
+                val durStr = "${duration / 1000 / 60}:${String.format("%02d", (duration / 1000) % 60)}"
+
+                val extra = mapOf(
+                    "title" to currentTitle,
+                    "fileId" to currentFileId,
+                    "position" to "$posStr / $durStr (${currentPos}ms)",
+                    "error" to "${error.errorCodeName}: ${error.message}",
+                    "retryCount" to ioErrorRetryCount,
+                    "url" to (currentPlayUrl ?: "N/A")
+                )
+
+                Toast.makeText(this@PlayerActivity, "Error de reproducción. Enviando log al bot...", Toast.LENGTH_LONG).show()
+                com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
+                    context = applicationContext,
+                    reason = "ExoPlayer Error: ${error.errorCodeName} - ${error.message}",
+                    extraInfo = extra,
+                    throwable = error
+                ) { success, _ ->
+                    Handler(Looper.getMainLooper()).post {
+                        if (success) {
+                            Toast.makeText(applicationContext, "Reporte de error enviado a @videoclubpacobot", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
                 finish()
             }
         })
     }
-
     private fun playUrl(url: String) {
+        currentPlayUrl = url
         loadingSpinner.visibility = View.VISIBLE
         
         val engine = TelegramEngine.getInstance(this)
-        val mediaItem = MediaItem.fromUri(Uri.parse(url))
+        val mediaItem = androidx.media3.common.MediaItem.fromUri(android.net.Uri.parse(url))
         
         if (url.startsWith("tdlib://")) {
-            val dataSourceFactory = TdlibDataSourceFactory(engine)
+            val intentPlaybackId = intent.getStringExtra("EXTRA_PLAYBACK_ID")
+            val currentPlaybackId = com.cineflix.android.GramJSStreamManager.currentPlaybackId
+            val playbackId = intentPlaybackId ?: currentPlaybackId
+            
+            android.util.Log.e("PlayerActivity", "=========================================================")
+            android.util.Log.e("PlayerActivity", "playbackId resolution:")
+            android.util.Log.e("PlayerActivity", "intent EXTRA_PLAYBACK_ID: $intentPlaybackId")
+            android.util.Log.e("PlayerActivity", "GramJSStreamManager.currentPlaybackId: $currentPlaybackId")
+            android.util.Log.e("PlayerActivity", "Final playbackId to use: $playbackId")
+            android.util.Log.e("PlayerActivity", "=========================================================")
+
+            val dataSourceFactory: androidx.media3.datasource.DataSource.Factory = if (playbackId.isNotEmpty()) {
+                android.util.Log.i("PlayerActivity", "Using GramJSDataSourceFactory for playbackId: $playbackId")
+                GramJSDataSourceFactory(playbackId, 0)
+            } else {
+                android.util.Log.w("PlayerActivity", "Fallback to TdlibDataSourceFactory (no playbackId)")
+                TdlibDataSourceFactory(engine, multipartParts)
+            }
             val mediaSource = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
                 .createMediaSource(mediaItem)
             player?.setMediaSource(mediaSource)
         } else {
             player?.setMediaItem(mediaItem)
         }
-        
-        player?.prepare()
+                player?.prepare()
         player?.play()
         
         startSeekBarUpdater()
@@ -696,27 +944,19 @@ class PlayerActivity : AppCompatActivity() {
             tvTimeCurrent.text = formatTime(time)
             tvTimeDuration.text = formatTime(duration)
 
-            // ── Skip Intro overlay ──────────────────────────────────────
+            // Intro and Next Episode check
             val introStartMs = (intent.getStringExtra(EXTRA_INTRO_START_MS) ?: "").toLongOrNull()
             val introEndMs   = (intent.getStringExtra(EXTRA_INTRO_END_MS)   ?: "").toLongOrNull()
 
-            // ── DIAGNOSTIC LOG (once per session) ──
-            if (!_diagLoggedOnce && time > 1000) {
-                _diagLoggedOnce = true
-                val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
-                val creditsStr = intent.getStringExtra(EXTRA_CREDITS_START) ?: "(null)"
-                val introDbCr = intent.getStringExtra(EXTRA_INTRODB_CREDITS_MS) ?: "(null)"
-                Log.w(TAG, "🔍 DIAG updateSeekBar — time=$time dur=$duration introStartMs=$introStartMs introEndMs=$introEndMs contentId='$contentId' creditsStart='$creditsStr' introDbCreditsMs='$introDbCr' isTvPrefix=${contentId.startsWith("tv_")}")
-            }
-
-            if (introStartMs != null && introEndMs != null && introEndMs > introStartMs) {
-                val inIntro = time in introStartMs..introEndMs
+            if (!introSkipped && introStartMs != null && introEndMs != null && introEndMs > introStartMs) {
+                val isSeekable = player?.isCurrentMediaItemSeekable ?: true
+                val inIntro = isSeekable && time in introStartMs until introEndMs
                 if (inIntro) {
                     if (layoutSkipIntro.visibility != View.VISIBLE) {
                         layoutSkipIntro.visibility = View.VISIBLE
                         layoutSkipIntro.alpha = 0f
                         layoutSkipIntro.animate().alpha(1f).setDuration(300).start()
-                        Log.i(TAG, "🎬 SHOWING Skip Intro overlay (time=$time in $introStartMs..$introEndMs)")
+                        Log.i(TAG, "⏩ SHOWING Skip Intro overlay (time=$time in $introStartMs until $introEndMs)")
                         // Only steal focus if Next Episode is NOT already visible
                         if (layoutNextEpisode.visibility != View.VISIBLE) {
                             layoutSkipIntro.requestFocus()
@@ -729,9 +969,11 @@ class PlayerActivity : AppCompatActivity() {
                         }.start()
                     }
                 }
+            } else if (introSkipped && layoutSkipIntro.visibility == View.VISIBLE) {
+                layoutSkipIntro.visibility = View.GONE
             }
 
-            // ── Next Episode overlay ────────────────────────────────────
+            // Intro and Next Episode check
             val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
             if (contentId.startsWith("tv_")) {
                 val creditsStartStr = intent.getStringExtra(EXTRA_CREDITS_START) ?: ""
@@ -764,13 +1006,20 @@ class PlayerActivity : AppCompatActivity() {
                         layoutNextEpisode.alpha = 0f
                         layoutNextEpisode.animate().alpha(1f).setDuration(300).start()
                         layoutNextEpisode.requestFocus()
-                        Log.i(TAG, "🎬 SHOWING Next Episode overlay (time=$time, secondsLeft=$secondsLeft)")
+                        Log.i(TAG, "▶️ SHOWING Next Episode overlay (time=$time, secondsLeft=$secondsLeft)")
                         // Hide skip intro if next episode appears (avoid visual clash)
                         if (layoutSkipIntro.visibility == View.VISIBLE) {
                             layoutSkipIntro.visibility = View.GONE
                         }
                     }
                     tvNextEpisodeCountdown.text = "Siguiente en ${secondsLeft}s"
+
+                    // Auto-advance if countdown expires or video ends
+                    if (secondsLeft <= 0 && !nextEpisodeTriggered && duration > 30_000L) {
+                        nextEpisodeTriggered = true
+                        Log.i(TAG, "▶️ Next Episode countdown reached 0s, auto-triggering next episode")
+                        triggerNextEpisode()
+                    }
                 } else {
                     if (layoutNextEpisode.visibility == View.VISIBLE) {
                         layoutNextEpisode.visibility = View.GONE
@@ -1039,6 +1288,16 @@ class PlayerActivity : AppCompatActivity() {
         savedPosition = savedInstanceState.getLong("savedPosition", 0L)
     }
 
+    @Volatile
+    private var isCleanedUp = false
+
+    override fun onStop() {
+        super.onStop()
+        if (isFinishing) {
+            cleanup()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         titleHandler.removeCallbacksAndMessages(null)
@@ -1049,6 +1308,9 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun cleanup() {
+        if (isCleanedUp) return
+        isCleanedUp = true
+
         val phone = intent.getStringExtra(EXTRA_PHONE) ?: ""
         val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
         val season = intent.getStringExtra(EXTRA_SEASON) ?: ""
@@ -1069,12 +1331,19 @@ class PlayerActivity : AppCompatActivity() {
         player = null
 
         try { proxyServer?.stop() } catch (_: Exception) {}
+        proxyServer = null
+        com.cineflix.android.GramJSStreamManager.currentPlaybackId = ""
         scope.cancel()
 
+        val engine = TelegramEngine.getInstance(this)
         val fileId = intent.getIntExtra(EXTRA_FILE_ID, -1)
         if (fileId > 0) {
-            TelegramEngine.getInstance(this).cancelAndDeleteVideo(fileId)
+            engine.cancelAndDeleteVideo(fileId)
         }
+        multipartParts?.forEach { part ->
+            engine.cancelAndDeleteVideo(part.fileId)
+        }
+        engine.optimizeStorage(30L * 1024 * 1024, immunityDelaySec = 0) // Safe: playback ended, full cleanup
 
         if (phone.isNotEmpty() && contentId.isNotEmpty() && finalPosition > 0) {
             CoroutineScope(Dispatchers.IO).launch {
@@ -1103,8 +1372,20 @@ class PlayerActivity : AppCompatActivity() {
 
         withContext(Dispatchers.IO) {
             try {
-                val url = java.net.URL("https://cineflix-production-19e3.up.railway.app/api/progress")
-                val conn = url.openConnection() as java.net.HttpURLConnection
+                // Bypass SSL for older Android TV boxes with expired Let's Encrypt roots
+                val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate>? = null
+                    override fun checkClientTrusted(certs: Array<java.security.cert.X509Certificate>, authType: String) {}
+                    override fun checkServerTrusted(certs: Array<java.security.cert.X509Certificate>, authType: String) {}
+                })
+                val sc = javax.net.ssl.SSLContext.getInstance("SSL")
+                sc.init(null, trustAllCerts, java.security.SecureRandom())
+                javax.net.ssl.HttpsURLConnection.setDefaultSSLSocketFactory(sc.socketFactory)
+                val allHostsValid = javax.net.ssl.HostnameVerifier { _, _ -> true }
+
+                val url = java.net.URL("https://cineflixapp.duckdns.org/api/progress")
+                val conn = url.openConnection() as javax.net.ssl.HttpsURLConnection
+                conn.hostnameVerifier = allHostsValid
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 conn.setRequestProperty("x-user-phone", phone)
@@ -1124,23 +1405,41 @@ class PlayerActivity : AppCompatActivity() {
                     val input = json.toString().toByteArray(Charsets.UTF_8)
                     os.write(input, 0, input.size)
                 }
+                val responseCode = conn.responseCode
+                android.util.Log.d("PROGRESS", "POST contentId=$contentId position=$progressSeconds response=$responseCode")
                 conn.disconnect()
-            } catch (e: Exception) {}
+            } catch (e: Exception) {
+                android.util.Log.e("PROGRESS", "POST error", e)
+            }
         }
     }
 
     private suspend fun fetchSavedProgress(phone: String, contentId: String, season: String, episode: String): Int {
         return withContext(Dispatchers.IO) {
             try {
-                val url = java.net.URL("https://cineflix-production-19e3.up.railway.app/api/progress")
-                val conn = url.openConnection() as java.net.HttpURLConnection
+                // Bypass SSL for older Android TV boxes with expired Let's Encrypt roots
+                val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate>? = null
+                    override fun checkClientTrusted(certs: Array<java.security.cert.X509Certificate>, authType: String) {}
+                    override fun checkServerTrusted(certs: Array<java.security.cert.X509Certificate>, authType: String) {}
+                })
+                val sc = javax.net.ssl.SSLContext.getInstance("SSL")
+                sc.init(null, trustAllCerts, java.security.SecureRandom())
+                javax.net.ssl.HttpsURLConnection.setDefaultSSLSocketFactory(sc.socketFactory)
+                val allHostsValid = javax.net.ssl.HostnameVerifier { _, _ -> true }
+
+                val url = java.net.URL("https://cineflixapp.duckdns.org/api/progress")
+                val conn = url.openConnection() as javax.net.ssl.HttpsURLConnection
+                conn.hostnameVerifier = allHostsValid
                 conn.requestMethod = "GET"
                 conn.setRequestProperty("x-user-phone", phone)
                 conn.connectTimeout = 5000
                 conn.readTimeout = 5000
 
-                if (conn.responseCode == 200) {
+                val responseCode = conn.responseCode
+                if (responseCode == 200) {
                     val body = conn.inputStream.bufferedReader().readText()
+                    android.util.Log.d("PROGRESS", "GET response=$body")
                     val arr = org.json.JSONArray(body)
                     for (i in 0 until arr.length()) {
                         val obj = arr.getJSONObject(i)
@@ -1153,7 +1452,10 @@ class PlayerActivity : AppCompatActivity() {
                     }
                 }
                 0
-            } catch (e: Exception) { 0 }
+            } catch (e: Exception) {
+                android.util.Log.e("PROGRESS", "GET error", e)
+                0
+            }
         }
     }
 }

@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.app.UiModeManager
 import android.content.Context
 import android.os.Bundle
+import android.view.KeyEvent
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -25,6 +26,13 @@ class MainActivity : ComponentActivity() {
     private var isAndroidTV = false
 
     companion object {
+        init {
+            try {
+                System.loadLibrary("c++_shared")
+            } catch (e: Throwable) {
+                android.util.Log.e("Cineflix", "Failed to load native libraries", e)
+            }
+        }
         @SuppressLint("StaticFieldLeak")
         var webViewInstance: WebView? = null
     }
@@ -57,10 +65,14 @@ class MainActivity : ComponentActivity() {
         android.util.Log.i("CineflixMain", "Android TV mode: $isAndroidTV")
 
         engine = TelegramEngine.getInstance(this)
-
+        
         webView = WebView(this)
         webViewInstance = webView
+        
+        bridge = AndroidBridge(this, webView, engine)
 
+
+        WebView.setWebContentsDebuggingEnabled(true)
         webView.apply {
             keepScreenOn = true
             settings.apply {
@@ -95,6 +107,20 @@ class MainActivity : ComponentActivity() {
                     view: WebView,
                     request: WebResourceRequest
                 ): WebResourceResponse? {
+                    val path = request.url.path ?: ""
+                    if (path.contains("/assets/index-") && path.endsWith(".js")) {
+                        try {
+                            val assetFiles = assets.list("www/assets") ?: emptyArray()
+                            val localJs = assetFiles.firstOrNull { it.startsWith("index-") && it.endsWith(".js") }
+                            if (localJs != null) {
+                                android.util.Log.i("CineflixMain", "⚡ Intercepted $path -> serving local APK asset www/assets/$localJs")
+                                val stream = assets.open("www/assets/$localJs")
+                                return WebResourceResponse("application/javascript", "UTF-8", stream)
+                            }
+                        } catch (e: Throwable) {
+                            android.util.Log.e("CineflixMain", "Failed to intercept JS asset: ${e.message}")
+                        }
+                    }
                     return assetLoader.shouldInterceptRequest(request.url)
                 }
 
@@ -102,11 +128,12 @@ class MainActivity : ComponentActivity() {
                     super.onPageFinished(view, url)
                     val isAmazon = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true)
                     val tvFlag = if (isAndroidTV) "true" else "false"
+                    val platformStr = if (isAndroidTV) "android_tv" else "android"
                     @Suppress("DEPRECATION")
                     val vCode = try { packageManager.getPackageInfo(packageName, 0).versionCode.toLong() } catch (e: Throwable) { 2L }
                     view.evaluateJavascript(
                         "window._cineflixIsTV = $tvFlag; " +
-                        "window.__appPlatform = 'android_tv'; " +
+                        "window.__appPlatform = '$platformStr'; " +
                         "window.__appVersion = $vCode; " +
                         "document.documentElement.classList.toggle('android-tv', $tvFlag); " +
                         "if ($tvFlag && !$isAmazon) { " +
@@ -126,7 +153,234 @@ class MainActivity : ComponentActivity() {
                         "}",
                         null
                     )
+
                     android.util.Log.d("CineflixMain", "Injected OTA vars and JS fixes, TV=$tvFlag, Amazon=$isAmazon")
+
+                    // Inyectar enlace de teclado virtual para pantalla de login en Android TV
+                    view.evaluateJavascript(
+                        """
+                        (function() {
+                            function bindVK() {
+                                ['search-input', 'input-phone', 'input-otp', 'input-2fa'].forEach(function(id) {
+                                    var el = document.getElementById(id);
+                                    if (el && !el._vkAttached) {
+                                        el._vkAttached = true;
+                                        el.addEventListener('click', function(e) {
+                                            if (typeof window.openVirtualKeyboard === 'function') {
+                                                e.preventDefault();
+                                                el.blur();
+                                                window.openVirtualKeyboard(el);
+                                            }
+                                        });
+                                    }
+                                });
+                            }
+                            bindVK();
+                            setInterval(bindVK, 1000);
+
+                            if (window.cineflixTvNav && !window.cineflixTvNav._vkConfirmPatched) {
+                                window.cineflixTvNav._vkConfirmPatched = true;
+                                var orig = window.cineflixTvNav.confirm;
+                                window.cineflixTvNav.confirm = function() {
+                                    var f = this.focused;
+                                    if (f && (f.id === 'input-phone' || f.id === 'input-otp' || f.id === 'input-2fa' || f.id === 'search-input')) {
+                                        if (typeof window.openVirtualKeyboard === 'function') {
+                                            window.openVirtualKeyboard(f);
+                                            return;
+                                        }
+                                    }
+                                    return orig.apply(this, arguments);
+                                };
+                            }
+                        })();
+                        """.trimIndent(),
+                        null
+                    )
+
+                    // Inyectar inicio automático de QR login oficial de Telegram si estamos en login
+                    view.evaluateJavascript(
+                        """
+                        (function() {
+                            function ensureQr() {
+                                var remoteSec = document.getElementById('remote-login-section');
+                                if (remoteSec && remoteSec.style.display !== 'none') {
+                                    if (typeof window.initTelegramQrLogin === 'function') {
+                                        window.initTelegramQrLogin();
+                                    }
+                                }
+                            }
+                            setTimeout(ensureQr, 1000);
+                            setTimeout(ensureQr, 3000);
+                        })();
+                        """.trimIndent(),
+                        null
+                    )
+
+                    // Inyectar protección indestructible del spinner de carga en fichas
+                    view.evaluateJavascript(
+                        """
+                        (function() {
+                            if (!document.getElementById('card-spinner-injected-style')) {
+                                var s = document.createElement('style');
+                                s.id = 'card-spinner-injected-style';
+                                s.textContent = '.card-loading-overlay { position: absolute !important; inset: 0 !important; background: rgba(0,0,0,0.65) !important; display: flex !important; align-items: center !important; justify-content: center !important; z-index: 9999 !important; border-radius: inherit !important; pointer-events: none !important; opacity: 1 !important; visibility: visible !important; } .card-loading-overlay .spinner { width: 40px !important; height: 40px !important; border: 3.5px solid rgba(255, 255, 255, 0.25) !important; border-top-color: #ffffff !important; border-radius: 50% !important; animation: cardSpinAnim 0.8s linear infinite !important; margin: 0 !important; box-sizing: border-box !important; display: block !important; } @keyframes cardSpinAnim { to { transform: rotate(360deg); } } .row-cards { -webkit-overflow-scrolling: touch !important; }';
+                                document.head.appendChild(s);
+                            }
+
+                            window.__forceClearCardOverlays = false;
+                            window.__activeLoadingPoster = null;
+                            window.__activeLoadingCardId = null;
+                            var safetyTimer = null;
+
+                            window._clearCardLoadingOverlays = function() {
+                                window.__forceClearCardOverlays = true;
+                                window.__activeLoadingPoster = null;
+                                window.__activeLoadingCardId = null;
+                                if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
+                                document.querySelectorAll('.card-loading-overlay').forEach(function(el) {
+                                    if (el.parentNode) el.parentNode.removeChild(el);
+                                });
+                                window.__forceClearCardOverlays = false;
+                            };
+
+                            var origRemove = Element.prototype.remove;
+                            Element.prototype.remove = function() {
+                                if (this.classList && this.classList.contains('card-loading-overlay')) {
+                                    if (!window.__forceClearCardOverlays) {
+                                        return;
+                                    }
+                                }
+                                return origRemove.apply(this, arguments);
+                            };
+
+                            var origRemoveChild = Node.prototype.removeChild;
+                            Node.prototype.removeChild = function(child) {
+                                if (child && child.classList && child.classList.contains('card-loading-overlay')) {
+                                    if (!window.__forceClearCardOverlays) {
+                                        return child;
+                                    }
+                                }
+                                return origRemoveChild.apply(this, arguments);
+                            };
+
+                            function onOverlaySeen(overlay) {
+                                if (window.__forceClearCardOverlays) return;
+                                var poster = overlay.parentElement;
+                                if (!poster) return;
+                                window.__activeLoadingPoster = poster;
+                                var card = poster.closest('.series-card, .movie-card, .content-row .card, .row-cards > div');
+                                if (card && card.dataset && card.dataset.id) {
+                                    window.__activeLoadingCardId = card.dataset.id;
+                                }
+                                if (safetyTimer) clearTimeout(safetyTimer);
+                                safetyTimer = setTimeout(function() {
+                                    window._clearCardLoadingOverlays();
+                                }, 45000);
+                            }
+
+                            try {
+                                var observer = new MutationObserver(function(mutations) {
+                                    if (window.__forceClearCardOverlays) return;
+                                    for (var i = 0; i < mutations.length; i++) {
+                                        var added = mutations[i].addedNodes;
+                                        for (var j = 0; j < added.length; j++) {
+                                            var node = added[j];
+                                            if (node && node.nodeType === 1) {
+                                                if (node.classList && node.classList.contains('card-loading-overlay')) {
+                                                    onOverlaySeen(node);
+                                                } else if (node.querySelector) {
+                                                    var found = node.querySelector('.card-loading-overlay');
+                                                    if (found) onOverlaySeen(found);
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                                observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
+                            } catch(e) {}
+
+                            setInterval(function() {
+                                if (window.__forceClearCardOverlays) return;
+                                var target = window.__activeLoadingPoster;
+                                if (!target && window.__activeLoadingCardId) {
+                                    var card = document.querySelector('[data-id="' + window.__activeLoadingCardId + '"]');
+                                    if (card) {
+                                        target = card.querySelector('.series-card-poster') || card;
+                                        window.__activeLoadingPoster = target;
+                                    }
+                                }
+                                if (target && document.body.contains(target)) {
+                                    if (!target.querySelector('.card-loading-overlay')) {
+                                        var ov = document.createElement('div');
+                                        ov.className = 'card-loading-overlay';
+                                        ov.innerHTML = '<div class="spinner"></div>';
+                                        target.appendChild(ov);
+                                    }
+                                }
+                            }, 40);
+
+                            // Proteger la posición de scroll del carrusel Seguir Viendo para que no salte al inicio en sincronizaciones
+                            window.__savedSeriesCarouselScroll = 0;
+                            window.__savedMoviesCarouselScroll = 0;
+
+                            document.addEventListener('scroll', function(e) {
+                                if (e.target && e.target.classList && e.target.classList.contains('row-cards')) {
+                                    var parentSeries = e.target.closest('#continue-watching-series');
+                                    if (parentSeries) {
+                                        window.__savedSeriesCarouselScroll = e.target.scrollLeft;
+                                    }
+                                    var parentMovies = e.target.closest('#continue-watching-movies');
+                                    if (parentMovies) {
+                                        window.__savedMoviesCarouselScroll = e.target.scrollLeft;
+                                    }
+                                }
+                            }, true);
+
+                            function patchContinueWatching() {
+                                if (window.renderContinueWatchingRow && !window.__patchedContinueWatchingRow) {
+                                    window.__patchedContinueWatchingRow = true;
+                                    var origRender = window.renderContinueWatchingRow;
+                                    window.renderContinueWatchingRow = function() {
+                                        var sCards = document.querySelector('#continue-watching-series .row-cards');
+                                        if (sCards && sCards.scrollLeft > 0) window.__savedSeriesCarouselScroll = sCards.scrollLeft;
+                                        var mCards = document.querySelector('#continue-watching-movies .row-cards');
+                                        if (mCards && mCards.scrollLeft > 0) window.__savedMoviesCarouselScroll = mCards.scrollLeft;
+                                        
+                                        var res = origRender.apply(this, arguments);
+                                        var restoreScroll = function() {
+                                            if (window.__savedSeriesCarouselScroll > 0) {
+                                                var sc = document.querySelector('#continue-watching-series .row-cards');
+                                                if (sc && Math.abs(sc.scrollLeft - window.__savedSeriesCarouselScroll) > 5) {
+                                                    sc.scrollLeft = window.__savedSeriesCarouselScroll;
+                                                }
+                                            }
+                                            if (window.__savedMoviesCarouselScroll > 0) {
+                                                var mc = document.querySelector('#continue-watching-movies .row-cards');
+                                                if (mc && Math.abs(mc.scrollLeft - window.__savedMoviesCarouselScroll) > 5) {
+                                                    mc.scrollLeft = window.__savedMoviesCarouselScroll;
+                                                }
+                                            }
+                                        };
+                                        if (res && typeof res.then === 'function') {
+                                            return res.then(function(val) {
+                                                restoreScroll();
+                                                setTimeout(restoreScroll, 50);
+                                                return val;
+                                            });
+                                        } else {
+                                            restoreScroll();
+                                            setTimeout(restoreScroll, 50);
+                                            return res;
+                                        }
+                                    };
+                                }
+                            }
+                            patchContinueWatching();
+                            setInterval(patchContinueWatching, 500);
+                        })();
+                        """.trimIndent(),
+                        null
+                    )
                 }
             }
 
@@ -147,12 +401,18 @@ class MainActivity : ComponentActivity() {
                 android.util.Log.d("CineflixMain", "WebView state restored from savedInstanceState")
             } else {
                 val cacheBuster = System.currentTimeMillis()
-                loadUrl("https://cineflix-production-19e3.up.railway.app/?v=$cacheBuster")
+                loadUrl("https://cineflixapp.duckdns.org/?v=$cacheBuster")
                 android.util.Log.d("CineflixMain", "WebView loading remote catalog URL with cache-buster")
             }
         }
+        
+        // Fix white flash on startup
+        webView.setBackgroundColor(android.graphics.Color.BLACK)
 
         setContentView(webView)
+
+        // OTA: comprobar actualizaciones al abrir la app
+        OtaUpdateManager(this).checkForUpdate()
 
         // Manejar el botón de atrás del sistema
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -184,11 +444,59 @@ class MainActivity : ComponentActivity() {
         webView.saveState(outState)
     }
 
-    /** Pause WebView timers + rendering when app goes to background */
+    /**
+     * Intercept D-pad keys BEFORE the WebView's native focus engine processes them.
+     * The WebView has its own D-pad navigation that moves focus between tabindex elements,
+     * which fights with tv-nav.js's spatial navigation. By consuming D-pad events here
+     * and injecting them as JavaScript KeyboardEvents, tv-nav.js becomes the sole owner
+     * of D-pad navigation.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (isAndroidTV && (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)) {
+            val jsKeyCode = when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> 38
+                KeyEvent.KEYCODE_DPAD_DOWN -> 40
+                KeyEvent.KEYCODE_DPAD_LEFT -> 37
+                KeyEvent.KEYCODE_DPAD_RIGHT -> 39
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> 13
+                else -> null
+            }
+            if (jsKeyCode != null) {
+                val jsKey = when (jsKeyCode) {
+                    38 -> "ArrowUp"
+                    40 -> "ArrowDown"
+                    37 -> "ArrowLeft"
+                    39 -> "ArrowRight"
+                    13 -> "Enter"
+                    else -> ""
+                }
+                val eventType = if (event.action == KeyEvent.ACTION_DOWN) "keydown" else "keyup"
+                val repeat = if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) "true" else "false"
+                webView.evaluateJavascript(
+                    "document.dispatchEvent(new KeyboardEvent('$eventType', " +
+                    "{key:'$jsKey', keyCode:$jsKeyCode, code:'$jsKey', repeat:$repeat, bubbles:true, cancelable:true}))",
+                    null
+                )
+                return true // Consume the event — WebView never sees it
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    /** Do NOT pause WebView timers in onPause because PlayerActivity is translucent and runs on top */
     override fun onPause() {
         super.onPause()
-        webView.onPause()
-        webView.pauseTimers()
+    }
+
+    /** Only pause WebView timers + rendering when activity is fully stopped (backgrounded) AND not streaming */
+    override fun onStop() {
+        super.onStop()
+        if (GramJSStreamManager.currentPlaybackId.isEmpty()) {
+            webView.onPause()
+            webView.pauseTimers()
+        } else {
+            android.util.Log.i("CineflixMain", "Preserving WebView timers during active GramJS streaming: ${GramJSStreamManager.currentPlaybackId}")
+        }
     }
 
     /** Resume WebView timers + rendering when app comes back to foreground */
@@ -196,6 +504,8 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         webView.resumeTimers()
         webView.onResume()
+        webView.evaluateJavascript("if (typeof window._clearCardLoadingOverlays === 'function') window._clearCardLoadingOverlays();", null)
+        webView.evaluateJavascript("if (typeof window.fetchWatchProgress === 'function') window.fetchWatchProgress();", null)
         
         pendingNextEpisodeArgs?.let { args ->
             val contentId = args.first
@@ -238,32 +548,39 @@ class MainActivity : ComponentActivity() {
                         
                         // Fallback
                         if (typeof window.playNextEpisodeFromNative === 'function') {
-                            clearInterval(interval);
-                            try {
-                                var arr = window.currentPlaylistArray;
-                                if (arr && !window.currentPlayingVideoMsgId) {
-                                    for (var i = 0; i < arr.length; i++) {
-                                        var title = arr[i].displayTitle || arr[i].caption || arr[i].fileName || "";
-                                        var match = title.match(/(\d+)[x\-×X](\d+)/);
-                                        if (match && parseInt(match[1]) === $season && parseInt(match[2]) === $episode) {
-                                            window.currentPlayingVideoMsgId = arr[i].msgId;
-                                            break;
+                            var arr = window.currentPlaylistArray;
+                            if ((arr && arr.length > 0) || attempts > 15) {
+                                clearInterval(interval);
+                                try {
+                                    if (arr) {
+                                        var found = false;
+                                        if (window.currentPlayingVideoMsgId) {
+                                            found = arr.some(function(v) { return v.msgId === window.currentPlayingVideoMsgId; });
+                                        }
+                                        if (!found) {
+                                            for (var i = 0; i < arr.length; i++) {
+                                                var title = arr[i].displayTitle || arr[i].caption || arr[i].fileName || "";
+                                                var match = title.match(/(\d+)[x\-×X](\d+)/);
+                                                if (match && parseInt(match[1]) === $season && parseInt(match[2]) === $episode) {
+                                                    window.currentPlayingVideoMsgId = arr[i].msgId;
+                                                    break;
+                                                }
+                                            }
                                         }
                                     }
+                                    
+                                    window.currentWatchContext = {
+                                        content_id: '$contentId',
+                                        season: $season,
+                                        episode: nextE
+                                    };
+                                    
+                                    console.log('[NativeBridge] Fallback Executing pending next episode from Android S$season E' + nextE);
+                                    window.playNextEpisodeFromNative('$contentId', $season, $episode);
+                                } catch (e) {
+                                    console.error('[NativeBridge] JS Crash:', e.message);
                                 }
-                                
-                                // FORCE update the watch context to the next episode to fix ancient WebApp caches
-                                // that failed to update this variable, causing Native Android to loop the same episode.
-                                window.currentWatchContext = {
-                                    content_id: '$contentId',
-                                    season: $season,
-                                    episode: nextE
-                                };
-                                
-                                console.log('[NativeBridge] Fallback Executing pending next episode from Android');
-                                window.playNextEpisodeFromNative('$contentId', $season, $episode);
-                            } catch (e) {
-                                console.error('[NativeBridge] JS Crash:', e.message);
+                                return;
                             }
                         } else if (attempts > 50) {
                             clearInterval(interval);

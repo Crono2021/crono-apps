@@ -99,11 +99,46 @@ class TelegramEngine(private val context: Context) {
 
     // ── Init ─────────────────────────────────────────────────────────────────
     init {
+        ensureDirectoriesExist()
         initClient()
+    }
+
+    /**
+     * Ensure TDLib database and cache directory hierarchy strictly exists on disk.
+     * Prevents native C++ POSIX ENOENT (errno: 2) errors when TDLib creates temp files or chunks.
+     */
+    fun ensureDirectoriesExist() {
+        try {
+            val dbDir = File(context.filesDir, "tdlib_data")
+            if (!dbDir.exists()) dbDir.mkdirs()
+            dbDir.setReadable(true, false)
+            dbDir.setWritable(true, false)
+            dbDir.setExecutable(true, false)
+
+            val cacheBase = File(context.cacheDir, "tdlib_files")
+            if (!cacheBase.exists()) cacheBase.mkdirs()
+            cacheBase.setReadable(true, false)
+            cacheBase.setWritable(true, false)
+            cacheBase.setExecutable(true, false)
+
+            val subdirs = listOf("temp", "videos", "documents", "thumbnails", "profile_photos")
+            for (sub in subdirs) {
+                val d = File(cacheBase, sub)
+                if (!d.exists()) d.mkdirs()
+                d.setReadable(true, false)
+                d.setWritable(true, false)
+                d.setExecutable(true, false)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error ensuring TDLib directory structure: ${e.message}", e)
+        }
     }
 
     private fun initClient() {
         Log.i(TAG, "Initializing TDLib client...")
+        try {
+            Client.execute(TdApi.SetLogVerbosityLevel(1))
+        } catch (_: Exception) {}
         client = Client.create(
             { result -> handleResult(result) },
             { error -> Log.e(TAG, "TDLib Error: ${error.message}", error) },
@@ -125,13 +160,14 @@ class TelegramEngine(private val context: Context) {
         Log.i(TAG, "Auth state: ${state.javaClass.simpleName}")
         when (state) {
             is TdApi.AuthorizationStateWaitTdlibParameters -> {
+                ensureDirectoriesExist()
                 val dbPath = File(context.filesDir, "tdlib_data").absolutePath
                 val cachePath = File(context.cacheDir, "tdlib_files").absolutePath
                 client?.send(TdApi.SetTdlibParameters(
                     false, dbPath, cachePath, null,
                     true, true, true, true,
                     API_ID, API_HASH,
-                    "es", "Android", "14", "Cineflix/2.0"
+                    "es", "Samsung S24 Ultra", "Android 14", "11.1.3"
                 )) {}
             }
             is TdApi.AuthorizationStateWaitPhoneNumber -> _authState.value = AuthState.WaitPhone
@@ -142,13 +178,28 @@ class TelegramEngine(private val context: Context) {
             is TdApi.AuthorizationStateWaitPassword    -> _authState.value = AuthState.WaitPassword
             is TdApi.AuthorizationStateReady           -> {
                 _authState.value = AuthState.Ready
-                // Cleanup stray caches at boot to rescue TV storage
+                
+                // Disable TDLib auto-downloads completely to save bandwidth and disk space
+                val emptySettings = TdApi.AutoDownloadSettings().apply { isAutoDownloadEnabled = false }
+                client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeWiFi())) {}
+                client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeMobile())) {}
+                client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeMobileRoaming())) {}
+                client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeOther())) {}
+
+                // Cleanup stray caches at boot to rescue TV storage (delete file contents, NOT directories)
                 try {
-                    // Clean new cache directory
-                    val cacheVideos = java.io.File(context.cacheDir, "tdlib_files/videos")
-                    if (cacheVideos.exists()) cacheVideos.deleteRecursively()
-                    val cacheDocs = java.io.File(context.cacheDir, "tdlib_files/documents")
-                    if (cacheDocs.exists()) cacheDocs.deleteRecursively()
+                    val cacheBase = File(context.cacheDir, "tdlib_files")
+                    val subdirs = listOf("temp", "videos", "documents", "thumbnails")
+                    for (sub in subdirs) {
+                        val d = File(cacheBase, sub)
+                        if (d.exists() && d.isDirectory) {
+                            d.listFiles()?.forEach { file ->
+                                try { file.delete() } catch (_: Exception) {}
+                            }
+                        } else {
+                            d.mkdirs()
+                        }
+                    }
                     
                     // Clean legacy files directory (to reclaim space from old versions)
                     val legacyVideos = java.io.File(context.filesDir, "tdlib_data/videos")
@@ -157,6 +208,9 @@ class TelegramEngine(private val context: Context) {
                     if (legacyDocs.exists()) legacyDocs.deleteRecursively()
                     val legacyPhotos = java.io.File(context.filesDir, "tdlib_data/profile_photos")
                     if (legacyPhotos.exists()) legacyPhotos.deleteRecursively()
+
+                    ensureDirectoriesExist()
+                    optimizeStorage(30L * 1024 * 1024, immunityDelaySec = 0)
                 } catch (_: Exception) {}
             }
             is TdApi.AuthorizationStateLoggingOut      -> _authState.value = AuthState.LoggingOut
@@ -243,9 +297,12 @@ class TelegramEngine(private val context: Context) {
                 is TdApi.MessageDocument -> {
                     val doc = c.document
                     val mime = doc.mimeType
+                    val isMultipart = Regex("""\.(?:part0*\d+|0*\d+)$""", RegexOption.IGNORE_CASE).containsMatchIn(doc.fileName)
                     val isMedia = mime.contains("video") ||
                             doc.fileName.endsWith(".mp4") ||
-                            doc.fileName.endsWith(".mkv")
+                            doc.fileName.endsWith(".mkv") ||
+                            doc.fileName.endsWith(".avi") ||
+                            isMultipart
                     if (!isMedia) return null
                     VideoInfo(
                         msgId    = msg.id,
@@ -577,6 +634,7 @@ class TelegramEngine(private val context: Context) {
      */
     suspend fun startDownloadReturnPath(fileId: Int, priority: Int = 32): String? =
         withContext(Dispatchers.IO) {
+            ensureDirectoriesExist()
             Log.d(TAG, "startDownloadReturnPath fileId=$fileId priority=$priority")
             val deferred = filePathEmitters.getOrPut(fileId) { CompletableDeferred() }
 
@@ -608,6 +666,7 @@ class TelegramEngine(private val context: Context) {
      */
     suspend fun downloadAndGetPath(fileId: Int, priority: Int = 32): String =
         withContext(Dispatchers.IO) {
+            ensureDirectoriesExist()
             val deferred = filePathEmitters.getOrPut(fileId) { CompletableDeferred() }
             client?.send(TdApi.DownloadFile(fileId, priority, 0, 0, false)) { result ->
                 if (result is TdApi.File) {
@@ -621,6 +680,7 @@ class TelegramEngine(private val context: Context) {
 
     /** Hint TDLib to prioritize bytes starting at offset (for seek support) */
     fun hintDownloadOffset(fileId: Int, offset: Long, limit: Long = 2L * 1024 * 1024) {
+        ensureDirectoriesExist()
         // Specify a concrete limit so TDLib knows exactly which range to prioritize
         // instead of "everything from offset to end" (limit=0) which is too vague for large files
         client?.send(TdApi.DownloadFile(fileId, 32, offset, limit, false)) {}
@@ -636,11 +696,18 @@ class TelegramEngine(private val context: Context) {
                 if (result.data.isNotEmpty()) {
                     chunk = result.data
                 }
+            } else if (result is TdApi.Error) {
+                Log.d(TAG, "ReadFilePart miss: ${result.code} ${result.message} fileId=$fileId offset=$offset count=$count")
             }
             latch.countDown()
         } ?: return null
 
-        latch.await(3_000, java.util.concurrent.TimeUnit.MILLISECONDS)
+        try {
+            latch.await(5_000, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return null
+        }
         return chunk
     }
 
@@ -651,15 +718,24 @@ class TelegramEngine(private val context: Context) {
      * Returns the bytes, or null on timeout (30s).
      */
     fun downloadRangeAndRead(fileId: Int, offset: Long, count: Long): ByteArray? {
+        ensureDirectoriesExist()
         // Step 1: Tell TDLib to download this exact range. synchronous=true blocks until ready.
         val downloadLatch = java.util.concurrent.CountDownLatch(1)
         client?.send(TdApi.DownloadFile(fileId, 32, offset, count, true)) { result ->
+            if (result is TdApi.Error) {
+                Log.w(TAG, "DownloadFile(sync) error: ${result.code} ${result.message} fileId=$fileId offset=$offset count=$count")
+            }
             downloadLatch.countDown()
         } ?: return null
 
-        // Wait up to 30s for TDLib to fetch from Telegram CDN (large file seek can be slow)
-        if (!downloadLatch.await(30_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-            Log.w(TAG, "downloadRangeAndRead TIMEOUT offset=$offset count=$count")
+        // Wait up to 30s for TDLib to fetch from Telegram CDN (resilient against network spikes)
+        try {
+            if (!downloadLatch.await(30_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "downloadRangeAndRead TIMEOUT offset=$offset count=$count")
+                return null
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
             return null
         }
 
@@ -692,12 +768,29 @@ class TelegramEngine(private val context: Context) {
             collected.sortedBy { it.msgId }
         }
 
-    private suspend fun getBotChatId(): Long? =
-        suspendCancellableCoroutine { cont ->
-            client?.send(TdApi.SearchPublicChat(BOT_USERNAME)) { result ->
-                cont.resume(if (result is TdApi.Chat) result.id else null) {}
+    @Volatile
+    private var cachedBotChatId: Long? = null
+
+    private suspend fun getBotChatId(): Long? {
+        cachedBotChatId?.let { return it }
+        val c = client ?: run {
+            Log.e(TAG, "TDLib client is null when getting bot chatId")
+            return null
+        }
+        return withTimeoutOrNull(8000) {
+            suspendCancellableCoroutine<Long?> { cont ->
+                try {
+                    c.send(TdApi.SearchPublicChat(BOT_USERNAME)) { result ->
+                        val id = if (result is TdApi.Chat) result.id else null
+                        if (id != null) cachedBotChatId = id
+                        if (cont.isActive) cont.resume(id) {}
+                    }
+                } catch (e: Exception) {
+                    if (cont.isActive) cont.resume(null) {}
+                }
             }
         }
+    }
 
     /** Public version for AndroidBridge (same logic, exposed outside package) */
     suspend fun getBotChatIdPublic(): Long? = getBotChatId()
@@ -729,9 +822,95 @@ class TelegramEngine(private val context: Context) {
     }
 
     /**
+     * Ask TDLib's native C++ engine to optimize disk usage by removing old cached chunks.
+     * Safe to call during or after playback as it does not abort active downloads.
+     */
+    fun optimizeStorage(maxSizeBytes: Long = 30L * 1024L * 1024L, immunityDelaySec: Int = 300) {
+        val req = TdApi.OptimizeStorage(
+            maxSizeBytes,
+            0,            // ttl: 0 = eligible for deletion regardless of age
+            0,            // count: 0 = no count limit
+            immunityDelaySec, // immunityDelay: protect files accessed in the last N seconds
+            null,
+            null,
+            null,
+            false,
+            0
+        )
+        client?.send(req) { result ->
+            Log.d(TAG, "🧹 TDLib optimizeStorage completed (immunity=${immunityDelaySec}s): ${result.javaClass.simpleName}")
+        }
+    }
+
+    /**
      * Returns the app's files directory for direct disk access.
      */
     fun getAppFilesDir(): java.io.File {
         return context.filesDir
+    }
+
+    /**
+     * Envía un archivo de log de error al bot (@videoclubpacobot) como documento .txt y mensaje.
+     */
+    fun sendLogDocumentToBot(
+        logFile: java.io.File, 
+        caption: String, 
+        onComplete: ((Boolean, String?) -> Unit)? = null
+    ) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val c = client
+                if (c == null) {
+                    Log.e(TAG, "Cannot send log to bot: TDLib client is null")
+                    onComplete?.invoke(false, "TDLib no está conectado")
+                    return@launch
+                }
+
+                val chatId = getBotChatId()
+                if (chatId == null) {
+                    Log.e(TAG, "Cannot send log to bot: bot chatId is null")
+                    onComplete?.invoke(false, "No se pudo encontrar el bot @$BOT_USERNAME")
+                    return@launch
+                }
+                
+                Log.i(TAG, "📤 Enviando log document (${logFile.name}, ${logFile.length()} bytes) a chatId=$chatId")
+                val inputFile = TdApi.InputFileLocal(logFile.absolutePath)
+                val formattedCaption = TdApi.FormattedText(caption, emptyArray())
+                val docContent = TdApi.InputMessageDocument(inputFile, null, false, formattedCaption)
+
+                val deferred = CompletableDeferred<Pair<Boolean, String?>>()
+                c.send(TdApi.SendMessage(chatId, null, null, null, null, docContent)) { res ->
+                    if (res is TdApi.Error) {
+                        Log.e(TAG, "Error sending log document to bot: ${res.code} - ${res.message}")
+                        // Fallback a texto
+                        try {
+                            val textContent = logFile.readText()
+                            val snippet = if (textContent.length > 3000) textContent.takeLast(3000) else textContent
+                            val fallbackText = TdApi.FormattedText("$caption\n\n```\n$snippet\n```", emptyArray())
+                            c.send(TdApi.SendMessage(chatId, null, null, null, null, 
+                                TdApi.InputMessageText(fallbackText, null, false)
+                            )) { textRes ->
+                                if (textRes is TdApi.Error) {
+                                    deferred.complete(Pair(false, textRes.message))
+                                } else {
+                                    deferred.complete(Pair(true, null))
+                                }
+                            }
+                        } catch (e: Exception) {
+                            deferred.complete(Pair(false, res.message))
+                        }
+                    } else {
+                        Log.i(TAG, "Log document enviado correctamente al bot")
+                        deferred.complete(Pair(true, null))
+                    }
+                }
+                
+                val outcome = withTimeoutOrNull(25_000) { deferred.await() } ?: Pair(false, "Timeout esperando confirmación del envío")
+                onComplete?.invoke(outcome.first, outcome.second)
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception enviando log al bot: ${e.message}", e)
+                onComplete?.invoke(false, e.message)
+            }
+        }
     }
 }
