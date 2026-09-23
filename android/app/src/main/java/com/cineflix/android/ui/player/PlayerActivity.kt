@@ -456,23 +456,12 @@ class PlayerActivity : AppCompatActivity() {
         // fallback automático a software si un códec no está soportado.
         val mode = DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
 
-        val customMediaCodecSelector = androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
-            val decoders = androidx.media3.exoplayer.mediacodec.MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
-            if (mimeType.equals(androidx.media3.common.MimeTypes.VIDEO_H265, ignoreCase = true)) {
-                decoders.sortedBy { decoder ->
-                    if (decoder.name.contains("exynos", ignoreCase = true)) 1 else 0
-                }
-            } else {
-                decoders
-            }
-        }
-
         val renderersFactory = CineflixRenderersFactory(this) {
             getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE).getBoolean("force_software_audio", false)
         }
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .setEnableDecoderFallback(true)
-            .setMediaCodecSelector(customMediaCodecSelector)
+            .setMediaCodecSelector(androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT)
 
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
