@@ -217,7 +217,25 @@ class PlayerActivity : AppCompatActivity() {
         val dbgIntroEnd   = intent.getStringExtra(EXTRA_INTRO_END_MS)   ?: "(null)"
         val dbgCreditsMs  = intent.getStringExtra(EXTRA_INTRODB_CREDITS_MS) ?: "(null)"
         val dbgCreditsStart = intent.getStringExtra(EXTRA_CREDITS_START) ?: "(null)"
-        Log.i(TAG, "🔍 DIAG IntroDB: introStart='$dbgIntroStart' introEnd='$dbgIntroEnd' introDbCredits='$dbgCreditsMs' creditsStart='$dbgCreditsStart' contentId='$contentId' season='$season' episode='$episode'")
+        var resolvedFileSize = fileSize
+        if (fileId <= 0) {
+            val chatId = intent.getLongExtra(EXTRA_CHAT_ID, 0L)
+            val msgId  = intent.getLongExtra(EXTRA_MSG_ID, 0L)
+            if (chatId != 0L && msgId != 0L) {
+                Log.w(TAG, "⚠️ fileId was <= 0, attempting native TDLib resolution for chatId=$chatId, msgId=$msgId...")
+                val resolved = kotlinx.coroutines.runBlocking {
+                    engine.resolveFileIdForMessage(chatId, msgId)
+                }
+                if (resolved != null && resolved.first > 0) {
+                    fileId = resolved.first
+                    currentFileId = fileId
+                    if (resolvedFileSize <= 0 && resolved.second > 0) {
+                        resolvedFileSize = resolved.second
+                    }
+                    Log.i(TAG, "✅ Successfully resolved fileId=$fileId (size=$resolvedFileSize) from TDLib for msgId=$msgId")
+                }
+            }
+        }
 
         if (fileId <= 0) {
             Toast.makeText(this, "Error: fileId inválido ($fileId)", Toast.LENGTH_LONG).show()
@@ -225,7 +243,7 @@ class PlayerActivity : AppCompatActivity() {
             return
         }
 
-        var effectiveFileSize = fileSize
+        var effectiveFileSize = resolvedFileSize
         if (effectiveFileSize <= 0) {
             effectiveFileSize = 2_000_000_000L
         }

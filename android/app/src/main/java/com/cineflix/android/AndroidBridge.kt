@@ -617,6 +617,7 @@ class AndroidBridge(
                 put("caption",  v.caption)
                 put("chatId",   chatId.toString())
                 put("fileId",   v.fileId)
+                put("id",       v.fileId)
             })
         }
         return arr.toString()
@@ -724,7 +725,7 @@ class AndroidBridge(
 
     // --- GramJS Bridge (Phase 1 & 2) ---
     @JavascriptInterface
-    fun supportsGramJSStreaming(): Boolean = true
+    fun supportsGramJSStreaming(): Boolean = false
 
     @JavascriptInterface
     fun getTelegramSession(): String {

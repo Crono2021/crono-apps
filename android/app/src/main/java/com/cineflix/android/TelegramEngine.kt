@@ -55,6 +55,9 @@ class TelegramEngine(private val context: Context) {
     // Pre-cached fileId for bot episode messages: "chatId:msgId" → Pair(fileId, mimeType)
     val fileIdCache = ConcurrentHashMap<String, Pair<Int, String>>()
 
+    // Per-fileId lock to serialize concurrent DownloadFile range requests and avoid TDLib Error 200
+    private val downloadLocks = ConcurrentHashMap<Int, Any>()
+
     // ── Bot Message Collector ─────────────────────────────────────────────────
     data class MsgCollector(
         val chatId: Long,
@@ -718,34 +721,63 @@ class TelegramEngine(private val context: Context) {
      * Returns the bytes, or null on timeout (30s).
      */
     fun downloadRangeAndRead(fileId: Int, offset: Long, count: Long): ByteArray? {
-        ensureDirectoriesExist()
-        // Step 1: Tell TDLib to download this exact range. synchronous=true blocks until ready.
-        val downloadLatch = java.util.concurrent.CountDownLatch(1)
-        var isSuccess = false
-        client?.send(TdApi.DownloadFile(fileId, 32, offset, count, true)) { result ->
-            if (result is TdApi.File) {
-                isSuccess = true
-            } else if (result is TdApi.Error) {
-                Log.w(TAG, "DownloadFile(sync) error: ${result.code} ${result.message} fileId=$fileId offset=$offset count=$count")
-            }
-            downloadLatch.countDown()
-        } ?: return null
+        val lock = downloadLocks.getOrPut(fileId) { Any() }
+        synchronized(lock) {
+            ensureDirectoriesExist()
+            // Step 1: Tell TDLib to download this exact range. synchronous=true blocks until ready.
+            val downloadLatch = java.util.concurrent.CountDownLatch(1)
+            var isSuccess = false
+            client?.send(TdApi.DownloadFile(fileId, 32, offset, count, true)) { result ->
+                if (result is TdApi.File) {
+                    isSuccess = true
+                } else if (result is TdApi.Error) {
+                    Log.w(TAG, "DownloadFile(sync) error: ${result.code} ${result.message} fileId=$fileId offset=$offset count=$count")
+                }
+                downloadLatch.countDown()
+            } ?: return null
 
-        // Wait up to 30s for TDLib to fetch from Telegram CDN (resilient against network spikes)
-        try {
-            if (!downloadLatch.await(30_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                Log.w(TAG, "downloadRangeAndRead TIMEOUT offset=$offset count=$count")
+            // Wait up to 30s for TDLib to fetch from Telegram CDN (resilient against network spikes)
+            try {
+                if (!downloadLatch.await(30_000, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    Log.w(TAG, "downloadRangeAndRead TIMEOUT offset=$offset count=$count")
+                    return null
+                }
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
                 return null
             }
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            return null
+
+            if (!isSuccess) return null
+
+            // Step 2: Bytes are guaranteed available. Read them.
+            return readFilePartSync(fileId, offset, count)
         }
+    }
 
-        if (!isSuccess) return null
-
-        // Step 2: Bytes are guaranteed available. Read them.
-        return readFilePartSync(fileId, offset, count)
+    /**
+     * Resolves the real TDLib fileId and fileSize for a given chatId and msgId.
+     * Checks in-memory cache first, then queries TDLib directly via GetMessage.
+     */
+    suspend fun resolveFileIdForMessage(chatId: Long, msgId: Long): Pair<Int, Long>? = withContext(Dispatchers.IO) {
+        val cacheKey = "$chatId:$msgId"
+        fileIdCache[cacheKey]?.let { pair ->
+            return@withContext Pair(pair.first, 0L)
+        }
+        val deferred = CompletableDeferred<Pair<Int, Long>?>()
+        client?.send(TdApi.GetMessage(chatId, msgId)) { result ->
+            if (result is TdApi.Message) {
+                val info = extractVideoInfo(result)
+                if (info != null && info.fileId > 0) {
+                    fileIdCache[cacheKey] = Pair(info.fileId, info.mimeType)
+                    deferred.complete(Pair(info.fileId, info.fileSize))
+                } else {
+                    deferred.complete(null)
+                }
+            } else {
+                deferred.complete(null)
+            }
+        }
+        withTimeoutOrNull(5000) { deferred.await() }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

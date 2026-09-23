@@ -61,7 +61,7 @@ var __async = (__this, __arguments, generator) => {
 };
 var __forAwait = (obj, it2, method) => (it2 = obj[__knownSymbol("asyncIterator")]) ? it2.call(obj) : (obj = obj[__knownSymbol("iterator")](), it2 = {}, method = (key2, fn) => (fn = obj[key2]) && (it2[key2] = (arg) => new Promise((yes, no, done) => (arg = fn.call(obj, arg), done = arg.done, Promise.resolve(arg.value).then((value) => yes({ value, done }), no)))), method("next"), method("return"), it2);
 var require_index_001 = __commonJS({
-  "assets/index-BN1q310j.js"(exports) {
+  "assets/index-BZ3HPGzm.js"(exports) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     (/* @__PURE__ */ __name(function polyfill2() {
       const relList = document.createElement("link").relList;
@@ -89381,15 +89381,12 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
     }
     __name(isNativeApp, "isNativeApp");
     function useTDLib() {
-      if (window.AndroidBridge && typeof window.AndroidBridge.supportsGramJSStreaming !== "undefined") {
-        return false;
-      }
       return !!window.AndroidBridge;
     }
     __name(useTDLib, "useTDLib");
     function streamVideoNative(videoObj, introStartMs = "", introEndMs = "", theIntroDbCreditsMs = "") {
       return __async(this, null, function* () {
-        var _a2, _b2, _c2;
+        var _a2, _b2, _c2, _d2;
         let chatId = videoObj.chatId;
         let msgId = videoObj.msgId;
         if (chatId && typeof chatId === "object" && chatId.value) {
@@ -89404,9 +89401,10 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         if (!msgId) {
           throw new Error("No se pudo obtener msgId para reproducción nativa.");
         }
-        const fileId = ((_a2 = videoObj.fileId) != null ? _a2 : 0).toString();
-        const fileSize = ((_b2 = videoObj.fileSize) != null ? _b2 : 0).toString();
-        const mimeType = (_c2 = videoObj.mimeType) != null ? _c2 : "video/mp4";
+        const rawFileId = (_b2 = (_a2 = videoObj.fileId) != null ? _a2 : videoObj.id) != null ? _b2 : 0;
+        const fileId = (rawFileId || 0).toString();
+        const fileSize = ((_c2 = videoObj.fileSize) != null ? _c2 : 0).toString();
+        const mimeType = (_d2 = videoObj.mimeType) != null ? _d2 : "video/mp4";
         let displayTitle = videoObj.title || videoObj.caption || videoObj.fileName || "Episodio";
         console.log("--- FETCHING JS PROGRESS ---");
         console.log("window.currentWatchContext", window.currentWatchContext);
@@ -91161,11 +91159,30 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
     function renderContinueWatchingRow() {
       return __async(this, null, function* () {
         if (!watchProgressMap || watchProgressMap.size === 0) return;
-        if (moviesCatalog.length === 0) {
+        const neededMovieIds = [];
+        for (const [id] of watchProgressMap.entries()) {
+          if (id.startsWith("mv_")) {
+            const rawId = id.replace("mv_", "");
+            if (!moviesCatalog.some((m) => String(m.id).replace(/^mv_/, "") === rawId)) {
+              neededMovieIds.push(rawId);
+            }
+          }
+        }
+        if (neededMovieIds.length > 0 && moviesCatalog.length < 500) {
           try {
-            yield loadMovies();
+            const res = yield fetch(`${RAILWAY_API}/api/movies?ids=${neededMovieIds.join(",")}`);
+            if (res.ok) {
+              const fetchedMovies = yield res.json();
+              if (Array.isArray(fetchedMovies)) {
+                for (const fm of fetchedMovies) {
+                  if (!moviesCatalog.some((m) => m.id === fm.id)) {
+                    moviesCatalog.push(fm);
+                  }
+                }
+              }
+            }
           } catch (e) {
-            console.warn("[ContinueWatching] loadMovies failed", e);
+            console.warn("[ContinueWatching] Selective fetch failed:", e);
           }
         }
         yield ensureRequestsCatalogLoaded();
@@ -95800,6 +95817,8 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         }
       }
       moviesReady = true;
+      renderContinueWatchingRow().catch(() => {
+      });
     }
     __name(renderMoviesHomeData, "renderMoviesHomeData");
     function fetchMoviesHome() {
@@ -95885,7 +95904,8 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         });
         setTimeout(() => {
           if (moviesCatalog.length < 500) {
-            loadMovies().catch((e) => console.warn("[Movies] Background load failed:", e));
+            loadMovies().then(() => renderContinueWatchingRow().catch(() => {
+            })).catch((e) => console.warn("[Movies] Background load failed:", e));
           }
         }, 5e3);
       });
