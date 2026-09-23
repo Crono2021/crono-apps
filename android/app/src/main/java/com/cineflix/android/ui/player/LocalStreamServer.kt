@@ -172,12 +172,12 @@ class LocalStreamServer(private val engine: TelegramEngine) {
                 }
 
                 // GET handling
-                if (rangeHeader == null) {
-                    serveRange(s, 0L, FIRST_CHUNK_SIZE)
-                    return
+                val range = if (rangeHeader != null) {
+                    parseRange(rangeHeader, total)
+                } else {
+                    Pair(0L, total - 1)
                 }
 
-                val range = parseRange(rangeHeader, total)
                 if (range == null) {
                     val err = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */$total\r\nConnection: close\r\n\r\n"
                     s.getOutputStream().write(err.toByteArray(StandardCharsets.US_ASCII))
@@ -188,24 +188,14 @@ class LocalStreamServer(private val engine: TelegramEngine) {
                 val start = range.first
                 val requestedEnd = range.second
 
-                // Adaptive chunk sizing for instant start:
-                val maxChunkToServe = if (start < 512L * 1024L) {
-                    FIRST_CHUNK_SIZE
-                } else {
-                    STREAM_CHUNK_SIZE
-                }
-
-                val end = min(requestedEnd, min(start + maxChunkToServe - 1, total - 1))
-                val length = (end - start) + 1
-
-                if (start >= total || length <= 0) {
+                if (start >= total || requestedEnd < start) {
                     val err = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */$total\r\nConnection: close\r\n\r\n"
                     s.getOutputStream().write(err.toByteArray(StandardCharsets.US_ASCII))
                     s.getOutputStream().flush()
                     return
                 }
 
-                serveRange(s, start, length)
+                serveStream(s, start, requestedEnd)
             } catch (e: Exception) {
                 // Client disconnection or socket timeout is normal during seeking
                 Log.d(TAG, "Client socket closed: ${e.message}")
@@ -227,88 +217,108 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         return Pair(lastPart.fileId, globalOffset - (accumulated - lastPart.size))
     }
 
-    private fun serveRange(socket: Socket, globalStart: Long, length: Long) {
-        val (partFileId, localOffset) = resolvePart(globalStart)
-        val partSize = activeParts?.find { it.fileId == partFileId }?.size ?: activeSize
-        val availableInPart = maxOf(0L, partSize - localOffset)
-        val actualLength = min(length, availableInPart)
-
-        if (actualLength <= 0) {
+    private fun serveStream(socket: Socket, globalStart: Long, requestedEnd: Long) {
+        val totalLength = (requestedEnd - globalStart) + 1
+        if (totalLength <= 0) {
             sendSimple(socket, 416, "Range Not Satisfiable")
             return
-        }
-
-        // Align offset to 128KB (131072 bytes) as required by Telegram TDLib
-        val alignedOffset = localOffset - (localOffset % ALIGNMENT)
-        val offsetInsideBlock = (localOffset - alignedOffset).toInt()
-        val neededBytes = offsetInsideBlock + actualLength
-        val blocks = (neededBytes + ALIGNMENT - 1) / ALIGNMENT
-        val fetchSize = min(blocks * ALIGNMENT, partSize - alignedOffset)
-
-        // 1. Fast cache hit: check if TDLib already has this range in memory/disk
-        var chunk = engine.readFilePartSync(partFileId, alignedOffset, fetchSize)
-        if (chunk != null && chunk.size > offsetInsideBlock) {
-            deliverSlice(socket, chunk, globalStart, offsetInsideBlock, actualLength)
-            return
-        }
-
-        // 2. Fetch synchronously from Telegram CDN
-        var attempts = 0
-        while (attempts < 4 && isRunning) {
-            attempts++
-            chunk = engine.downloadRangeAndRead(partFileId, alignedOffset, fetchSize)
-            if (chunk != null && chunk.size > offsetInsideBlock) {
-                break
-            }
-            try {
-                Thread.sleep(80L * attempts)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-                break
-            }
-        }
-
-        if (chunk == null || chunk.size <= offsetInsideBlock) {
-            Log.e(TAG, "❌ Error al descargar chunk TDLib: offset=$alignedOffset fetchSize=$fetchSize")
-            sendSimple(socket, 504, "Gateway Timeout")
-            return
-        }
-
-        deliverSlice(socket, chunk, globalStart, offsetInsideBlock, actualLength)
-    }
-
-    private fun deliverSlice(socket: Socket, chunk: ByteArray, globalStart: Long, offsetInsideBlock: Int, actualLength: Long) {
-        val sliceEnd = min(chunk.size.toLong(), offsetInsideBlock + actualLength).toInt()
-        val sliceSize = sliceEnd - offsetInsideBlock
-        val slice = if (offsetInsideBlock == 0 && sliceSize == chunk.size) {
-            chunk
-        } else {
-            chunk.copyOfRange(offsetInsideBlock, sliceEnd)
         }
 
         val out = socket.getOutputStream()
         val header = "HTTP/1.1 206 Partial Content\r\n" +
                      "Content-Type: $activeMime\r\n" +
-                     "Content-Length: ${slice.size}\r\n" +
-                     "Content-Range: bytes $globalStart-${globalStart + slice.size - 1}/$activeSize\r\n" +
+                     "Content-Length: $totalLength\r\n" +
+                     "Content-Range: bytes $globalStart-$requestedEnd/$activeSize\r\n" +
                      "Accept-Ranges: bytes\r\n" +
                      "Connection: close\r\n\r\n"
 
-        out.write(header.toByteArray(StandardCharsets.US_ASCII))
-        out.write(slice)
-        out.flush()
+        try {
+            out.write(header.toByteArray(StandardCharsets.US_ASCII))
+            out.flush()
+        } catch (e: Exception) {
+            Log.d(TAG, "Socket closed before writing header: ${e.message}")
+            return
+        }
 
-        Log.d(TAG, "HTTP 206: range $globalStart-${globalStart + slice.size - 1}/$activeSize (${slice.size} bytes)")
+        Log.d(TAG, "HTTP 206 stream start: $globalStart-$requestedEnd/$activeSize ($totalLength bytes)")
 
-        // Safe Rolling GC check: frees older chunks without killing active streaming
-        bytesStreamedSinceGc += slice.size
-        if (bytesStreamedSinceGc >= ROLLING_GC_THRESHOLD) {
-            bytesStreamedSinceGc = 0L
-            Log.i(TAG, "🧹 ROLLING GC SEGURO (200MB): Invocando optimizeStorage(30MB, immunity=10s)")
+        var currentPos = globalStart
+        var isFirstChunk = true
+
+        while (currentPos <= requestedEnd && isRunning) {
+            val (partFileId, localOffset) = resolvePart(currentPos)
+            val partSize = activeParts?.find { it.fileId == partFileId }?.size ?: activeSize
+            val availableInPart = maxOf(0L, partSize - localOffset)
+            val remainingInRequest = requestedEnd - currentPos + 1
+            val maxCanReadFromPart = minOf(remainingInRequest, availableInPart)
+            if (maxCanReadFromPart <= 0) break
+
+            // Instant first chunk: 512KB for initial load if near start, then 2MB for continuous streaming
+            val targetChunkSize = if (isFirstChunk && currentPos < 512L * 1024L) {
+                FIRST_CHUNK_SIZE
+            } else {
+                STREAM_CHUNK_SIZE
+            }
+            val bytesToReadThisRound = minOf(targetChunkSize, maxCanReadFromPart)
+
+            // Align offset to 128KB (131072 bytes) as required by Telegram TDLib
+            val alignedOffset = localOffset - (localOffset % ALIGNMENT)
+            val offsetInsideBlock = (localOffset - alignedOffset).toInt()
+            val neededBytes = offsetInsideBlock + bytesToReadThisRound
+            val blocks = (neededBytes + ALIGNMENT - 1) / ALIGNMENT
+            val fetchSize = min(blocks * ALIGNMENT, partSize - alignedOffset)
+
+            // 1. Fast cache hit: check if TDLib already has this range in memory/disk
+            var chunk = engine.readFilePartSync(partFileId, alignedOffset, fetchSize)
+            if (chunk == null || chunk.size <= offsetInsideBlock) {
+                // 2. Fetch synchronously from Telegram CDN
+                var attempts = 0
+                while (attempts < 4 && isRunning) {
+                    attempts++
+                    chunk = engine.downloadRangeAndRead(partFileId, alignedOffset, fetchSize)
+                    if (chunk != null && chunk.size > offsetInsideBlock) {
+                        break
+                    }
+                    try {
+                        Thread.sleep(80L * attempts)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
+                    }
+                }
+            }
+
+            if (chunk == null || chunk.size <= offsetInsideBlock) {
+                Log.e(TAG, "❌ Error al descargar chunk TDLib: offset=$alignedOffset fetchSize=$fetchSize")
+                break
+            }
+
+            val sliceEnd = minOf(chunk.size.toLong(), offsetInsideBlock + bytesToReadThisRound).toInt()
+            val sliceSize = sliceEnd - offsetInsideBlock
+            if (sliceSize <= 0) break
+
             try {
-                engine.optimizeStorage(30L * 1024L * 1024L, immunityDelaySec = 10)
+                out.write(chunk, offsetInsideBlock, sliceSize)
+                out.flush()
             } catch (e: Exception) {
-                Log.w(TAG, "Error ejecutando optimizeStorage: ${e.message}")
+                // Client disconnection or seek is normal during video streaming
+                Log.d(TAG, "Client socket closed during stream: ${e.message}")
+                break
+            }
+
+            currentPos += sliceSize
+            isFirstChunk = false
+
+            // Safe Rolling GC check: frees older chunks without killing active streaming
+            bytesStreamedSinceGc += sliceSize
+            if (bytesStreamedSinceGc >= ROLLING_GC_THRESHOLD) {
+                bytesStreamedSinceGc = 0L
+                Log.i(TAG, "🧹 ROLLING GC SEGURO (200MB): Invocando optimizeStorage(30MB, immunity=10s)")
+                try {
+                    engine.optimizeStorage(30L * 1024L * 1024L, immunityDelaySec = 10)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error ejecutando optimizeStorage: ${e.message}")
+                }
             }
         }
     }
@@ -326,10 +336,10 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         val end = if (endStr.isNotBlank()) {
             endStr.toLongOrNull() ?: (totalSize - 1)
         } else {
-            min(totalSize - 1, start + STREAM_CHUNK_SIZE - 1)
+            totalSize - 1
         }
 
-        return Pair(start, end)
+        return Pair(start, min(end, totalSize - 1))
     }
 
     private fun sendSimple(socket: Socket, code: Int, reason: String) {
