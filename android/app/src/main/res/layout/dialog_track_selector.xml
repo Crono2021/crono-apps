@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_tv_dialog"
+    android:padding="20dp">
+
+    <!-- Header: Título del diálogo -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="12dp">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_subtitles"
+            android:tint="#A78BFA"
+            android:contentDescription="Icon" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:text="Audio y Subtítulos"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Usa el mando para elegir"
+            android:textColor="#888899"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#2E2E3A"
+        android:layout_marginBottom="14dp" />
+
+    <!-- Columnas: Izquierda Audio, Derecha Subtítulos -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:baselineAligned="false">
+
+        <!-- Columna AUDIO -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="🔊  PISTA DE AUDIO"
+                android:textColor="#A78BFA"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.05"
+                android:paddingBottom="8dp" />
+
+            <!-- Botón / Toggle Compatibilidad Estéreo TV -->
+            <LinearLayout
+                android:id="@+id/btn_toggle_stereo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:focusable="true"
+                android:clickable="true"
+                android:background="@drawable/bg_tv_item_selector"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:id="@+id/tv_stereo_indicator"
+                    android:layout_width="20dp"
+                    android:layout_height="wrap_content"
+                    android:text="☑"
+                    android:textColor="#A78BFA"
+                    android:textSize="14sp"
+                    android:gravity="center" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:text="Compatibilidad Estéreo"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_stereo_state"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ACTIVADO"
+                    android:textColor="#A78BFA"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="2dp"
+                    android:background="#25000000" />
+            </LinearLayout>
+
+            <ScrollView
+                android:id="@+id/scroll_audio"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="vertical">
+
+                <LinearLayout
+                    android:id="@+id/container_audio_tracks"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
+        </LinearLayout>
+
+        <!-- Separador vertical -->
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:background="#2E2E3A"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp" />
+
+        <!-- Columna SUBTÍTULOS -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="💬  SUBTÍTULOS"
+                android:textColor="#A78BFA"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.05"
+                android:paddingBottom="10dp" />
+
+            <ScrollView
+                android:id="@+id/scroll_subtitles"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="vertical">
+
+                <LinearLayout
+                    android:id="@+id/container_subtitle_tracks"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#2E2E3A"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Botón Cerrar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="end">
+
+        <TextView
+            android:id="@+id/btn_dialog_close"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="120dp"
+            android:text="Cerrar"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:paddingHorizontal="24dp"
+            android:paddingVertical="10dp"
+            android:focusable="true"
+            android:clickable="true"
+            android:background="@drawable/bg_tv_button_selector" />
+    </LinearLayout>
+</LinearLayout>

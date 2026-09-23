@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:focusable="true"
+    android:clickable="true"
+    android:background="@drawable/bg_tv_item_selector"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:paddingTop="9dp"
+    android:paddingBottom="9dp"
+    android:layout_marginBottom="6dp">
+
+    <!-- Indicador de pista activa (punto púrpura / visible si está activa) -->
+    <TextView
+        android:id="@+id/tv_track_indicator"
+        android:layout_width="20dp"
+        android:layout_height="wrap_content"
+        android:text="●"
+        android:textColor="#A78BFA"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:visibility="invisible" />
+
+    <!-- Nombre de la pista / idioma -->
+    <TextView
+        android:id="@+id/tv_track_name"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="6dp"
+        android:text="Idioma"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp"
+        android:singleLine="true"
+        android:ellipsize="end" />
+
+    <!-- Badge con detalles (5.1, AC3, DTS, etc.) -->
+    <TextView
+        android:id="@+id/tv_track_badge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:text="5.1"
+        android:textColor="#DDD6FE"
+        android:textSize="11sp"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp"
+        android:paddingTop="2dp"
+        android:paddingBottom="2dp"
+        android:visibility="gone" />
+</LinearLayout>

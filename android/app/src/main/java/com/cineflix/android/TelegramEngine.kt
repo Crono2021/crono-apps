@@ -721,8 +721,11 @@ class TelegramEngine(private val context: Context) {
         ensureDirectoriesExist()
         // Step 1: Tell TDLib to download this exact range. synchronous=true blocks until ready.
         val downloadLatch = java.util.concurrent.CountDownLatch(1)
+        var isSuccess = false
         client?.send(TdApi.DownloadFile(fileId, 32, offset, count, true)) { result ->
-            if (result is TdApi.Error) {
+            if (result is TdApi.File) {
+                isSuccess = true
+            } else if (result is TdApi.Error) {
                 Log.w(TAG, "DownloadFile(sync) error: ${result.code} ${result.message} fileId=$fileId offset=$offset count=$count")
             }
             downloadLatch.countDown()
@@ -738,6 +741,8 @@ class TelegramEngine(private val context: Context) {
             Thread.currentThread().interrupt()
             return null
         }
+
+        if (!isSuccess) return null
 
         // Step 2: Bytes are guaranteed available. Read them.
         return readFilePartSync(fileId, offset, count)

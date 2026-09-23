@@ -52,6 +52,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
     private var proxyServer: StreamProxyServer? = null
+    private var localStreamServer: LocalStreamServer? = null
     private var multipartParts: List<FilePart>? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -233,54 +234,41 @@ class PlayerActivity : AppCompatActivity() {
         nextEpisodeTriggered = false
 
         val useNodeJsProxy = intent.getBooleanExtra("USE_NODEJS_PROXY", false)
-        val port: Int
+        var port = 0
         
         val intentPlaybackId = intent.getStringExtra("EXTRA_PLAYBACK_ID")
         val currentPlaybackId = com.cineflix.android.GramJSStreamManager.currentPlaybackId
         val playbackId = intentPlaybackId ?: currentPlaybackId
         val isGramJsActive = playbackId.isNotEmpty()
         
+        val localStreamUrl: String
         if (useNodeJsProxy) {
             port = 3000
+            localStreamUrl = "http://127.0.0.1:3000/stream"
             Log.i(TAG, "- Using NodeJS StreamProxyServer on port 3000")
         } else if (isGramJsActive) {
             port = 8080 // Dummy port, not used for casting yet for GramJS
+            localStreamUrl = "tdlib://$fileId"
             Log.i(TAG, "- Using GramJS memory proxy, completely bypassing TDLib background downloads.")
         } else {
-            // 1. Start StreamProxyServer
-            val proxy = StreamProxyServer(
-                engine   = engine,
-                fileId   = fileId,
-                fileSize = effectiveFileSize,
+            // LocalStreamServer (Arquitectura tipo Oliyo):
+            // Servidor HTTP local embebido que atiende peticiones Range bajo demanda de forma limpia.
+            // NO arrancamos StreamProxyServer ni startDownloadReturnPath para evitar colisiones TDLib
+            // (error 200: Canceled by another downloadFile request).
+            val lss = LocalStreamServer(engine)
+            val lssUrl = lss.start(
+                fileId = fileId,
+                totalSize = currentEffectiveFileSize,
                 mimeType = mimeType,
-                multipartParts = multipartParts,
+                multipartParts = multipartParts
             )
-            proxy.start()
-            proxyServer = proxy
-            port = proxy.listeningPort
-            Log.i(TAG, "- StreamProxyServer started on port $port")
-
-            // 2. Register file with TDLib
-            scope.launch {
-                try {
-                    if (multipartParts != null && multipartParts!!.isNotEmpty()) {
-                        val firstPart = multipartParts!![0]
-                        engine.startDownloadReturnPath(firstPart.fileId, priority = 32)
-                        engine.hintDownloadOffset(firstPart.fileId, 0L, 20L * 1024L * 1024L)
-                    } else {
-                        engine.startDownloadReturnPath(fileId, priority = 32)
-                        engine.hintDownloadOffset(fileId, 0L, 20L * 1024L * 1024L)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "- TDLib registration error: ${e.message}", e)
-                }
-            }
+            localStreamServer = lss
+            localStreamUrl = lssUrl
+            port = lss.listeningPort
+            Log.i(TAG, "✨ LocalStreamServer iniciado para reproducción: $localStreamUrl en puerto $port")
         }
-
-        // 3. Build stream URLs
-        val localStreamUrl = "tdlib://$fileId"
         val wifiIp = getWifiIpAddress()
-        castStreamUrl = if (wifiIp != null && !isGramJsActive) "http://$wifiIp:$port/stream" else null
+        castStreamUrl = if (wifiIp != null && !isGramJsActive && port > 0) "http://$wifiIp:$port/stream" else null
         
         setupCastButton()
 
@@ -351,7 +339,7 @@ class PlayerActivity : AppCompatActivity() {
         btnRewind.setOnClickListener { seekRelative(-10000); showControls() }
         btnForward.setOnClickListener { seekRelative(10000); showControls() }
         btnResize.setOnClickListener { toggleResizeMode() }
-        btnTracks.setOnClickListener { showTrackSelectorBottomSheet() }
+        btnTracks.setOnClickListener { showTrackSelectorDialog() }
         btnReportError.setOnClickListener {
             val currentPos = player?.currentPosition ?: 0L
             val duration = player?.duration ?: 0L
@@ -461,9 +449,11 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun initExoPlayer() {
-        // FFmpeg via NextLib: MODE_ON = Hardware decoders first (accurate colors, HDR, deep blacks).
-        // If hardware CANNOT decode the video (unsupported codec/profile) or audio (DTS, AC3, TrueHD),
-        // or if hardware fails during playback, it automatically falls back to FFmpeg software!
+        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+        val forceSoftwareAudio = prefs.getBoolean("force_software_audio", false)
+
+        // FFmpeg via NextLib: MODE_ON = Decodificadores hardware primero para vídeo fluido y HDR;
+        // fallback automático a software si un códec no está soportado.
         val mode = DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
 
         val customMediaCodecSelector = androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
@@ -477,8 +467,10 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
 
-        val renderersFactory = io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory(this)
-            .setExtensionRendererMode(mode)
+        val renderersFactory = CineflixRenderersFactory(this) {
+            getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE).getBoolean("force_software_audio", false)
+        }
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(customMediaCodecSelector)
 
@@ -486,15 +478,18 @@ class PlayerActivity : AppCompatActivity() {
             .setBufferDurationsMs(
                 60_000, // minBufferMs (60 segundos)
                 120_000, // maxBufferMs (120 segundos)
-                2_500, // bufferForPlaybackMs
-                5_000 // bufferForPlaybackAfterRebufferMs
+                1_500, // bufferForPlaybackMs (1.5 segundos para arranque ultra-rápido)
+                3_000 // bufferForPlaybackAfterRebufferMs (3 segundos)
             )
+            .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        player = ExoPlayer.Builder(this)
+        val p = ExoPlayer.Builder(this)
             .setRenderersFactory(renderersFactory)
             .setLoadControl(loadControl)
             .build()
+
+        player = p
             
         playerView.player = player
         playerView.useController = false
@@ -509,11 +504,16 @@ class PlayerActivity : AppCompatActivity() {
                         ioErrorRetryCount = 0
                         pendingResumePositionMs?.let { resumePos ->
                             pendingResumePositionMs = null
-                            if (player?.isCurrentMediaItemSeekable == true) {
-                                Log.i(TAG, "▶ STATE_READY reached: seeking to resume position ${resumePos}ms (${resumePos / 60000}m)")
-                                player?.seekTo(resumePos)
+                            val current = player?.currentPosition ?: 0L
+                            if (kotlin.math.abs(current - resumePos) > 4000L) {
+                                if (player?.isCurrentMediaItemSeekable == true) {
+                                    Log.i(TAG, "▶ STATE_READY reached: seeking to resume position ${resumePos}ms (current=${current}ms)")
+                                    player?.seekTo(resumePos)
+                                } else {
+                                    Log.w(TAG, "▶ Media item is not seekable (no Cues index). Playing from start.")
+                                }
                             } else {
-                                Log.w(TAG, "▶ Media item is not seekable (no Cues index). Playing from start.")
+                                Log.i(TAG, "▶ STATE_READY reached: already at resume position ${current}ms, skipping redundant seek")
                             }
                         }
                     }
@@ -634,7 +634,13 @@ class PlayerActivity : AppCompatActivity() {
                 .createMediaSource(mediaItem)
             player?.setMediaSource(mediaSource)
         } else {
-            player?.setMediaItem(mediaItem)
+            val httpDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                .setConnectTimeoutMs(15000)
+                .setReadTimeoutMs(25000)
+                .setAllowCrossProtocolRedirects(true)
+            val mediaSource = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(httpDataSourceFactory)
+                .createMediaSource(mediaItem)
+            player?.setMediaSource(mediaSource)
         }
                 player?.prepare()
         player?.play()
@@ -670,220 +676,269 @@ class PlayerActivity : AppCompatActivity() {
         showControls()
     }
 
-    // --- Unified Track Selector ---
-    private fun showTrackSelectorBottomSheet() {
+    // --- Unified Track Selector (Optimizado para Android TV) ---
+    private fun showTrackSelectorDialog() {
         val p = player ?: return
-        
-        val bottomSheetDialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
-        
-        // Layout principal
-        val mainLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(android.graphics.Color.parseColor("#1A1A1A"))
-            setPadding(0, dpToPx(16), 0, dpToPx(16))
-        }
-
-        // Layout horizontal para columnas
-        val columnsLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            weightSum = 2f
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        }
-
-        // --- COLUMNA AUDIO ---
-        val audioColumn = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dpToPx(16), 0, dpToPx(8), 0) }
-        }
-        val audioTitle = TextView(this).apply {
-            text = "\uD83D\uDD0A AUDIO"
-            setTextColor(android.graphics.Color.WHITE)
-            textSize = 14f
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            gravity = android.view.Gravity.CENTER
-            setPadding(0, 0, 0, dpToPx(8))
-        }
-        audioColumn.addView(audioTitle)
-
-        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-        val forceSoftware = prefs.getBoolean("force_software_audio", false)
-
-        val cbForceSoftware = android.widget.CheckBox(this).apply {
-            text = "Compatibilidad Estéreo"
-            setTextColor(android.graphics.Color.LTGRAY)
-            textSize = 12f
-            buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
-            isChecked = forceSoftware
-            setPadding(0, 0, 0, dpToPx(8))
-            setOnClickListener {
-                val newState = isChecked
-                prefs.edit().putBoolean("force_software_audio", newState).apply()
-                val currentPos = player?.currentPosition ?: 0L
-                player?.release()
-                player = null
-                initExoPlayer()
-                val port = proxyServer?.listeningPort ?: 8080
-                playUrl("http://127.0.0.1:$port/stream")
-                player?.seekTo(currentPos)
-                bottomSheetDialog.dismiss()
-                Toast.makeText(this@PlayerActivity, if (newState) "Audio por software forzado" else "Passthrough activado", Toast.LENGTH_SHORT).show()
-            }
-        }
-        audioColumn.addView(cbForceSoftware)
-
-        val audioGroup = android.widget.RadioGroup(this)
         val tracks = p.currentTracks
 
-        var audioIdCounter = 0
+        val dialog = android.app.Dialog(this, R.style.Theme_Cineflix_TVDialog)
+        val dialogView = layoutInflater.inflate(R.layout.dialog_track_selector, null)
+        dialog.setContentView(dialogView)
+
+        val containerAudio = dialogView.findViewById<LinearLayout>(R.id.container_audio_tracks)
+        val containerSubtitles = dialogView.findViewById<LinearLayout>(R.id.container_subtitle_tracks)
+        val btnClose = dialogView.findViewById<TextView>(R.id.btn_dialog_close)
+
+        // Botón / Toggle Compatibilidad Estéreo
+        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+        var forceSoftware = prefs.getBoolean("force_software_audio", false)
+
+        val btnToggleStereo = dialogView.findViewById<LinearLayout>(R.id.btn_toggle_stereo)
+        val tvStereoIndicator = dialogView.findViewById<TextView>(R.id.tv_stereo_indicator)
+        val tvStereoState = dialogView.findViewById<TextView>(R.id.tv_stereo_state)
+
+        fun updateStereoUi(enabled: Boolean) {
+            tvStereoIndicator.text = if (enabled) "☑" else "☐"
+            tvStereoIndicator.setTextColor(if (enabled) android.graphics.Color.parseColor("#A78BFA") else android.graphics.Color.parseColor("#888899"))
+            tvStereoState.text = if (enabled) "ACTIVADO" else "DESACTIVADO"
+            tvStereoState.setTextColor(if (enabled) android.graphics.Color.parseColor("#A78BFA") else android.graphics.Color.parseColor("#888899"))
+        }
+        updateStereoUi(forceSoftware)
+
+        btnToggleStereo.setOnClickListener {
+            forceSoftware = !forceSoftware
+            prefs.edit().putBoolean("force_software_audio", forceSoftware).apply()
+            updateStereoUi(forceSoftware)
+
+            val currentPos = player?.currentPosition ?: 0L
+            val wasPlaying = player?.isPlaying ?: true
+
+            // Desvincular vista del player anterior para proteger el SurfaceView de TV
+            playerView.player = null
+            player?.stop()
+            player?.release()
+            player = null
+
+            initExoPlayer()
+            playerView.player = player
+
+            val port = localStreamServer?.listeningPort ?: proxyServer?.listeningPort ?: 8080
+            val url = currentPlayUrl ?: "http://127.0.0.1:$port/stream"
+            pendingResumePositionMs = currentPos
+            playUrl(url)
+
+            if (!wasPlaying) {
+                player?.pause()
+            }
+
+            Toast.makeText(
+                this@PlayerActivity,
+                if (forceSoftware) "🔊 Compatibilidad Estéreo activada (Audio FFmpeg por Software)" else "🔊 Modo Envolvente / 5.1 activado (Hardware)",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        var selectedAudioView: View? = null
+        var firstFocusableView: View? = null
+        var audioCount = 0
+
+        // Helper para nombres amigables de idioma
+        fun formatLanguageName(langCode: String?): String {
+            if (langCode.isNullOrBlank()) return ""
+            return try {
+                val loc = java.util.Locale.forLanguageTag(langCode)
+                val display = loc.getDisplayLanguage(loc).ifBlank { loc.displayLanguage }
+                if (display.isNotBlank()) display.replaceFirstChar { it.uppercase() } else langCode.uppercase()
+            } catch (e: Exception) {
+                langCode.uppercase()
+            }
+        }
+
+        // --- 1. Pistas de Audio ---
         for (trackGroup in tracks.groups) {
             if (trackGroup.type == C.TRACK_TYPE_AUDIO) {
                 for (i in 0 until trackGroup.length) {
                     val format = trackGroup.getTrackFormat(i)
-                    var name = format.language ?: "Pista ${audioIdCounter + 1}"
-                    if (format.label != null) {
-                        name = format.label!!
+                    val langName = formatLanguageName(format.language)
+                    val label = format.label?.trim() ?: ""
+                    val name = when {
+                        label.isNotBlank() && langName.isNotBlank() -> {
+                            if (label.contains(langName, ignoreCase = true)) label else "$langName ($label)"
+                        }
+                        label.isNotBlank() -> label
+                        langName.isNotBlank() -> langName
+                        else -> "Pista de Audio ${audioCount + 1}"
                     }
-                    val isSelected = trackGroup.isTrackSelected(i)
 
-                    val rb = android.widget.RadioButton(this).apply {
-                        text = name
-                        setTextColor(android.graphics.Color.WHITE)
-                        buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
-                        isChecked = isSelected
-                        setPadding(0, dpToPx(8), 0, dpToPx(8))
-                        setOnClickListener { 
-                            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-                                .setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, i))
-                                .build()
-                            bottomSheetDialog.dismiss() 
+                    // Badge de canales / códec
+                    val badgeParts = mutableListOf<String>()
+                    if (format.channelCount > 0) {
+                        when (format.channelCount) {
+                            6 -> badgeParts.add("5.1")
+                            8 -> badgeParts.add("7.1")
+                            2 -> badgeParts.add("Estéreo")
+                            1 -> badgeParts.add("Mono")
+                            else -> badgeParts.add("${format.channelCount} ch")
                         }
                     }
-                    audioGroup.addView(rb)
-                    audioIdCounter++
+                    val mime = format.sampleMimeType ?: ""
+                    when {
+                        mime.contains("eac3", true) -> badgeParts.add("E-AC3")
+                        mime.contains("ac3", true) -> badgeParts.add("AC3")
+                        mime.contains("dts", true) -> badgeParts.add("DTS")
+                        mime.contains("truehd", true) -> badgeParts.add("TrueHD")
+                        mime.contains("flac", true) -> badgeParts.add("FLAC")
+                        mime.contains("opus", true) -> badgeParts.add("Opus")
+                        mime.contains("mp4a", true) || mime.contains("aac", true) -> badgeParts.add("AAC")
+                    }
+                    val badgeText = badgeParts.joinToString(" • ")
+
+                    val isSelected = trackGroup.isTrackSelected(i)
+
+                    val rowView = layoutInflater.inflate(R.layout.item_tv_track, containerAudio, false)
+                    val tvIndicator = rowView.findViewById<TextView>(R.id.tv_track_indicator)
+                    val tvName = rowView.findViewById<TextView>(R.id.tv_track_name)
+                    val tvBadge = rowView.findViewById<TextView>(R.id.tv_track_badge)
+
+                    tvName.text = name
+                    if (badgeText.isNotBlank()) {
+                        tvBadge.text = badgeText
+                        tvBadge.visibility = View.VISIBLE
+                    } else {
+                        tvBadge.visibility = View.GONE
+                    }
+
+                    if (isSelected) {
+                        tvIndicator.visibility = View.VISIBLE
+                        selectedAudioView = rowView
+                    } else {
+                        tvIndicator.visibility = View.INVISIBLE
+                    }
+
+                    if (firstFocusableView == null) {
+                        firstFocusableView = rowView
+                    }
+
+                    rowView.setOnClickListener {
+                        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                            .setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, i))
+                            .build()
+                        Toast.makeText(this@PlayerActivity, "🔊 Audio: $name", Toast.LENGTH_SHORT).show()
+                        dialog.dismiss()
+                    }
+
+                    containerAudio.addView(rowView)
+                    audioCount++
                 }
             }
         }
-        audioColumn.addView(audioGroup)
 
-        // Separador central
-        val separator = View(this).apply {
-            setBackgroundColor(android.graphics.Color.parseColor("#333333"))
-            layoutParams = LinearLayout.LayoutParams(dpToPx(1), LinearLayout.LayoutParams.MATCH_PARENT)
+        if (audioCount == 0) {
+            val emptyTv = TextView(this).apply {
+                text = "Pista estándar activa"
+                setTextColor(android.graphics.Color.parseColor("#888899"))
+                textSize = 13f
+                setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
+            }
+            containerAudio.addView(emptyTv)
         }
 
-        // --- COLUMNA SUBTÍTULOS ---
-        val subColumn = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dpToPx(8), 0, dpToPx(16), 0) }
-        }
-        val subTitle = TextView(this).apply {
-            text = "\uD83D\uDCAC SUBTÍTULOS"
-            setTextColor(android.graphics.Color.WHITE)
-            textSize = 14f
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            gravity = android.view.Gravity.CENTER
-            setPadding(0, 0, 0, dpToPx(16))
-        }
-        subColumn.addView(subTitle)
-
-        val subGroup = android.widget.RadioGroup(this)
-        
+        // --- 2. Pistas de Subtítulos ---
         val hasSelectedSub = tracks.groups.any { it.type == C.TRACK_TYPE_TEXT && it.isSelected }
 
-        val rbSubDisable = android.widget.RadioButton(this).apply {
-            text = "Desactivar"
-            setTextColor(android.graphics.Color.WHITE)
-            buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
-            isChecked = !hasSelectedSub
-            setPadding(0, dpToPx(8), 0, dpToPx(8))
-            setOnClickListener { 
-                p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                    .build()
-                bottomSheetDialog.dismiss() 
-            }
-        }
-        subGroup.addView(rbSubDisable)
+        // Opción: "Desactivar"
+        val rowDisableSub = layoutInflater.inflate(R.layout.item_tv_track, containerSubtitles, false)
+        val tvDisableIndicator = rowDisableSub.findViewById<TextView>(R.id.tv_track_indicator)
+        val tvDisableName = rowDisableSub.findViewById<TextView>(R.id.tv_track_name)
+        val tvDisableBadge = rowDisableSub.findViewById<TextView>(R.id.tv_track_badge)
+        tvDisableName.text = "Desactivar subtítulos"
+        tvDisableBadge.visibility = View.GONE
+        tvDisableIndicator.visibility = if (!hasSelectedSub) View.VISIBLE else View.INVISIBLE
 
-        var subIdCounter = 0
+        rowDisableSub.setOnClickListener {
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .build()
+            Toast.makeText(this@PlayerActivity, "💬 Subtítulos desactivados", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
+        containerSubtitles.addView(rowDisableSub)
+
+        var subCount = 0
         for (trackGroup in tracks.groups) {
             if (trackGroup.type == C.TRACK_TYPE_TEXT) {
                 for (i in 0 until trackGroup.length) {
                     val format = trackGroup.getTrackFormat(i)
-                    var name = format.language ?: "Sub ${subIdCounter + 1}"
-                    if (format.label != null) {
-                        name = format.label!!
+                    val langName = formatLanguageName(format.language)
+                    val label = format.label?.trim() ?: ""
+                    val name = when {
+                        label.isNotBlank() && langName.isNotBlank() -> {
+                            if (label.contains(langName, ignoreCase = true)) label else "$langName ($label)"
+                        }
+                        label.isNotBlank() -> label
+                        langName.isNotBlank() -> langName
+                        else -> "Subtítulo ${subCount + 1}"
                     }
+
+                    val badgeParts = mutableListOf<String>()
+                    if ((format.selectionFlags and C.SELECTION_FLAG_DEFAULT) != 0) badgeParts.add("Predeterminado")
+                    if ((format.selectionFlags and C.SELECTION_FLAG_FORCED) != 0) badgeParts.add("Forzado")
+                    if ((format.roleFlags and C.ROLE_FLAG_DESCRIBES_VIDEO) != 0) badgeParts.add("SDH")
+                    val badgeText = badgeParts.joinToString(" • ")
+
                     val isSelected = trackGroup.isTrackSelected(i)
 
-                    val rb = android.widget.RadioButton(this).apply {
-                        text = name
-                        setTextColor(android.graphics.Color.WHITE)
-                        buttonTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#7c3aed"))
-                        isChecked = isSelected
-                        setPadding(0, dpToPx(8), 0, dpToPx(8))
-                        setOnClickListener { 
-                            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                .setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, i))
-                                .build()
-                            bottomSheetDialog.dismiss() 
-                        }
+                    val rowView = layoutInflater.inflate(R.layout.item_tv_track, containerSubtitles, false)
+                    val tvIndicator = rowView.findViewById<TextView>(R.id.tv_track_indicator)
+                    val tvName = rowView.findViewById<TextView>(R.id.tv_track_name)
+                    val tvBadge = rowView.findViewById<TextView>(R.id.tv_track_badge)
+
+                    tvName.text = name
+                    if (badgeText.isNotBlank()) {
+                        tvBadge.text = badgeText
+                        tvBadge.visibility = View.VISIBLE
+                    } else {
+                        tvBadge.visibility = View.GONE
                     }
-                    subGroup.addView(rb)
-                    subIdCounter++
+
+                    tvIndicator.visibility = if (isSelected) View.VISIBLE else View.INVISIBLE
+
+                    rowView.setOnClickListener {
+                        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            .setOverrideForType(TrackSelectionOverride(trackGroup.mediaTrackGroup, i))
+                            .build()
+                        Toast.makeText(this@PlayerActivity, "💬 Subtítulos: $name", Toast.LENGTH_SHORT).show()
+                        dialog.dismiss()
+                    }
+
+                    containerSubtitles.addView(rowView)
+                    subCount++
                 }
             }
         }
-        subColumn.addView(subGroup)
 
-        columnsLayout.addView(audioColumn)
-        columnsLayout.addView(separator)
-        columnsLayout.addView(subColumn)
+        // --- 3. Botón Cerrar y Eventos ---
+        btnClose.setOnClickListener { dialog.dismiss() }
 
-        // ScrollView para contenido largo
-        val scrollView = android.widget.ScrollView(this).apply {
-            addView(columnsLayout)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        dialog.setOnDismissListener {
+            showControls()
+            btnTracks.post { btnTracks.requestFocus() }
+            scheduleHideControls()
         }
-        mainLayout.addView(scrollView)
 
-        // Botón cerrar
-        val btnClose = TextView(this).apply {
-            text = "Cerrar"
-            setTextColor(android.graphics.Color.WHITE)
-            textSize = 16f
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            gravity = android.view.Gravity.CENTER
-            setPadding(0, dpToPx(20), 0, dpToPx(8))
-            isFocusable = true
-            isClickable = true
-            setOnFocusChangeListener { view, hasFocus ->
-                view.setBackgroundColor(if (hasFocus) android.graphics.Color.parseColor("#7c3aed") else android.graphics.Color.TRANSPARENT)
-            }
-            setOnClickListener { bottomSheetDialog.dismiss() }
+        dialog.setOnShowListener {
+            val viewToFocus = selectedAudioView ?: firstFocusableView ?: btnClose
+            viewToFocus.post { viewToFocus.requestFocus() }
         }
-        mainLayout.addView(btnClose)
 
-        bottomSheetDialog.setContentView(mainLayout)
-        (mainLayout.parent as? View)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-        
-        bottomSheetDialog.setOnDismissListener {
-            btnPlayPause.requestFocus()
-        }
-        
-        bottomSheetDialog.setOnShowListener { dialog ->
-            val d = dialog as com.google.android.material.bottomsheet.BottomSheetDialog
-            val bottomSheet = d.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
-            if (bottomSheet != null) {
-                val behavior = com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet)
-                behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
-                behavior.skipCollapsed = true
-            }
-        }
-        
-        bottomSheetDialog.show()
+        // Ajustar ancho óptimo para TV
+        val displayWidth = resources.displayMetrics.widthPixels
+        val targetWidth = (displayWidth * 0.85f).toInt().coerceAtMost(dpToPx(680))
+        dialog.window?.setLayout(targetWidth, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+
+        dialog.show()
     }
 
     private fun dpToPx(dp: Int): Int {
@@ -1332,6 +1387,8 @@ class PlayerActivity : AppCompatActivity() {
 
         try { proxyServer?.stop() } catch (_: Exception) {}
         proxyServer = null
+        try { localStreamServer?.stop() } catch (_: Exception) {}
+        localStreamServer = null
         com.cineflix.android.GramJSStreamManager.currentPlaybackId = ""
         scope.cancel()
 

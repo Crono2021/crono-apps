@@ -2,9 +2,30 @@
     <!-- Base application theme — Compose handles its own dark theme,
          this is just needed for the window/splash background -->
     <style name="Theme.Cineflix" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/app_bg</item>
+        <item name="android:statusBarColor">@color/app_bg</item>
+        <item name="android:navigationBarColor">@color/app_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- Player theme: instant black screen during rotation transition -->
+    <style name="Theme.Cineflix.Player" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@color/black</item>
+        <item name="android:colorBackground">@color/black</item>
         <item name="android:statusBarColor">@color/black</item>
         <item name="android:navigationBarColor">@color/black</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowDisablePreview">false</item>
+    </style>
+
+    <!-- Diálogo TV ultra-rápido: sin animaciones pesadas de ventana para apertura en 0ms -->
+    <style name="Theme.Cineflix.TVDialog" parent="Theme.AppCompat.Dialog">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.7</item>
     </style>
 </resources>
