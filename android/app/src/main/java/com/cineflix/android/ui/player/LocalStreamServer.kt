@@ -120,6 +120,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
     private fun handleClient(socket: Socket) {
         socket.use { s ->
             try {
+                s.tcpNoDelay = true
                 s.soTimeout = 20000
                 val reader = BufferedReader(InputStreamReader(s.getInputStream(), StandardCharsets.US_ASCII))
                 val requestLine = reader.readLine() ?: return
@@ -253,8 +254,8 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             val maxCanReadFromPart = minOf(remainingInRequest, availableInPart)
             if (maxCanReadFromPart <= 0) break
 
-            // Instant first chunk: 512KB for initial load if near start, then 2MB for continuous streaming
-            val targetChunkSize = if (isFirstChunk && currentPos < 512L * 1024L) {
+            // Instant first chunk: 512KB for initial load or seek, then 2MB for continuous streaming
+            val targetChunkSize = if (isFirstChunk) {
                 FIRST_CHUNK_SIZE
             } else {
                 STREAM_CHUNK_SIZE
@@ -331,6 +332,13 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
         val startStr = clean.substring(0, dashIdx).trim()
         val endStr = clean.substring(dashIdx + 1).trim()
+
+        if (startStr.isEmpty()) {
+            // Suffix range: bytes=-500000 (last 500000 bytes)
+            val suffix = endStr.toLongOrNull() ?: return null
+            val start = maxOf(0L, totalSize - suffix)
+            return Pair(start, totalSize - 1)
+        }
 
         val start = startStr.toLongOrNull() ?: return null
         val end = if (endStr.isNotBlank()) {
