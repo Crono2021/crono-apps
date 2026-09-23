@@ -142,7 +142,7 @@ function renderVideos(list) {
     const grid = $('#videos-grid');
     if (!list.length) { grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📹</div><h4>Sin videos</h4></div>'; return; }
     grid.innerHTML = list.map(v => {
-        const thumb = v.thumbnailUrl ? `<img src="${v.thumbnailUrl}" loading="lazy">` : '<div class="video-thumb-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="5,3 19,12 5,21"></polygon></svg></div>';
+        const thumb = v.thumbnailUrl ? `<img src="${v.thumbnailUrl}">` : '<div class="video-thumb-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="5,3 19,12 5,21"></polygon></svg></div>';
         const dur = fmtDur(v.duration);
         const name = v.caption ? v.caption.substring(0, 80) : v.fileName;
         const res = v.width && v.height ? `${v.width}x${v.height}` : '';

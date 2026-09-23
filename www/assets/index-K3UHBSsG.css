@@ -7337,5 +7337,32 @@ body.android-tv .row-cards .series-card,
     }
 }
 
+/* ABSOLUTE OVERRIDE: NEVER show quickview in admin mode under ANY circumstances (Desktop, TV, Grid, Row) */
+
+body.admin-mode .series-card-quickview,
+body.admin-mode .catalog-grid .series-card-quickview,
+body.admin-mode .row-cards .series-card-quickview,
+body.admin-mode .series-card:hover .series-card-quickview,
+body.admin-mode .catalog-grid .series-card:hover .series-card-quickview,
+body.admin-mode .series-card.tv-focused .series-card-quickview,
+body.is-tv.admin-mode .series-card-quickview,
+body.android-tv.admin-mode .series-card-quickview,
+.is-tv.admin-mode .series-card-quickview,
+.android-tv.admin-mode .series-card-quickview,
+body.is-tv.admin-mode .catalog-grid .series-card:hover .series-card-quickview,
+body.android-tv.admin-mode .catalog-grid .series-card:hover .series-card-quickview,
+body.is-tv.admin-mode .catalog-grid .series-card.tv-focused .series-card-quickview,
+body.android-tv.admin-mode .catalog-grid .series-card.tv-focused .series-card-quickview,
+.admin-mode .series-card-quickview {
+    display: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    transform: translateY(105%) !important;
+    max-height: 0 !important;
+    height: 0 !important;
+}
+
+
 
 

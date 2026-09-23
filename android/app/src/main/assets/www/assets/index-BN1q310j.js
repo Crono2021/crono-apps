@@ -61,7 +61,7 @@ var __async = (__this, __arguments, generator) => {
 };
 var __forAwait = (obj, it2, method) => (it2 = obj[__knownSymbol("asyncIterator")]) ? it2.call(obj) : (obj = obj[__knownSymbol("iterator")](), it2 = {}, method = (key2, fn) => (fn = obj[key2]) && (it2[key2] = (arg) => new Promise((yes, no, done) => (arg = fn.call(obj, arg), done = arg.done, Promise.resolve(arg.value).then((value) => yes({ value, done }), no)))), method("next"), method("return"), it2);
 var require_index_001 = __commonJS({
-  "assets/index-BShJ5TMv.js"(exports) {
+  "assets/index-BN1q310j.js"(exports) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     (/* @__PURE__ */ __name(function polyfill2() {
       const relList = document.createElement("link").relList;
@@ -88396,39 +88396,11 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
     }
     __name(normalizeTelegramMsgId, "normalizeTelegramMsgId");
     window._gramjsDocCache = /* @__PURE__ */ new Map();
-    function prefetchGramJSDocuments(videos) {
-      return __async(this, null, function* () {
-        try {
-          if (!videos || !videos.length) return;
-          const msgIds = videos.map((v) => normalizeTelegramMsgId(v.msgId)).filter((id) => id > 0 && !window._gramjsDocCache.has(id.toString()));
-          if (msgIds.length === 0) return;
-          console.log("[Native] Prefetching GramJS documents in background for", msgIds.length, "videos...");
-          const c = yield getClient();
-          const botEntity = yield c.getEntity(BOT_USERNAME);
-          const msgs = yield c.getMessages(botEntity, { ids: msgIds });
-          for (const msg of msgs) {
-            if (msg && msg.id && msg.media && msg.media.document) {
-              window._gramjsDocCache.set(msg.id.toString(), msg.media.document);
-              try {
-                const tdlibId = (BigInt(msg.id) * /* @__PURE__ */ BigInt("1048576")).toString();
-                window._gramjsDocCache.set(tdlibId, msg.media.document);
-              } catch (_) {
-              }
-            }
-          }
-          console.log("[Native] Prefetch completed.");
-        } catch (err) {
-          console.warn("[Native] Prefetch failed:", err.message);
-        }
-      });
-    }
-    __name(prefetchGramJSDocuments, "prefetchGramJSDocuments");
     function searchMovieByPayload(searchTitle) {
       return __async(this, null, function* () {
         if (useTDLib()) {
           const raw = yield callNativeDataAsync("searchMovieByPayload", searchTitle);
           const videos = typeof raw === "string" ? JSON.parse(raw) : raw;
-          prefetchGramJSDocuments(videos);
           return videos;
         }
         const c = yield getClient();
@@ -89417,7 +89389,7 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
     __name(useTDLib, "useTDLib");
     function streamVideoNative(videoObj, introStartMs = "", introEndMs = "", theIntroDbCreditsMs = "") {
       return __async(this, null, function* () {
-        var _a2, _b2, _c2, _d2, _e2, _f2, _g2;
+        var _a2, _b2, _c2;
         let chatId = videoObj.chatId;
         let msgId = videoObj.msgId;
         if (chatId && typeof chatId === "object" && chatId.value) {
@@ -89502,58 +89474,7 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
           "theIntroDbCreditsMs=",
           theIntroDbCreditsMs
         );
-        if ((_d2 = window.AndroidBridge) == null ? void 0 : _d2.setPlaybackSession) {
-          try {
-            console.log("[Native] Setting up GramJS playback session for MTProto streaming");
-            const normId = normalizeTelegramMsgId(msgId);
-            let doc = ((_e2 = videoObj.media) == null ? void 0 : _e2.document) || videoObj.document || window._gramjsDocCache.get(msgId.toString()) || (normId ? window._gramjsDocCache.get(normId.toString()) : null);
-            if (!doc && normId) {
-              console.log("[Native] Document not cached in videoObj or global cache, fetching via MTProto for msgId:", normId);
-              const c = yield getClient();
-              const botEntity = yield c.getEntity(BOT_USERNAME);
-              const msgs = yield c.getMessages(botEntity, { ids: [normId] });
-              doc = msgs && ((_g2 = (_f2 = msgs[0]) == null ? void 0 : _f2.media) == null ? void 0 : _g2.document);
-              if (doc) {
-                window._gramjsDocCache.set(msgId.toString(), doc);
-                window._gramjsDocCache.set(normId.toString(), doc);
-              }
-            }
-            if (doc) {
-              const playbackId = crypto.randomUUID();
-              window._telegramPlaybacks.set(playbackId, {
-                playbackId,
-                fileId,
-                msgId: msgId ? msgId.toString() : null,
-                chatId: chatId ? chatId.toString() : null,
-                videoObj,
-                document: doc,
-                fileSize: Number(doc.size)
-              });
-              window.AndroidBridge.setPlaybackSession(playbackId);
-              window._activeGramJSPlaybackId = playbackId;
-            } else {
-              console.warn("[Native] Could not fetch Document for msgId", msgId);
-            }
-          } catch (gramErr) {
-            console.warn("[Native] GramJS session setup failed:", gramErr.message);
-          }
-        }
-        if (window.AndroidBridge.startGramJSStream) {
-          console.log("[Native] 🎬 Using startGramJSStream (GramJS MTProto Bridge)");
-          window.AndroidBridge.startGramJSStream(
-            fileSize,
-            mimeType,
-            displayTitle,
-            phone2,
-            contentId,
-            season,
-            episode,
-            creditsStartStr,
-            introStartMs,
-            introEndMs,
-            theIntroDbCreditsMs
-          );
-        } else if (window.AndroidBridge.playMultipartVideoWithIntroDB && Array.isArray(videoObj.payload_multipart) && videoObj.payload_multipart.length > 0) {
+        if (window.AndroidBridge.playMultipartVideoWithIntroDB && Array.isArray(videoObj.payload_multipart) && videoObj.payload_multipart.length > 0) {
           console.log("[Native] 🎬 Using playMultipartVideoWithIntroDB");
           window.AndroidBridge.playMultipartVideoWithIntroDBAndProgress ? window.AndroidBridge.playMultipartVideoWithIntroDBAndProgress(chatId, msgId.toString(), JSON.stringify(videoObj.payload_multipart), mimeType, displayTitle, phone2, contentId, season, episode, creditsStartStr, introStartMs, introEndMs, theIntroDbCreditsMs, savedProgressStr) : window.AndroidBridge.playMultipartVideoWithIntroDB(
             chatId,
@@ -90022,46 +89943,6 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       });
     }
     __name(getSeasonOverview, "getSeasonOverview");
-    function getTrending(timeWindow = "week") {
-      return __async(this, null, function* () {
-        const key2 = `trending_tv_${timeWindow}`;
-        const TTL_24H = 24 * 60 * 60 * 1e3;
-        try {
-          const raw = localStorage.getItem("tmdb_" + key2);
-          if (raw) {
-            const { ts, data } = JSON.parse(raw);
-            if (Date.now() - ts < TTL_24H) return data;
-            localStorage.removeItem("tmdb_" + key2);
-          }
-        } catch (e) {
-        }
-        try {
-          const params = new URLSearchParams({ api_key: TMDB_KEY, language: "es-ES" });
-          const res = yield fetch(`${TMDB_BASE}/trending/tv/${timeWindow}?${params}`);
-          const json = yield res.json();
-          const results = (json.results || []).map((r) => {
-            var _a2;
-            return {
-              id: r.id,
-              name: r.name,
-              originalName: r.original_name,
-              overview: r.overview,
-              posterPath: r.poster_path,
-              backdropPath: r.backdrop_path,
-              year: (_a2 = r.first_air_date) == null ? void 0 : _a2.slice(0, 4),
-              rating: Math.round(r.vote_average * 10) / 10,
-              genreIds: r.genre_ids
-            };
-          });
-          localStorage.setItem("tmdb_" + key2, JSON.stringify({ ts: Date.now(), data: results }));
-          return results;
-        } catch (err) {
-          console.warn("[TMDB] Trending failed:", err.message);
-          return [];
-        }
-      });
-    }
-    __name(getTrending, "getTrending");
     function discoverSeriesByProvider(providerId, page = 1) {
       return __async(this, null, function* () {
         const key2 = `discover_tv_p${providerId}_p${page}`;
@@ -90896,7 +90777,6 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
     let heroShows = [];
     let heroIndex = 0;
     let heroTimer = null;
-    let genreLoading = false;
     let moviesCatalog = [];
     let requestsCatalog = [];
     window.requestsCatalog = requestsCatalog;
@@ -93456,9 +93336,86 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       });
     }
     __name(fetchEstrenosSeries, "fetchEstrenosSeries");
+    const CATALOG_HOME_CACHE_KEY = "cineflix_catalog_home_cache";
+    let _fetchingCatalogHome = false;
+    function renderCatalogHomeData(data, isBackgroundUpdate = false) {
+      if (!data) return;
+      const allHomeSeries = [
+        ...Array.isArray(data.recent) ? data.recent : [],
+        ...Array.isArray(data.hero) ? data.hero : [],
+        ...Array.isArray(data.top10) ? data.top10 : [],
+        ...Array.isArray(data.lastUpdates) ? data.lastUpdates : []
+      ];
+      if (data.genres && typeof data.genres === "object") {
+        Object.values(data.genres).forEach((list) => {
+          if (Array.isArray(list)) allHomeSeries.push(...list);
+        });
+      }
+      if (typeof catalog !== "undefined") {
+        const idMap = new Map(catalog.map((s) => [s.id, s]));
+        allHomeSeries.forEach((s) => {
+          if (s && s.id) {
+            if (!idMap.has(s.id)) {
+              catalog.push(s);
+              idMap.set(s.id, s);
+            } else {
+              Object.assign(idMap.get(s.id), s);
+            }
+          }
+        });
+      }
+      if (Array.isArray(data.top10) && data.top10.length > 0) {
+        renderRow("ser_top10", "🏆 Top 10 series en Cineflix hoy", data.top10, true, isBackgroundUpdate, true);
+      }
+      if (Array.isArray(data.recent) && data.recent.length > 0) {
+        renderRow("recent", "🆕 Estrenos recientes", data.recent, false, isBackgroundUpdate);
+        const heroItems = Array.isArray(data.hero) && data.hero.length > 0 ? data.hero : data.recent.slice(0, 5);
+        setupHero(heroItems);
+      }
+      if (Array.isArray(data.lastUpdates) && data.lastUpdates.length > 0) {
+        renderRow("last-updates", "🕐 Últimas actualizaciones", data.lastUpdates, false, isBackgroundUpdate);
+      }
+      if (data.genres && typeof data.genres === "object") {
+        for (const genre of GENRE_ROWS) {
+          const items = data.genres[genre.id];
+          if (Array.isArray(items) && items.length > 0) {
+            renderRow(genre.id, genre.title, items, false, isBackgroundUpdate);
+          }
+        }
+      }
+      catalogReady = true;
+    }
+    __name(renderCatalogHomeData, "renderCatalogHomeData");
+    function fetchCatalogHome() {
+      return __async(this, null, function* () {
+        var _a2, _b2, _c2;
+        if (_fetchingCatalogHome) return null;
+        _fetchingCatalogHome = true;
+        try {
+          const res = yield fetch(`${RAILWAY_API}/api/catalog/home`);
+          if (res.ok) {
+            const data = yield res.json();
+            if (data && (((_a2 = data.recent) == null ? void 0 : _a2.length) > 0 || ((_b2 = data.hero) == null ? void 0 : _b2.length) > 0 || ((_c2 = data.top10) == null ? void 0 : _c2.length) > 0)) {
+              try {
+                localStorage.setItem(CATALOG_HOME_CACHE_KEY, JSON.stringify(data));
+              } catch (e) {
+              }
+              renderCatalogHomeData(data, true);
+              return data;
+            }
+          }
+        } catch (err) {
+          console.warn("[Catalog] fetchCatalogHome error:", err);
+        } finally {
+          _fetchingCatalogHome = false;
+        }
+        return null;
+      });
+    }
+    __name(fetchCatalogHome, "fetchCatalogHome");
     function showCatalog(skipResetFocus = false) {
       return __async(this, null, function* () {
-        var _a2;
+        var _a2, _b2, _c2;
         showView("view-catalog", skipResetFocus);
         if (!skipResetFocus && $("search-input")) {
           $("search-input").value = "";
@@ -93468,12 +93425,25 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         showSection("home");
         if (catalogReady) {
           if (heroShows.length > 0 && !heroTimer) startHeroTimer();
-          fetchEstrenosSeries().catch(() => {
+          fetchCatalogHome().catch(() => {
           });
           return;
         }
-        catalogReady = true;
-        yield loadCatalog();
+        initGenreTabs();
+        setupUnifiedSearch();
+        let hadLocalCache = false;
+        try {
+          const cachedRaw = localStorage.getItem(CATALOG_HOME_CACHE_KEY);
+          if (cachedRaw) {
+            const cachedData = JSON.parse(cachedRaw);
+            if (cachedData && (((_b2 = cachedData.recent) == null ? void 0 : _b2.length) > 0 || ((_c2 = cachedData.top10) == null ? void 0 : _c2.length) > 0)) {
+              renderCatalogHomeData(cachedData, false);
+              hadLocalCache = true;
+            }
+          }
+        } catch (e) {
+          console.warn("[Catalog] Home cache read error:", e);
+        }
         if (watchProgressMap.size > 0) {
           renderContinueWatchingRow().catch(() => {
           });
@@ -93483,60 +93453,30 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         }
         loadCreditsDB().catch(() => {
         });
-        initGenreTabs();
-        setupUnifiedSearch();
-        const initialTopSeries = getTop10Series();
-        if (initialTopSeries.length > 0) {
-          renderRow("ser_top10", "🏆 Top 10 series en Cineflix hoy", initialTopSeries, true, false, true);
-        }
-        fetchTopStats().then(() => {
-          const topSeries = getTop10Series();
-          if (topSeries.length > 0) {
-            renderRow("ser_top10", "🏆 Top 10 series en Cineflix hoy", topSeries, true, true, true);
-          }
-        }).catch(() => {
-        });
-        const recent = [...catalog].filter(isEstrenoItem).sort((a, b) => {
-          const timeB = safeParseTime(b.created_at || b.last_updated);
-          const timeA = safeParseTime(a.created_at || a.last_updated);
-          if (timeB && timeA && timeB !== timeA) return timeB - timeA;
-          if (timeB && !timeA) return -1;
-          if (!timeB && timeA) return 1;
-          const numB = parseInt(String(b.id).replace(/\D/g, ""), 10) || 0;
-          const numA = parseInt(String(a.id).replace(/\D/g, ""), 10) || 0;
-          if (numB !== numA) return numB - numA;
-          return (b.year || 0) - (a.year || 0);
-        }).slice(0, 40);
-        if (recent.length > 0) {
-          renderRow("recent", "🆕 Estrenos recientes", recent);
-        }
-        const recentUpdates = [...catalog].filter((s) => s.last_updated).sort((a, b) => (b.last_updated || 0) - (a.last_updated || 0)).slice(0, getRowLimit());
-        if (recentUpdates.length > 0) {
-          renderRow("last-updates", "🕐 Últimas actualizaciones", recentUpdates);
-        }
-        const heroItems = recent.length > 0 ? recent : recentUpdates;
-        if (heroItems.length > 0) {
-          setupHero(heroItems.slice(0, 5));
-        }
-        fetchEstrenosSeries().catch(() => {
-        });
-        getTrending().then((trendingTmdb) => {
-          const matched = trendingTmdb.map((t) => findInCatalog(t)).filter(Boolean);
-          if (matched.length > 0) {
-            renderRow("trending", "🔥 En tendencia esta semana", matched);
+        fetchCatalogHome().then((freshData) => {
+          if (!freshData && !hadLocalCache) {
+            loadCatalog().then(() => {
+              const recent = [...catalog].filter(isEstrenoItem).slice(0, 40);
+              if (recent.length > 0) {
+                renderRow("recent", "🆕 Estrenos recientes", recent);
+                setupHero(recent.slice(0, 5));
+              }
+            });
           }
         }).catch(() => {
         });
         setTimeout(() => {
-          loadGenresBackground();
-        }, 100);
+          if (catalog.length < 100) {
+            loadCatalog().catch((e) => console.warn("[Catalog] Background load failed:", e));
+          }
+        }, 4e3);
         setTimeout(() => {
           if (!moviesReady && !window._moviesPreloading) {
             window._moviesPreloading = true;
-            console.log("[Catalog] ⚡ Pre-loading movies in background for instant access");
-            loadMovies().catch((e) => console.warn("[Catalog] Background movie load failed:", e));
+            fetchMoviesHome().catch(() => {
+            });
           }
-        }, 150);
+        }, 1500);
       });
     }
     __name(showCatalog, "showCatalog");
@@ -93576,15 +93516,6 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       }
     }
     __name(showSection, "showSection");
-    function findInCatalog(tmdbShow) {
-      const n = normTitle(tmdbShow.name);
-      const no = normTitle(tmdbShow.originalName || "");
-      return catalog.find((s) => {
-        const sn = normTitle(s.title);
-        return sn === n || no && sn === no;
-      });
-    }
-    __name(findInCatalog, "findInCatalog");
     function setupHero(series) {
       var _a2;
       if (!series.length) return;
@@ -93876,34 +93807,99 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       syncGenreTabStyles("series");
     }
     __name(initGenreTabs, "initGenreTabs");
-    function filterByGenre(rowIdOrIds, genreIdsOrLabel, maybeLabel) {
-      let rowId, ids, label;
-      if (typeof rowIdOrIds === "string") {
-        rowId = rowIdOrIds;
-        ids = Array.isArray(genreIdsOrLabel) ? genreIdsOrLabel : [genreIdsOrLabel];
-        label = maybeLabel || "";
-      } else {
-        ids = Array.isArray(rowIdOrIds) ? rowIdOrIds : [rowIdOrIds];
-        label = genreIdsOrLabel || "";
-        const match = SERIES_GENRES.find((g) => g.label === label || g.ids.some((id) => ids.includes(id)));
-        rowId = match ? match.id : null;
-      }
-      activeSeriesGenreId = rowId;
-      currentFilterType = "series";
-      syncGenreTabStyles("series");
-      if (currentYearFilter !== "all" || currentSortMode !== "views") {
-        applyFilterSort();
-        return;
-      }
-      showSection("grid");
-      const filtered = catalog.filter((s) => seriesMatchesGenre(s, ids));
-      filtered.sort(() => Math.random() - 0.5);
-      renderGrid(filtered);
-      if ($("search-count")) {
-        $("search-count").textContent = filtered.length ? `${filtered.length} series · ${label}` : `Sin coincidencias en el catálogo para ${label}`;
-      }
+    function filterByGenre(rowIdOrIds, genreIdsOrLabel, maybeLabel, page = 1) {
+      return __async(this, null, function* () {
+        let rowId, ids, label;
+        if (typeof rowIdOrIds === "string") {
+          rowId = rowIdOrIds;
+          ids = Array.isArray(genreIdsOrLabel) ? genreIdsOrLabel : [genreIdsOrLabel];
+          label = maybeLabel || "";
+        } else {
+          ids = Array.isArray(rowIdOrIds) ? rowIdOrIds : [rowIdOrIds];
+          label = genreIdsOrLabel || "";
+          const match = SERIES_GENRES.find((g) => g.label === label || g.ids.some((id) => ids.includes(id)));
+          rowId = match ? match.id : null;
+        }
+        activeSeriesGenreId = rowId;
+        currentFilterType = "series";
+        syncGenreTabStyles("series");
+        if (currentYearFilter !== "all" || currentSortMode !== "views") {
+          applyFilterSort();
+          return;
+        }
+        showSection("grid");
+        if ($("search-count")) {
+          $("search-count").textContent = `Cargando ${label}...`;
+        }
+        try {
+          const genreQuery = rowId || ids[0];
+          const res = yield fetch(`${RAILWAY_API}/api/catalog?genre=${encodeURIComponent(genreQuery)}&page=${page}&limit=50`);
+          if (res.ok) {
+            const data = yield res.json();
+            if (data && Array.isArray(data.items)) {
+              if (typeof catalog !== "undefined") {
+                const idMap = new Map(catalog.map((s) => [s.id, s]));
+                data.items.forEach((s) => {
+                  if (!idMap.has(s.id)) catalog.push(s);
+                });
+              }
+              renderServerSeriesGrid(data.items, data.total, data.page, data.totalPages, rowIdOrIds, genreIdsOrLabel, maybeLabel);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("[Catalog] Server genre pagination error, falling back:", e);
+        }
+        const filtered = catalog.filter((s) => seriesMatchesGenre(s, ids));
+        filtered.sort(() => Math.random() - 0.5);
+        renderGrid(filtered);
+        if ($("search-count")) {
+          $("search-count").textContent = filtered.length ? `${filtered.length} series · ${label}` : `Sin coincidencias en el catálogo para ${label}`;
+        }
+      });
     }
     __name(filterByGenre, "filterByGenre");
+    function renderServerSeriesGrid(items, total, page, totalPages, rowIdOrIds, genreIdsOrLabel, maybeLabel) {
+      var _a2;
+      const grid = $("catalog-grid");
+      if (!grid) return;
+      grid.innerHTML = "";
+      items.forEach((s) => grid.appendChild(createCard(s)));
+      let label = typeof rowIdOrIds === "string" ? maybeLabel : genreIdsOrLabel;
+      if ($("search-count")) {
+        $("search-count").textContent = total > 0 ? `${total.toLocaleString()} series · ${label}` : `Sin coincidencias para ${label}`;
+      }
+      let pagEl = $("catalog-grid-pag");
+      if (!pagEl) {
+        pagEl = document.createElement("div");
+        pagEl.id = "catalog-grid-pag";
+        pagEl.className = "pagination-controls";
+        (_a2 = $("search-results")) == null ? void 0 : _a2.appendChild(pagEl);
+      }
+      if (totalPages <= 1) {
+        pagEl.style.display = "none";
+        return;
+      }
+      pagEl.style.display = "flex";
+      pagEl.innerHTML = `
+        <button id="cat-pag-prev" class="page-btn" ${page <= 1 ? "disabled" : ""}>&#10094; Anterior</button>
+        <span class="page-info">Página ${page} de ${totalPages}</span>
+        <button id="cat-pag-next" class="page-btn" ${page >= totalPages ? "disabled" : ""}>Siguiente &#10095;</button>
+    `;
+      if (page > 1) {
+        $("cat-pag-prev").onclick = () => {
+          filterByGenre(rowIdOrIds, genreIdsOrLabel, maybeLabel, page - 1);
+          scrollCatalogToTop("view-catalog");
+        };
+      }
+      if (page < totalPages) {
+        $("cat-pag-next").onclick = () => {
+          filterByGenre(rowIdOrIds, genreIdsOrLabel, maybeLabel, page + 1);
+          scrollCatalogToTop("view-catalog");
+        };
+      }
+    }
+    __name(renderServerSeriesGrid, "renderServerSeriesGrid");
     function renderRow(id, title, series, prepend = false, forceRefresh = false, isTop10 = false) {
       if (!series.length) return;
       const isTop10Row = isTop10 || id === "ser_top10";
@@ -94181,37 +94177,6 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       });
     }
     __name(loadCardPoster, "loadCardPoster");
-    function loadGenresBackground() {
-      return __async(this, null, function* () {
-        if (genreLoading) return;
-        genreLoading = true;
-        const buckets = new Map(GENRE_ROWS.map((r) => [r.id, { meta: r, items: [] }]));
-        const BATCH = 25;
-        for (let i2 = 0; i2 < catalog.length; i2 += BATCH) {
-          const batch = catalog.slice(i2, i2 + BATCH);
-          yield Promise.all(batch.map((s) => __async(null, null, function* () {
-            var _a2;
-            let tmdb = tmdbFromEntry(s);
-            if (!tmdb) tmdb = yield searchSeries(s.title, s.year);
-            if (!tmdb) return;
-            catalogTmdbCache.set(s.title, tmdb);
-            for (const [, bucket] of buckets) {
-              if ((_a2 = tmdb.genreIds) == null ? void 0 : _a2.some((g) => bucket.meta.ids.includes(g))) {
-                if (!bucket.items.find((x) => x.title === s.title)) bucket.items.push(s);
-              }
-            }
-          })));
-          yield new Promise((r) => setTimeout(r, 10));
-        }
-        for (const [, bucket] of buckets) {
-          if (bucket.items.length > 0) {
-            renderRow(bucket.meta.id, bucket.meta.title, bucket.items.sort(() => Math.random() - 0.5).slice(0, getRowLimit()));
-          }
-        }
-        genreLoading = false;
-      });
-    }
-    __name(loadGenresBackground, "loadGenresBackground");
     const ALT_VERSION_CONFIG = {
       "spider-noir": {
         // All known payloads for this series (to match regardless of DB state)
@@ -94767,6 +94732,8 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         window._isOpeningSeries = true;
         currentSeries = series;
         currentTmdb = null;
+        let loadTimer = null;
+        let loadingP = null;
         try {
           const altInfo = getAltVersionConfig(series);
           const toggleContainer = $("alt-version-toggle");
@@ -94882,19 +94849,18 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
             console.warn("[TMDB] Seasons count fetch error:", e);
           }
           const loadingEl = $("series-loading");
-          const loadingP2 = loadingEl ? loadingEl.querySelector("p") : null;
-          let loadTimer2 = null;
-          if (loadingP2) {
-            loadingP2.textContent = "Cargando episodios...";
+          loadingP = loadingEl ? loadingEl.querySelector("p") : null;
+          if (loadingP) {
+            loadingP.textContent = "Cargando episodios...";
             let elapsed = 0;
-            loadTimer2 = setInterval(() => {
+            loadTimer = setInterval(() => {
               elapsed += 5;
               if (elapsed >= 50) {
-                loadingP2.textContent = "El bot está indexando los capítulos, casi listo...";
+                loadingP.textContent = "El bot está indexando los capítulos, casi listo...";
               } else if (elapsed >= 20) {
-                loadingP2.textContent = "Analizando serie en Telegram... esto puede tardar un momento...";
+                loadingP.textContent = "Analizando serie en Telegram... esto puede tardar un momento...";
               } else if (elapsed >= 8) {
-                loadingP2.textContent = "Esperando respuesta del bot...";
+                loadingP.textContent = "Esperando respuesta del bot...";
               }
             }, 5e3);
           }
@@ -94902,8 +94868,8 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
           const response = yield sendBotCommand(payload);
           currentBotMsgId = response.messageId;
           if (response.buttons.length === 0) {
-            if (loadTimer2) clearInterval(loadTimer2);
-            if (loadingP2) loadingP2.textContent = "Cargando episodios...";
+            if (loadTimer) clearInterval(loadTimer);
+            if (loadingP) loadingP.textContent = "Cargando episodios...";
             (_b2 = $("series-loading")) == null ? void 0 : _b2.classList.add("hidden");
             if (track) track.innerHTML = '<div class="center-message"><p>No se encontraron temporadas</p></div>';
             return;
@@ -95232,17 +95198,17 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
           countBadge.textContent = seasonObj.count ? `${seasonObj.count} episodios` : "";
         }
         const loadingEl = $("series-loading");
-        const loadingP2 = loadingEl ? loadingEl.querySelector("p") : null;
-        let loadTimer2 = null;
-        if (loadingP2) {
-          loadingP2.textContent = "Cargando episodios...";
+        const loadingP = loadingEl ? loadingEl.querySelector("p") : null;
+        let loadTimer = null;
+        if (loadingP) {
+          loadingP.textContent = "Cargando episodios...";
           let elapsed = 0;
-          loadTimer2 = setInterval(() => {
+          loadTimer = setInterval(() => {
             elapsed += 5;
             if (elapsed >= 35) {
-              loadingP2.textContent = "Descargando lista de capítulos del bot, casi listo...";
+              loadingP.textContent = "Descargando lista de capítulos del bot, casi listo...";
             } else if (elapsed >= 15) {
-              loadingP2.textContent = "El bot está preparando los archivos... un momento...";
+              loadingP.textContent = "El bot está preparando los archivos... un momento...";
             }
           }, 5e3);
         }
@@ -95282,8 +95248,8 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
           if (!videos || videos.length === 0) {
             videos = yield getVideoMessages(100, currentBotMsgId || 0);
           }
-          if (loadTimer2) clearInterval(loadTimer2);
-          if (loadingP2) loadingP2.textContent = "Cargando episodios...";
+          if (loadTimer) clearInterval(loadTimer);
+          if (loadingP) loadingP.textContent = "Cargando episodios...";
           (_c2 = $("series-loading")) == null ? void 0 : _c2.classList.add("hidden");
           if (track) track.innerHTML = "";
           if (!videos || videos.length === 0) {
@@ -95416,8 +95382,8 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
           (_d2 = $("series-loading")) == null ? void 0 : _d2.classList.add("hidden");
           if (track) track.innerHTML = `<div class="center-message"><p>Error al cargar episodios: ${escapeHtml(err.message)}</p></div>`;
         } finally {
-          if (loadTimer2) clearInterval(loadTimer2);
-          if (loadingP2) loadingP2.textContent = "Cargando episodios...";
+          if (loadTimer) clearInterval(loadTimer);
+          if (loadingP) loadingP.textContent = "Cargando episodios...";
         }
       });
     }
@@ -95601,18 +95567,13 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
                         if (topMovies.length > 0) renderMovieRow("mov_top10", "🏆 Top 10 películas en Cineflix hoy", topMovies, true, true, true);
                       }).catch(() => {
                       });
-                      for (const genre of MOVIE_GENRE_ROWS) {
-                        const items = moviesCatalog.filter((m) => {
-                          let gIds = [];
-                          if (m.tmdb_genre_ids) {
-                            try {
-                              gIds = typeof m.tmdb_genre_ids === "string" ? JSON.parse(m.tmdb_genre_ids) : m.tmdb_genre_ids;
-                            } catch (e) {
-                            }
-                          }
-                          return genre.ids.some((id) => gIds.includes(id));
-                        });
-                        if (items.length > 0) renderMovieRow(genre.id, genre.title, items.sort(() => Math.random() - 0.5).slice(0, getRowLimit()));
+                      const rowsContainer = $("movies-rows");
+                      const hasExistingGenreRows = MOVIE_GENRE_ROWS.some((g) => rowsContainer == null ? void 0 : rowsContainer.querySelector(`[data-row="${g.id}"]`));
+                      if (!hasExistingGenreRows) {
+                        for (const genre of MOVIE_GENRE_ROWS) {
+                          const items = moviesCatalog.filter((m) => movieMatchesGenre(m, genre.ids));
+                          if (items.length > 0) renderMovieRow(genre.id, genre.title, items.sort(() => Math.random() - 0.5).slice(0, getRowLimit()));
+                        }
                       }
                     }
                     if (recentMovies.length > 0) {
@@ -95642,18 +95603,13 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
                       if (topMovies.length > 0) renderMovieRow("mov_top10", "🏆 Top 10 películas en Cineflix hoy", topMovies, true, true, true);
                     }).catch(() => {
                     });
-                    for (const genre of MOVIE_GENRE_ROWS) {
-                      const items = moviesCatalog.filter((m) => {
-                        let gIds = [];
-                        if (m.tmdb_genre_ids) {
-                          try {
-                            gIds = typeof m.tmdb_genre_ids === "string" ? JSON.parse(m.tmdb_genre_ids) : m.tmdb_genre_ids;
-                          } catch (e) {
-                          }
-                        }
-                        return genre.ids.some((id) => gIds.includes(id));
-                      });
-                      if (items.length > 0) renderMovieRow(genre.id, genre.title, items.sort(() => Math.random() - 0.5).slice(0, getRowLimit()));
+                    const rowsContainer = $("movies-rows");
+                    const hasExistingGenreRows = MOVIE_GENRE_ROWS.some((g) => rowsContainer == null ? void 0 : rowsContainer.querySelector(`[data-row="${g.id}"]`));
+                    if (!hasExistingGenreRows) {
+                      for (const genre of MOVIE_GENRE_ROWS) {
+                        const items = moviesCatalog.filter((m) => movieMatchesGenre(m, genre.ids));
+                        if (items.length > 0) renderMovieRow(genre.id, genre.title, items.sort(() => Math.random() - 0.5).slice(0, getRowLimit()));
+                      }
                     }
                     if (recentMovies.length > 0) {
                       setupMovieHero(recentMovies.slice(0, 6));
@@ -95794,9 +95750,88 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       }));
     }
     __name(processMoviesList, "processMoviesList");
+    const MOVIES_HOME_CACHE_KEY = "cineflix_movies_home_cache";
+    let _fetchingMoviesHome = false;
+    function renderMoviesHomeData(data, isBackgroundUpdate = false) {
+      if (!data) return;
+      const allHomeMovies = [
+        ...Array.isArray(data.recent) ? data.recent : [],
+        ...Array.isArray(data.hero) ? data.hero : [],
+        ...Array.isArray(data.top10) ? data.top10 : [],
+        ...Array.isArray(data.requests) ? data.requests : []
+      ];
+      if (data.genres && typeof data.genres === "object") {
+        Object.values(data.genres).forEach((list) => {
+          if (Array.isArray(list)) allHomeMovies.push(...list);
+        });
+      }
+      if (typeof moviesCatalog !== "undefined") {
+        const idMap = new Map(moviesCatalog.map((m) => [m.id, m]));
+        allHomeMovies.forEach((m) => {
+          if (m && m.id) {
+            if (!idMap.has(m.id)) {
+              moviesCatalog.push(m);
+              idMap.set(m.id, m);
+            } else {
+              Object.assign(idMap.get(m.id), m);
+            }
+          }
+        });
+      }
+      if (Array.isArray(data.top10) && data.top10.length > 0) {
+        renderMovieRow("mov_top10", "🏆 Top 10 películas en Cineflix hoy", data.top10, true, isBackgroundUpdate, true);
+      }
+      if (Array.isArray(data.recent) && data.recent.length > 0) {
+        renderMovieRow("mov_recent", "🆕 Estrenos recientes", data.recent, false, isBackgroundUpdate);
+        const heroItems = Array.isArray(data.hero) && data.hero.length > 0 ? data.hero : data.recent.slice(0, 6);
+        setupMovieHero(heroItems);
+      }
+      if (Array.isArray(data.requests) && data.requests.length > 0) {
+        requestsCatalog = data.requests;
+        window.requestsCatalog = data.requests;
+        renderMovieRow("mov_requests", "📩 Peticiones del grupo", data.requests, false, isBackgroundUpdate);
+      }
+      if (data.genres && typeof data.genres === "object") {
+        for (const genre of MOVIE_GENRE_ROWS) {
+          const items = data.genres[genre.id];
+          if (Array.isArray(items) && items.length > 0) {
+            renderMovieRow(genre.id, genre.title, items, false, isBackgroundUpdate);
+          }
+        }
+      }
+      moviesReady = true;
+    }
+    __name(renderMoviesHomeData, "renderMoviesHomeData");
+    function fetchMoviesHome() {
+      return __async(this, null, function* () {
+        var _a2, _b2, _c2;
+        if (_fetchingMoviesHome) return null;
+        _fetchingMoviesHome = true;
+        try {
+          const res = yield fetch(`${RAILWAY_API}/api/movies/home`);
+          if (res.ok) {
+            const data = yield res.json();
+            if (data && (((_a2 = data.recent) == null ? void 0 : _a2.length) > 0 || ((_b2 = data.hero) == null ? void 0 : _b2.length) > 0 || ((_c2 = data.top10) == null ? void 0 : _c2.length) > 0)) {
+              try {
+                localStorage.setItem(MOVIES_HOME_CACHE_KEY, JSON.stringify(data));
+              } catch (e) {
+              }
+              renderMoviesHomeData(data, true);
+              return data;
+            }
+          }
+        } catch (err) {
+          console.warn("[Movies] fetchMoviesHome error:", err);
+        } finally {
+          _fetchingMoviesHome = false;
+        }
+        return null;
+      });
+    }
+    __name(fetchMoviesHome, "fetchMoviesHome");
     function showMovies(skipResetFocus = false) {
       return __async(this, null, function* () {
-        var _a2, _b2;
+        var _a2, _b2, _c2, _d2;
         showView("view-movies", skipResetFocus);
         showMoviesSection("home");
         activeMovieGenreId = null;
@@ -95809,38 +95844,26 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         if (moviesReady) {
           if (movieHeroShows.length > 0 && !movieHeroTimer) startMovieHeroTimer();
           yield fetchWatchProgress();
-          fetchEstrenosMovies().catch(() => {
+          fetchMoviesHome().catch(() => {
           });
           return;
         }
         if ($("movies-content")) $("movies-content").style.removeProperty("opacity");
         (_b2 = $("movies-loading")) == null ? void 0 : _b2.classList.add("hidden");
+        initMovieGenreTabs();
+        setupUnifiedSearch();
+        let hadLocalCache = false;
         try {
-          yield loadMovies();
-        } catch (err) {
-          console.warn("[Movies] loadMovies error:", err);
-        }
-        if (moviesCatalog.length === 0) {
-          try {
-            yield fetchEstrenosMovies();
-          } catch (e) {
-            console.warn("[Movies] Emergency estrenos fallback error:", e);
+          const cachedRaw = localStorage.getItem(MOVIES_HOME_CACHE_KEY);
+          if (cachedRaw) {
+            const cachedData = JSON.parse(cachedRaw);
+            if (cachedData && (((_c2 = cachedData.recent) == null ? void 0 : _c2.length) > 0 || ((_d2 = cachedData.top10) == null ? void 0 : _d2.length) > 0)) {
+              renderMoviesHomeData(cachedData, false);
+              hadLocalCache = true;
+            }
           }
-        }
-        if (moviesCatalog.length > 0) {
-          moviesReady = true;
-        } else {
-          const rows = $("movies-rows");
-          if (rows && rows.children.length === 0) {
-            rows.innerHTML = `
-                <div style="text-align: center; padding: 60px 20px; color: #a1a1aa;">
-                    <div style="font-size: 3rem; margin-bottom: 16px;">🎬</div>
-                    <h2 style="font-size: 1.5rem; color: #fff; margin-bottom: 8px;">No se pudo cargar el catálogo</h2>
-                    <p style="margin-bottom: 24px;">Comprueba tu conexión a Internet e inténtalo de nuevo.</p>
-                    <button class="focusable btn-primary" onclick="location.reload()" style="padding: 10px 24px; border-radius: 8px; font-weight: bold;">Reintentar</button>
-                </div>
-            `;
-          }
+        } catch (e) {
+          console.warn("[Movies] Home cache read error:", e);
         }
         renderContinueWatchingRow().catch(() => {
         });
@@ -95848,63 +95871,23 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
           fetchWatchProgress().then(() => renderContinueWatchingRow()).catch(() => {
           });
         }
-        initMovieGenreTabs();
-        setupUnifiedSearch();
-        const initialTopMovies = getTop10Movies();
-        if (initialTopMovies.length > 0) {
-          renderMovieRow("mov_top10", "🏆 Top 10 películas en Cineflix hoy", initialTopMovies, true, false, true);
-        }
-        fetchTopStats().then(() => {
-          const topMovies = getTop10Movies();
-          if (topMovies.length > 0) {
-            renderMovieRow("mov_top10", "🏆 Top 10 películas en Cineflix hoy", topMovies, true, true, true);
+        fetchMoviesHome().then((freshData) => {
+          if (!freshData && !hadLocalCache) {
+            loadMovies().then(() => {
+              const recent = getRecentEstrenosMovies();
+              if (recent.length > 0) {
+                renderMovieRow("mov_recent", "🆕 Estrenos recientes", recent);
+                setupMovieHero(recent.slice(0, 6));
+              }
+            });
           }
         }).catch(() => {
         });
-        const recentMovies = getRecentEstrenosMovies();
-        if (recentMovies.length > 0) {
-          renderMovieRow("mov_recent", "🆕 Estrenos recientes", recentMovies);
-          setupMovieHero(recentMovies.slice(0, 6));
-        }
-        try {
-          const reqRes = yield fetch(`${RAILWAY_API}/api/requests`);
-          if (reqRes.ok) {
-            const requests = yield reqRes.json();
-            if (Array.isArray(requests) && requests.length > 0) {
-              const reqMovies = requests.map((r) => ({
-                id: "req_" + r.id,
-                title: r.title,
-                search_title: r.search_title || r.title,
-                year: r.year,
-                tmdb_poster: r.tmdb_poster,
-                tmdb_name: r.tmdb_name
-              }));
-              requestsCatalog = reqMovies;
-              window.requestsCatalog = reqMovies;
-              renderMovieRow("mov_requests", "📩 Peticiones del grupo", reqMovies);
-            }
-          }
-        } catch (e) {
-        }
-        fetchEstrenosMovies().catch(() => {
-        });
         setTimeout(() => {
-          for (const genre of MOVIE_GENRE_ROWS) {
-            const items = moviesCatalog.filter((m) => {
-              let gIds = m.tmdb_genre_ids || [];
-              if (typeof gIds === "string") try {
-                gIds = JSON.parse(gIds);
-                m.tmdb_genre_ids = gIds;
-              } catch (e) {
-                gIds = [];
-              }
-              return genre.ids.some((id) => gIds.includes(id));
-            });
-            if (items.length > 0) {
-              renderMovieRow(genre.id, genre.title, items.sort(() => Math.random() - 0.5).slice(0, getRowLimit()));
-            }
+          if (moviesCatalog.length < 500) {
+            loadMovies().catch((e) => console.warn("[Movies] Background load failed:", e));
           }
-        }, 100);
+        }, 5e3);
       });
     }
     __name(showMovies, "showMovies");
@@ -96057,25 +96040,88 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       syncGenreTabStyles("movies");
     }
     __name(initMovieGenreTabs, "initMovieGenreTabs");
-    function filterMoviesByGenre(rowId, label) {
-      activeMovieGenreId = rowId;
-      currentFilterType = "movies";
-      syncGenreTabStyles("movies");
-      if (currentYearFilter !== "all" || currentSortMode !== "views") {
-        applyFilterSort();
-        return;
-      }
-      showMoviesSection("grid");
-      const genre = MOVIE_GENRE_ROWS.find((g) => g.id === rowId);
-      if (!genre) return;
-      const filtered = moviesCatalog.filter((m) => movieMatchesGenre(m, genre.ids));
-      filtered.sort(() => Math.random() - 0.5);
-      renderMovieGrid(filtered);
-      if ($("movies-count")) {
-        $("movies-count").textContent = filtered.length ? `${filtered.length} películas · ${label}` : `Sin coincidencias en el catálogo para ${label}`;
-      }
+    function filterMoviesByGenre(rowId, label, page = 1) {
+      return __async(this, null, function* () {
+        activeMovieGenreId = rowId;
+        currentFilterType = "movies";
+        syncGenreTabStyles("movies");
+        if (currentYearFilter !== "all" || currentSortMode !== "views") {
+          applyFilterSort();
+          return;
+        }
+        showMoviesSection("grid");
+        if ($("movies-count")) {
+          $("movies-count").textContent = `Cargando ${label}...`;
+        }
+        try {
+          const res = yield fetch(`${RAILWAY_API}/api/movies?genre=${encodeURIComponent(rowId)}&page=${page}&limit=50`);
+          if (res.ok) {
+            const data = yield res.json();
+            if (data && Array.isArray(data.items)) {
+              if (typeof moviesCatalog !== "undefined") {
+                const idMap = new Map(moviesCatalog.map((m) => [m.id, m]));
+                data.items.forEach((m) => {
+                  if (!idMap.has(m.id)) moviesCatalog.push(m);
+                });
+              }
+              renderServerMovieGrid(data.items, data.total, data.page, data.totalPages, rowId, label);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("[Movies] Server genre pagination error, falling back:", e);
+        }
+        const genre = MOVIE_GENRE_ROWS.find((g) => g.id === rowId);
+        if (!genre) return;
+        const filtered = moviesCatalog.filter((m) => movieMatchesGenre(m, genre.ids));
+        filtered.sort(() => Math.random() - 0.5);
+        renderMovieGrid(filtered);
+        if ($("movies-count")) {
+          $("movies-count").textContent = filtered.length ? `${filtered.length} películas · ${label}` : `Sin coincidencias en el catálogo para ${label}`;
+        }
+      });
     }
     __name(filterMoviesByGenre, "filterMoviesByGenre");
+    function renderServerMovieGrid(items, total, page, totalPages, rowId, label) {
+      var _a2;
+      const grid = $("movies-grid");
+      if (!grid) return;
+      grid.innerHTML = "";
+      items.forEach((m) => grid.appendChild(createMovieCard(m)));
+      if ($("movies-count")) {
+        $("movies-count").textContent = total > 0 ? `${total.toLocaleString()} películas · ${label}` : `Sin coincidencias para ${label}`;
+      }
+      let pagEl = $("movies-grid-pag");
+      if (!pagEl) {
+        pagEl = document.createElement("div");
+        pagEl.id = "movies-grid-pag";
+        pagEl.className = "pagination-controls";
+        (_a2 = $("movies-search-results")) == null ? void 0 : _a2.appendChild(pagEl);
+      }
+      if (totalPages <= 1) {
+        pagEl.style.display = "none";
+        return;
+      }
+      pagEl.style.display = "flex";
+      pagEl.innerHTML = `
+        <button id="mov-pag-prev" class="page-btn" ${page <= 1 ? "disabled" : ""}>&#10094; Anterior</button>
+        <span class="page-info">Página ${page} de ${totalPages}</span>
+        <button id="mov-pag-next" class="page-btn" ${page >= totalPages ? "disabled" : ""}>Siguiente &#10095;</button>
+    `;
+      if (page > 1) {
+        $("mov-pag-prev").onclick = () => {
+          filterMoviesByGenre(rowId, label, page - 1);
+          scrollCatalogToTop("view-movies");
+        };
+      }
+      if (page < totalPages) {
+        $("mov-pag-next").onclick = () => {
+          filterMoviesByGenre(rowId, label, page + 1);
+          scrollCatalogToTop("view-movies");
+        };
+      }
+    }
+    __name(renderServerMovieGrid, "renderServerMovieGrid");
     function renderMovieRow(id, title, movies, prepend = false, forceRefresh = false, isTop10 = false) {
       if (!movies.length) return;
       const isTop10Row = isTop10 || id === "mov_top10";
