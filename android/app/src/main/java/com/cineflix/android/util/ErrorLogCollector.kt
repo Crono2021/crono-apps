@@ -66,9 +66,9 @@ object ErrorLogCollector {
         sb.appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         sb.appendLine("ABIs soportadas: ${Build.SUPPORTED_ABIS.joinToString(", ")}")
         val pkgInfo = try { context.packageManager.getPackageInfo(context.packageName, 0) } catch (_: Exception) { null }
-        val vName = pkgInfo?.versionName ?: "1.4.3i"
+        val vName = pkgInfo?.versionName ?: "1.4.4c"
         @Suppress("DEPRECATION")
-        val vCode = pkgInfo?.versionCode ?: 30
+        val vCode = pkgInfo?.versionCode ?: 51
         sb.appendLine("App Version: $vName (versionCode $vCode)")
         sb.appendLine()
 
