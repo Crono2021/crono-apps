@@ -239,7 +239,7 @@ class PlayerActivity : AppCompatActivity() {
         val intentPlaybackId = intent.getStringExtra("EXTRA_PLAYBACK_ID")
         val currentPlaybackId = com.cineflix.android.GramJSStreamManager.currentPlaybackId
         val playbackId = intentPlaybackId ?: currentPlaybackId
-        val isGramJsActive = playbackId.isNotEmpty()
+        val isGramJsActive = false // Always use LocalStreamServer (Oliyo native architecture)
         
         val localStreamUrl: String
         if (useNodeJsProxy) {
