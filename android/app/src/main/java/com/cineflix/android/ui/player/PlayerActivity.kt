@@ -476,10 +476,10 @@ class PlayerActivity : AppCompatActivity() {
 
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                60_000, // minBufferMs (60 segundos)
-                120_000, // maxBufferMs (120 segundos)
-                1_500, // bufferForPlaybackMs (1.5 segundos para arranque ultra-rápido)
-                3_000 // bufferForPlaybackAfterRebufferMs (3 segundos)
+                25_000, // minBufferMs (25s: memoria controlada para TVs de 1GB RAM)
+                45_000, // maxBufferMs (45s: margen seguro sin saturar Heap de Java a 149MB)
+                3_500,  // bufferForPlaybackMs (3.5s: elimina las 3 pausas del círculo morado al inicio)
+                5_000   // bufferForPlaybackAfterRebufferMs (5s: reanudación sólida si hay microcorte)
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
