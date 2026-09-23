@@ -416,8 +416,8 @@ class TelegramEngine(private val context: Context) {
             }
         }
 
-        // Wait up to 15s for the bot to reply with the keyboard
-        val result = withTimeoutOrNull(15_000) { deferred.await() }
+        // Wait up to 120s for the bot to reply with the keyboard (un-analyzed series take time to index)
+        val result = withTimeoutOrNull(120_000) { deferred.await() }
         inlineKeyboardListeners.remove(listenerKey)
         result
     }
@@ -425,7 +425,7 @@ class TelegramEngine(private val context: Context) {
     /**
      * Click an inline button (season) and wait for the bot to finish sending episode videos.
      * Web equivalent: clickInlineButton(msgId, data) + getVideoMessages()
-     * Smart-wait: we stop 1.5s after the last video arrived, or after 12s max.
+     * Smart-wait: we stop 1.5s after the last video arrived, or after 90s max.
      */
     suspend fun clickInlineButton(chatId: Long, msgId: Long, dataBase64: String): List<VideoInfo> =
         withContext(Dispatchers.IO) {
@@ -451,9 +451,9 @@ class TelegramEngine(private val context: Context) {
             // Wait for TDLib to process the send (or time out after 8s) before starting collector loop
             withTimeoutOrNull(8_000) { callbackDeferred.await() }
 
-            // Smart wait: stop 1.5s after last video OR after 12s total (web uses 3s fixed)
+            // Smart wait: stop 1.5s after last video OR after 90s total (exits early as soon as files are collected)
             val silenceMs = 1500L
-            val maxWait   = 12_000L
+            val maxWait   = 90_000L
             val start     = System.currentTimeMillis()
             while (System.currentTimeMillis() - start < maxWait) {
                 delay(200)
