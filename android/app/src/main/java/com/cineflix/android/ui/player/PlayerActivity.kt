@@ -540,6 +540,10 @@ class PlayerActivity : AppCompatActivity() {
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                if (isFinishing || isDestroyed || isCleanedUp) {
+                    Log.w(TAG, "Ignoring onPlayerError during activity teardown/cleanup: ${error.message}")
+                    return
+                }
                 Log.e(TAG, "onPlayerError: ${error.errorCodeName} - ${error.message}", error)
                 val isIoError = error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
                                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
@@ -1382,13 +1386,22 @@ class PlayerActivity : AppCompatActivity() {
             castSessionListener?.let { sessionManager?.removeSessionManagerListener(it, CastSession::class.java) }
         } catch (_: Exception) {}
 
-        player?.release()
-        player = null
-
         try { proxyServer?.stop() } catch (_: Exception) {}
         proxyServer = null
         try { localStreamServer?.stop() } catch (_: Exception) {}
         localStreamServer = null
+
+        try {
+            player?.stop()
+            player?.clearMediaItems()
+        } catch (_: Exception) {}
+
+        try {
+            player?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "Exception during player.release(): ${e.message}")
+        }
+        player = null
         com.cineflix.android.GramJSStreamManager.currentPlaybackId = ""
         scope.cancel()
 
