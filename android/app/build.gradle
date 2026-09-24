@@ -10,7 +10,7 @@ android {
         applicationId "com.cineflix.android"
         minSdkVersion 21
         targetSdkVersion 34
-        versionCode 51
+        versionCode 53
         versionName "1.4.4c"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         ndk {
@@ -70,6 +70,7 @@ android {
 }
 
 dependencies {
+    testImplementation 'junit:junit:4.13.2'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
     implementation fileTree(include: ['*.jar'], dir: 'libs')
 

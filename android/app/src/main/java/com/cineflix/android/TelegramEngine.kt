@@ -58,6 +58,39 @@ class TelegramEngine(private val context: Context) {
     // Per-fileId lock to serialize concurrent DownloadFile range requests and avoid TDLib Error 200
     private val downloadLocks = ConcurrentHashMap<Int, Any>()
 
+    private val boundedVideoCache = BoundedVideoCache(object : BoundedVideoCache.Backend {
+        override fun purge(fileId: Int): Boolean {
+            val started = android.os.SystemClock.elapsedRealtime()
+            val ok = cancelAndDeleteVideoSync(fileId)
+            logStreamStorage("purge fileId=$fileId ok=$ok durationMs=${android.os.SystemClock.elapsedRealtime() - started}")
+            return ok
+        }
+        override fun cached(fileId: Int, offset: Long, count: Long) = readFilePartSync(fileId, offset, count)
+        override fun download(fileId: Int, offset: Long, count: Long) = downloadRangeAndRead(fileId, offset, count)
+    })
+
+    fun readBoundedVideoRange(fileId: Int, offset: Long, count: Long): ByteArray? =
+        boundedVideoCache.read(fileId, offset, count)
+
+    /** Allocated blocks, not apparent length: TDLib can create sparse multi-GB files. */
+    fun logStreamStorage(event: String) {
+        try {
+            val root = File(context.cacheDir, "tdlib_files")
+            var allocated = 0L
+            var logical = 0L
+            var files = 0
+            root.walkTopDown().filter { it.isFile }.forEach {
+                val stat = android.system.Os.stat(it.absolutePath)
+                allocated += stat.st_blocks * 512L
+                logical += stat.st_size
+                files++
+            }
+            Log.i("StreamStorage", "$event cacheAllocatedBytes=$allocated cacheLogicalBytes=$logical files=$files freeBytes=${context.cacheDir.usableSpace}")
+        } catch (e: Exception) {
+            Log.w("StreamStorage", "Storage measurement failed: ${e.message}")
+        }
+    }
+
     // ── Bot Message Collector ─────────────────────────────────────────────────
     data class MsgCollector(
         val chatId: Long,
@@ -838,9 +871,9 @@ class TelegramEngine(private val context: Context) {
      * Stop downloading and forcefully delete the file chunk from TDLib cache to free TV storage.
      */
     fun cancelAndDeleteVideo(fileId: Int) {
-        Log.i(TAG, "🧹 Cleaning up TDLib cache for fileId: $fileId")
-        client?.send(TdApi.CancelDownloadFile(fileId, false)) {}
-        client?.send(TdApi.DeleteFile(fileId)) {}
+        scope.launch(Dispatchers.IO) {
+            Log.i(TAG, "Cleaning up TDLib cache fileId=$fileId ok=${boundedVideoCache.release(fileId)}")
+        }
     }
 
     /**
@@ -850,12 +883,28 @@ class TelegramEngine(private val context: Context) {
      * Used by StreamProxyServer's rolling GC during playback.
      */
     fun cancelAndDeleteVideoSync(fileId: Int, timeoutMs: Long = 3000): Boolean {
-        Log.i(TAG, "🧹 cancelAndDeleteVideoSync fileId=$fileId")
-        val latch = java.util.concurrent.CountDownLatch(2)
-        val c = client ?: return false
-        c.send(TdApi.CancelDownloadFile(fileId, false)) { latch.countDown() }
-        c.send(TdApi.DeleteFile(fileId)) { latch.countDown() }
-        return latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        synchronized(downloadLocks.getOrPut(fileId) { Any() }) {
+            val c = client ?: return false
+            val deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs
+            fun request(action: TdApi.Function<*>): TdApi.Object? {
+                val latch = java.util.concurrent.CountDownLatch(1)
+                var result: TdApi.Object? = null
+                c.send(action) { result = it; latch.countDown() }
+                val remaining = deadline - android.os.SystemClock.elapsedRealtime()
+                if (remaining <= 0 || !latch.await(remaining, java.util.concurrent.TimeUnit.MILLISECONDS)) return null
+                return result
+            }
+            try {
+                // Sequence matters: completion of callbacks alone is not proof of success.
+                if (request(TdApi.CancelDownloadFile(fileId, false)) !is TdApi.Ok) return false
+                if (request(TdApi.DeleteFile(fileId)) !is TdApi.Ok) return false
+                val file = request(TdApi.GetFile(fileId)) as? TdApi.File ?: return false
+                return file.local.downloadedSize == 0L && !file.local.isDownloadingActive
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
     }
 
     /**

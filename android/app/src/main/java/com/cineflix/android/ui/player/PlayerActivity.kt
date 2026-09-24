@@ -503,6 +503,7 @@ class PlayerActivity : AppCompatActivity() {
 
         player?.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                Log.i("StreamPlayback", "state=$playbackState positionMs=${player?.currentPosition} bufferMs=${player?.totalBufferedDuration}")
                 if (playbackState == Player.STATE_BUFFERING) {
                     loadingSpinner.visibility = View.VISIBLE
                 } else {
@@ -538,6 +539,7 @@ class PlayerActivity : AppCompatActivity() {
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                Log.i("StreamPlayback", "playing=$isPlaying positionMs=${player?.currentPosition} bufferMs=${player?.totalBufferedDuration}")
                 if (isPlaying) {
                     btnPlayPause.setImageResource(android.R.drawable.ic_media_pause)
                     scheduleHideControls()

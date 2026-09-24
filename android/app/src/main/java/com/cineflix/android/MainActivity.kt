@@ -111,7 +111,10 @@ class MainActivity : ComponentActivity() {
                     if (path.contains("/assets/index-") && path.endsWith(".js")) {
                         try {
                             val assetFiles = assets.list("www/assets") ?: emptyArray()
-                            val localJs = assetFiles.firstOrNull { it.startsWith("index-") && it.endsWith(".js") }
+                            // Hashed URLs identify a specific build. Never replace a
+                            // deployed bundle with a different version from the APK.
+                            val requestedJs = path.substringAfterLast('/')
+                            val localJs = assetFiles.firstOrNull { it == requestedJs }
                             if (localJs != null) {
                                 android.util.Log.i("CineflixMain", "⚡ Intercepted $path -> serving local APK asset www/assets/$localJs")
                                 val stream = assets.open("www/assets/$localJs")
@@ -156,46 +159,48 @@ class MainActivity : ComponentActivity() {
 
                     android.util.Log.d("CineflixMain", "Injected OTA vars and JS fixes, TV=$tvFlag, Amazon=$isAmazon")
 
-                    // Inyectar enlace de teclado virtual para pantalla de login en Android TV
-                    view.evaluateJavascript(
-                        """
-                        (function() {
-                            function bindVK() {
-                                ['search-input', 'input-phone', 'input-otp', 'input-2fa'].forEach(function(id) {
-                                    var el = document.getElementById(id);
-                                    if (el && !el._vkAttached) {
-                                        el._vkAttached = true;
-                                        el.addEventListener('click', function(e) {
-                                            if (typeof window.openVirtualKeyboard === 'function') {
-                                                e.preventDefault();
-                                                el.blur();
-                                                window.openVirtualKeyboard(el);
-                                            }
-                                        });
-                                    }
-                                });
-                            }
-                            bindVK();
-                            setInterval(bindVK, 1000);
-
-                            if (window.cineflixTvNav && !window.cineflixTvNav._vkConfirmPatched) {
-                                window.cineflixTvNav._vkConfirmPatched = true;
-                                var orig = window.cineflixTvNav.confirm;
-                                window.cineflixTvNav.confirm = function() {
-                                    var f = this.focused;
-                                    if (f && (f.id === 'input-phone' || f.id === 'input-otp' || f.id === 'input-2fa' || f.id === 'search-input')) {
-                                        if (typeof window.openVirtualKeyboard === 'function') {
-                                            window.openVirtualKeyboard(f);
-                                            return;
+                    // Inyectar enlace de teclado virtual para pantalla de login en Android TV (solo en TV)
+                    if (isAndroidTV) {
+                        view.evaluateJavascript(
+                            """
+                            (function() {
+                                function bindVK() {
+                                    ['search-input', 'input-phone', 'input-otp', 'input-2fa'].forEach(function(id) {
+                                        var el = document.getElementById(id);
+                                        if (el && !el._vkAttached) {
+                                            el._vkAttached = true;
+                                            el.addEventListener('click', function(e) {
+                                                if (typeof window.openVirtualKeyboard === 'function') {
+                                                    e.preventDefault();
+                                                    el.blur();
+                                                    window.openVirtualKeyboard(el);
+                                                }
+                                            });
                                         }
-                                    }
-                                    return orig.apply(this, arguments);
-                                };
-                            }
-                        })();
-                        """.trimIndent(),
-                        null
-                    )
+                                    });
+                                }
+                                bindVK();
+                                setInterval(bindVK, 1000);
+
+                                if (window.cineflixTvNav && !window.cineflixTvNav._vkConfirmPatched) {
+                                    window.cineflixTvNav._vkConfirmPatched = true;
+                                    var orig = window.cineflixTvNav.confirm;
+                                    window.cineflixTvNav.confirm = function() {
+                                        var f = this.focused;
+                                        if (f && (f.id === 'input-phone' || f.id === 'input-otp' || f.id === 'input-2fa' || f.id === 'search-input')) {
+                                            if (typeof window.openVirtualKeyboard === 'function') {
+                                                window.openVirtualKeyboard(f);
+                                                return;
+                                            }
+                                        }
+                                        return orig.apply(this, arguments);
+                                    };
+                                }
+                            })();
+                            """.trimIndent(),
+                            null
+                        )
+                    }
 
                     // Inyectar inicio automático de QR login oficial de Telegram si estamos en login
                     view.evaluateJavascript(

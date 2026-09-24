@@ -26,10 +26,8 @@ import kotlin.math.min
  *  3. Binds to wildcard (0.0.0.0) on a free dynamic port, allowing both local ExoPlayer (127.0.0.1)
  *     and Google Cast ($wifiIp) to use the same fast server without running a second proxy.
  *
- * Safe Rolling GC:
- * Every 200MB streamed, triggers engine.optimizeStorage(30MB, immunity=10s) which safely frees
- * older cached chunks from TDLib disk cache WITHOUT calling cancelAndDeleteVideoSync or aborting
- * active downloads, preventing the dreaded 50-second freeze.
+ * The engine serializes cache reads/downloads/purges in a shared 32 MiB disk window.
+ * Socket writes use owned RAM copies, so a purge cannot invalidate an in-flight response.
  */
 class LocalStreamServer(private val engine: TelegramEngine) {
 
@@ -39,11 +37,12 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         private const val FIRST_CHUNK_SIZE = 512L * 1024L        // 512 KB for instant initial video frame
         private const val STREAM_CHUNK_SIZE = 2097152L           // 2 MB for smooth continuous playback
         private const val ALIGNMENT = 131072L                   // 128 KB (TDLib MTProto block alignment)
-        private const val ROLLING_GC_THRESHOLD = 200L * 1024L * 1024L // 200 MB
+        private const val STORAGE_SAMPLE_BYTES = 8L * 1024L * 1024L
     }
 
     private var serverSocket: ServerSocket? = null
     private val executor: ExecutorService = Executors.newCachedThreadPool()
+    private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
 
     @Volatile private var activeFileId: Int = -1
     @Volatile private var activeSize: Long = 0L
@@ -87,7 +86,10 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             while (isRunning && !s.isClosed) {
                 try {
                     val client = s.accept()
-                    executor.execute { handleClient(client) }
+                    clients.add(client)
+                    executor.execute {
+                        try { handleClient(client) } finally { clients.remove(client) }
+                    }
                 } catch (e: Exception) {
                     if (isRunning) {
                         Log.d(TAG, "Accept loop info: ${e.message}")
@@ -101,6 +103,9 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
     fun stop() {
         isRunning = false
+        clients.forEach { try { it.close() } catch (_: Exception) {} }
+        clients.clear()
+        executor.shutdownNow()
         try {
             serverSocket?.close()
         } catch (_: Exception) {}
@@ -269,14 +274,13 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             val blocks = (neededBytes + ALIGNMENT - 1) / ALIGNMENT
             val fetchSize = min(blocks * ALIGNMENT, partSize - alignedOffset)
 
-            // 1. Fast cache hit: check if TDLib already has this range in memory/disk
-            var chunk = engine.readFilePartSync(partFileId, alignedOffset, fetchSize)
-            if (chunk == null || chunk.size <= offsetInsideBlock) {
-                // 2. Fetch synchronously from Telegram CDN
+            // All reads go through the same bounded window, including cache hits.
+            var chunk: ByteArray? = null
+            if (isRunning) {
                 var attempts = 0
                 while (attempts < 4 && isRunning) {
                     attempts++
-                    chunk = engine.downloadRangeAndRead(partFileId, alignedOffset, fetchSize)
+                    chunk = engine.readBoundedVideoRange(partFileId, alignedOffset, fetchSize)
                     if (chunk != null && chunk.size > offsetInsideBlock) {
                         break
                     }
@@ -310,16 +314,11 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             currentPos += sliceSize
             isFirstChunk = false
 
-            // Safe Rolling GC check: frees older chunks without killing active streaming
+            // Diagnostics only: actual enforcement lives in the engine's shared window.
             bytesStreamedSinceGc += sliceSize
-            if (bytesStreamedSinceGc >= ROLLING_GC_THRESHOLD) {
+            if (bytesStreamedSinceGc >= STORAGE_SAMPLE_BYTES) {
                 bytesStreamedSinceGc = 0L
-                Log.i(TAG, "🧹 ROLLING GC SEGURO (200MB): Invocando optimizeStorage(30MB, immunity=10s)")
-                try {
-                    engine.optimizeStorage(30L * 1024L * 1024L, immunityDelaySec = 10)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error ejecutando optimizeStorage: ${e.message}")
-                }
+                engine.logStreamStorage("delivered fileId=$partFileId offset=$currentPos")
             }
         }
     }
