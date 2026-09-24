@@ -1,10 +1,10 @@
 {
   "android": {
     "version": 9,
-    "url": "https://raw.githubusercontent.com/Crono2021/crono-apps/86d73e9e9859c2b5743285bb41b395579a90e964/cineflix.apk"
+    "url": "https://raw.githubusercontent.com/Crono2021/crono-apps/8bd8335be9937e2b55943280497a539738a6380f/cineflix.apk"
   },
   "android_tv": {
     "version": 9,
-    "url": "https://raw.githubusercontent.com/Crono2021/crono-apps/86d73e9e9859c2b5743285bb41b395579a90e964/cineflix.apk"
+    "url": "https://raw.githubusercontent.com/Crono2021/crono-apps/8bd8335be9937e2b55943280497a539738a6380f/cineflix.apk"
   }
 }
