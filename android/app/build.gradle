@@ -10,8 +10,8 @@ android {
         applicationId "com.cineflix.android"
         minSdkVersion 21
         targetSdkVersion 34
-        versionCode 53
-        versionName "1.4.4c"
+        versionCode 54
+        versionName "1.4.4d"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters 'armeabi-v7a', 'arm64-v8a'
