@@ -1,9 +1,9 @@
 {
-  "versionCode": 51,
-  "versionName": "1.4.4c",
-  "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/86d73e9e9859c2b5743285bb41b395579a90e964/cineflix.apk",
-  "sha256": "acf36591ea6c4ab6349dd3f553d13b8a48c1fdac7e42e618d982bc47433339d3",
-  "changelog": "Mejora del streaming con limpieza periódica de la caché de vídeo.\nCorrección del teclado en móviles.\nCompatibilidad con la web restaurada y sus actualizaciones.",
+  "versionCode": 53,
+  "versionName": "1.4.4d",
+  "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/8bd8335be9937e2b55943280497a539738a6380f/cineflix.apk",
+  "sha256": "4355159a30c347d3949bf86638ae35df3776ed38a75ec3e27f45025a20bb9262",
+  "changelog": "Corrección de campos de escritura",
   "mandatory": false,
   "minVersionCode": 1
 }
