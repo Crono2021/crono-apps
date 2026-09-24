@@ -1,8 +1,8 @@
 {
-  "versionCode": 53,
+  "versionCode": 54,
   "versionName": "1.4.4d",
-  "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/8bd8335be9937e2b55943280497a539738a6380f/cineflix.apk",
-  "sha256": "4355159a30c347d3949bf86638ae35df3776ed38a75ec3e27f45025a20bb9262",
+  "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/9fdb57c4c3529fe67b7b054a369f08e360654854/cineflix.apk",
+  "sha256": "d20e1fcb37ae430b78c4359dcae96c1bf57be0b98288604bd0af63300e43018e",
   "changelog": "Corrección de campos de escritura",
   "mandatory": false,
   "minVersionCode": 1
