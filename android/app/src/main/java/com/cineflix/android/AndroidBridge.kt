@@ -31,6 +31,9 @@ class AndroidBridge(
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    @JavascriptInterface
+    fun supportsStoredSevenZip(): Boolean = true
+
     init {
         GramJSStreamManager.webView = webView
     }

@@ -53,6 +53,12 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
     private val activeRequestId = java.util.concurrent.atomic.AtomicLong(0L)
     @Volatile private var currentStreamingSocket: Socket? = null
+    private var storedSevenZip = false
+    private var archiveError: ((String) -> Unit)? = null
+    @Volatile private var archiveReady = false
+    @Volatile private var archiveFailure: String? = null
+    private var archiveTotal = 0L
+    private var videoOffset = 0L
 
     var listeningPort: Int = 0
         private set
@@ -61,7 +67,9 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         fileId: Int,
         totalSize: Long,
         mimeType: String = "video/mp4",
-        multipartParts: List<FilePart>? = null
+        multipartParts: List<FilePart>? = null,
+        storedSevenZip: Boolean = false,
+        archiveError: ((String) -> Unit)? = null
     ): String {
         // Close previous socket without wiping cache during startup
         isRunning = false
@@ -74,6 +82,12 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         activeSize = if (totalSize > 0) totalSize else 2_000_000_000L
         activeMime = if (mimeType.isNotBlank()) mimeType else "video/mp4"
         activeParts = multipartParts
+        this.storedSevenZip = storedSevenZip
+        this.archiveError = archiveError
+        archiveReady = false
+        archiveFailure = null
+        archiveTotal = activeSize
+        videoOffset = 0L
         bytesStreamedSinceGc = 0L
         isRunning = true
 
@@ -161,6 +175,10 @@ class LocalStreamServer(private val engine: TelegramEngine) {
                     return
                 }
 
+                if (!prepareArchive()) {
+                    sendSimple(s, 422, "Unsupported Archive")
+                    return
+                }
                 val total = activeSize
                 if (total <= 0) {
                     sendSimple(s, 503, "Stream Not Ready")
@@ -231,6 +249,57 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         return Pair(lastPart.fileId, globalOffset - (accumulated - lastPart.size))
     }
 
+    // Runs on HTTP workers, never the UI thread. Header reads use the same bounded cache
+    // and TDLib alignment as playback; no full extraction or second disk cache is created.
+    @Synchronized
+    private fun prepareArchive(): Boolean {
+        if (!storedSevenZip || archiveReady) return true
+        if (archiveFailure != null || !isRunning) return false
+        try {
+            val video = StoredSevenZip.inspect(archiveTotal, ::readArchiveBytes)
+            if (!isRunning) return false
+            videoOffset = video.offset
+            activeSize = video.size
+            activeMime = when (video.name.substringAfterLast('.').lowercase(Locale.ROOT)) {
+                "mkv" -> "video/x-matroska"
+                "avi" -> "video/x-msvideo"
+                "ts" -> "video/mp2t"
+                "mov" -> "video/quicktime"
+                else -> "video/mp4"
+            }
+            archiveReady = true
+            Log.i(TAG, "7z Copy mapped: offset=$videoOffset videoBytes=$activeSize archiveBytes=$archiveTotal")
+            return true
+        } catch (e: Exception) {
+            archiveFailure = e.message ?: "No se pudo leer el índice 7z"
+            Log.e(TAG, "7z preflight failed", e)
+            archiveError?.invoke(archiveFailure!!)
+            return false
+        }
+    }
+
+    private fun readArchiveBytes(offset: Long, count: Int): ByteArray {
+        require(offset >= 0 && count > 0 && offset <= archiveTotal - count)
+        val result = ByteArray(count)
+        var done = 0
+        while (done < count) {
+            check(isRunning) { "Reproducción cancelada" }
+            val (id, local) = resolvePart(offset + done)
+            val size = activeParts?.first { it.fileId == id }?.size ?: archiveTotal
+            val take = minOf((count - done).toLong(), size - local).toInt()
+            check(take > 0) { "Parte 7z incompleta" }
+            val aligned = local - local % ALIGNMENT
+            val skip = (local - aligned).toInt()
+            val fetch = minOf(((skip + take + ALIGNMENT - 1) / ALIGNMENT) * ALIGNMENT, size - aligned)
+            val data = engine.readBoundedVideoRange(id, aligned, fetch)
+                ?: throw java.io.IOException("No se pudo descargar el índice 7z; comprueba la conexión y las partes")
+            check(data.size >= skip + take) { "Lectura 7z incompleta" }
+            data.copyInto(result, done, skip, skip + take)
+            done += take
+        }
+        return result
+    }
+
     private fun serveStream(socket: Socket, globalStart: Long, requestedEnd: Long) {
         val totalLength = (requestedEnd - globalStart) + 1
         if (totalLength <= 0) {
@@ -276,7 +345,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         var isFirstChunk = true
 
         while (currentPos <= requestedEnd && isRunning && myRequestId == activeRequestId.get()) {
-            val (partFileId, localOffset) = resolvePart(currentPos)
+            val (partFileId, localOffset) = resolvePart(currentPos + videoOffset)
             val partSize = activeParts?.find { it.fileId == partFileId }?.size ?: activeSize
             val availableInPart = maxOf(0L, partSize - localOffset)
             val remainingInRequest = requestedEnd - currentPos + 1

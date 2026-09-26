@@ -160,12 +160,21 @@ class PlayerActivity : AppCompatActivity() {
         setupListeners()
 
         val multipartJson = intent.getStringExtra(EXTRA_MULTIPART_JSON)
+        var storedSevenZip = false
         if (!multipartJson.isNullOrEmpty()) {
             try {
                 val partsArray = org.json.JSONArray(multipartJson)
                 val parts = mutableListOf<FilePart>()
+                var totalPartsSize = 0L
                 for (i in 0 until partsArray.length()) {
                     val obj = partsArray.getJSONObject(i)
+                    val archive = obj.optString("archive", "")
+                    require(archive == "" || archive == "7z-copy") { "Formato de archivo no compatible" }
+                    if (i == 0) storedSevenZip = archive == "7z-copy"
+                    require(storedSevenZip == (archive == "7z-copy")) { "Partes de formatos diferentes" }
+                    require(obj.getInt("fileId") > 0 && obj.getLong("size") > 0) { "Parte no válida" }
+                    require(obj.getLong("size") <= Long.MAX_VALUE - totalPartsSize) { "Tamaño excesivo" }
+                    totalPartsSize += obj.getLong("size")
                     parts.add(FilePart(obj.getInt("fileId"), obj.getLong("size")))
                 }
                 if (parts.isNotEmpty()) {
@@ -288,7 +297,14 @@ class PlayerActivity : AppCompatActivity() {
                 fileId = fileId,
                 totalSize = currentEffectiveFileSize,
                 mimeType = mimeType,
-                multipartParts = multipartParts
+                multipartParts = multipartParts,
+                storedSevenZip = storedSevenZip,
+                archiveError = { message -> runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                        finish()
+                    }
+                } }
             )
             localStreamServer = lss
             localStreamUrl = lssUrl
