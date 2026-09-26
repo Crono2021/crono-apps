@@ -62,7 +62,9 @@ class TelegramEngine(private val context: Context) {
         override fun purge(fileId: Int): Boolean {
             val started = android.os.SystemClock.elapsedRealtime()
             val ok = cancelAndDeleteVideoSync(fileId)
-            logStreamStorage("purge fileId=$fileId ok=$ok durationMs=${android.os.SystemClock.elapsedRealtime() - started}")
+            val duration = android.os.SystemClock.elapsedRealtime() - started
+            logStreamStorage("purge fileId=$fileId ok=$ok durationMs=$duration")
+            com.cineflix.android.util.ErrorLogCollector.log(TAG, "Cache purge fileId=$fileId ok=$ok in ${duration}ms")
             return ok
         }
         override fun cached(fileId: Int, offset: Long, count: Long) = readFilePartSync(fileId, offset, count)
@@ -86,6 +88,7 @@ class TelegramEngine(private val context: Context) {
                 files++
             }
             Log.i("StreamStorage", "$event cacheAllocatedBytes=$allocated cacheLogicalBytes=$logical files=$files freeBytes=${context.cacheDir.usableSpace}")
+            com.cineflix.android.util.ErrorLogCollector.log("StreamStorage", "$event alloc=${allocated / (1024 * 1024)}MB free=${context.cacheDir.usableSpace / (1024 * 1024)}MB")
         } catch (e: Exception) {
             Log.w("StreamStorage", "Storage measurement failed: ${e.message}")
         }

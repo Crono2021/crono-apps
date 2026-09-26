@@ -39,7 +39,13 @@ class OtaUpdateManager(private val activity: ComponentActivity) {
     /** Thrown when the downloaded APK exceeds [MAX_APK_SIZE]. */
     private class ApkTooLargeException : Exception("APK exceeds maximum allowed size")
 
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .build()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val prefs = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -65,8 +71,11 @@ class OtaUpdateManager(private val activity: ComponentActivity) {
             return
         }
 
-        // Descargar ota.json
-        val request = Request.Builder().url(OTA_JSON_URL).build()
+        // Descargar ota.json con cache-buster para evitar respuestas antiguas de CDN
+        val request = Request.Builder()
+            .url("$OTA_JSON_URL?t=${System.currentTimeMillis()}")
+            .header("Cache-Control", "no-cache")
+            .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 Log.w(TAG, "OTA check failed: HTTP ${response.code}")
@@ -246,6 +255,14 @@ class OtaUpdateManager(private val activity: ComponentActivity) {
                         return@launch
                     }
 
+                    // Comprobar que la descarga no se cortó antes de tiempo
+                    if (contentLength > 0 && totalBytesRead < contentLength) {
+                        Log.e(TAG, "Download incomplete: read=$totalBytesRead of $contentLength bytes")
+                        apkFile.delete()
+                        showError(progressDialog, "La descarga se interrumpió antes de completarse. Reintenta la actualización.")
+                        return@launch
+                    }
+
                     // Verificar SHA-256
                     val actualHash = digest.digest()
                         .joinToString("") { "%02x".format(it) }
@@ -253,7 +270,7 @@ class OtaUpdateManager(private val activity: ComponentActivity) {
                     if (!actualHash.equals(expectedSha256, ignoreCase = true)) {
                         Log.e(TAG, "SHA-256 MISMATCH! expected=$expectedSha256 actual=$actualHash")
                         apkFile.delete()
-                        showError(progressDialog, "Error de integridad: el archivo está corrupto")
+                        showError(progressDialog, "Error de integridad: el archivo no coincide")
                         return@launch
                     }
 

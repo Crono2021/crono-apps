@@ -81,6 +81,16 @@ class PlayerActivity : AppCompatActivity() {
     private val titleHandler = Handler(Looper.getMainLooper())
     private val controlsHandler = Handler(Looper.getMainLooper())
     private val seekBarHandler = Handler(Looper.getMainLooper())
+    private val seekDebounceHandler = Handler(Looper.getMainLooper())
+    private var pendingSeekTargetMs: Long? = null
+    private val seekDebounceRunnable = Runnable {
+        val target = pendingSeekTargetMs ?: return@Runnable
+        pendingSeekTargetMs = null
+        val p = player ?: return@Runnable
+        Log.i(TAG, "Debounced seek executing: target=${target}ms (current=${p.currentPosition}ms)")
+        com.cineflix.android.util.ErrorLogCollector.log("Player", "Debounced seek executed to ${target}ms (was ${p.currentPosition}ms)")
+        p.seekTo(target)
+    }
 
     private var controlsVisible = false
     private var isSeeking = false
@@ -404,10 +414,28 @@ class PlayerActivity : AppCompatActivity() {
 
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
-                if (fromUser && player != null) player?.seekTo(progress.toLong())
+                if (!fromUser) return
+                tvTimeCurrent.text = formatTime(progress.toLong())
+                if (!isSeeking) {
+                    // Triggered via D-Pad / keyboard navigation while SeekBar has focus
+                    executeOrDebounceSeek(progress.toLong(), debounceMs = 400L)
+                }
             }
-            override fun onStartTrackingTouch(bar: SeekBar) { isSeeking = true }
-            override fun onStopTrackingTouch(bar: SeekBar) { isSeeking = false }
+            override fun onStartTrackingTouch(bar: SeekBar) {
+                isSeeking = true
+                seekDebounceHandler.removeCallbacks(seekDebounceRunnable)
+                pendingSeekTargetMs = null
+                controlsHandler.removeCallbacksAndMessages(null)
+            }
+            override fun onStopTrackingTouch(bar: SeekBar) {
+                isSeeking = false
+                val target = bar.progress.toLong()
+                seekDebounceHandler.removeCallbacks(seekDebounceRunnable)
+                pendingSeekTargetMs = null
+                com.cineflix.android.util.ErrorLogCollector.log("Player", "User seek (touch release) to ${target}ms")
+                player?.seekTo(target)
+                scheduleHideControls()
+            }
         })
 
         playerView.setOnClickListener { toggleControls() }
@@ -503,7 +531,15 @@ class PlayerActivity : AppCompatActivity() {
 
         player?.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                Log.i("StreamPlayback", "state=$playbackState positionMs=${player?.currentPosition} bufferMs=${player?.totalBufferedDuration}")
+                val stateStr = when (playbackState) {
+                    Player.STATE_IDLE -> "IDLE"
+                    Player.STATE_BUFFERING -> "BUFFERING"
+                    Player.STATE_READY -> "READY"
+                    Player.STATE_ENDED -> "ENDED"
+                    else -> "UNKNOWN($playbackState)"
+                }
+                Log.i("StreamPlayback", "state=$stateStr positionMs=${player?.currentPosition} bufferMs=${player?.totalBufferedDuration}")
+                com.cineflix.android.util.ErrorLogCollector.log("Player", "state=$stateStr pos=${player?.currentPosition}ms buf=${player?.totalBufferedDuration}ms")
                 if (playbackState == Player.STATE_BUFFERING) {
                     loadingSpinner.visibility = View.VISIBLE
                 } else {
@@ -516,6 +552,7 @@ class PlayerActivity : AppCompatActivity() {
                             if (kotlin.math.abs(current - resumePos) > 4000L) {
                                 if (player?.isCurrentMediaItemSeekable == true) {
                                     Log.i(TAG, "▶ STATE_READY reached: seeking to resume position ${resumePos}ms (current=${current}ms)")
+                                    com.cineflix.android.util.ErrorLogCollector.log("Player", "Resume seek to ${resumePos}ms (current=${current}ms)")
                                     player?.seekTo(resumePos)
                                 } else {
                                     Log.w(TAG, "▶ Media item is not seekable (no Cues index). Playing from start.")
@@ -532,6 +569,7 @@ class PlayerActivity : AppCompatActivity() {
                         // Only auto-trigger next episode if playback actually reached near the end of the video
                         if (dur > 30_000L && pos >= dur - 15_000L && !nextEpisodeTriggered) {
                             nextEpisodeTriggered = true
+                            com.cineflix.android.util.ErrorLogCollector.log("Player", "Auto next episode triggered at pos=$pos/$dur")
                             triggerNextEpisode()
                         }
                     }
@@ -540,6 +578,7 @@ class PlayerActivity : AppCompatActivity() {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 Log.i("StreamPlayback", "playing=$isPlaying positionMs=${player?.currentPosition} bufferMs=${player?.totalBufferedDuration}")
+                com.cineflix.android.util.ErrorLogCollector.log("Player", "isPlaying=$isPlaying pos=${player?.currentPosition}ms")
                 if (isPlaying) {
                     btnPlayPause.setImageResource(android.R.drawable.ic_media_pause)
                     scheduleHideControls()
@@ -554,6 +593,7 @@ class PlayerActivity : AppCompatActivity() {
                     return
                 }
                 Log.e(TAG, "onPlayerError: ${error.errorCodeName} - ${error.message}", error)
+                com.cineflix.android.util.ErrorLogCollector.log("Player", "ERROR: ${error.errorCodeName} - ${error.message}")
                 val isIoError = error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
                                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
                                 error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
@@ -1150,14 +1190,30 @@ class PlayerActivity : AppCompatActivity() {
         finish()
     }
 
+    private fun executeOrDebounceSeek(targetMs: Long, debounceMs: Long = 400L) {
+        val p = player ?: return
+        val duration = p.duration
+        val safeTarget = if (duration > 0 && duration != C.TIME_UNSET) {
+            Math.max(0L, Math.min(targetMs, duration))
+        } else {
+            Math.max(0L, targetMs)
+        }
+
+        pendingSeekTargetMs = safeTarget
+        seekBar.progress = safeTarget.toInt()
+        tvTimeCurrent.text = formatTime(safeTarget)
+
+        seekDebounceHandler.removeCallbacks(seekDebounceRunnable)
+        seekDebounceHandler.postDelayed(seekDebounceRunnable, debounceMs)
+    }
+
     private fun seekRelative(deltaMs: Long) {
         val p = player ?: return
-        val current = p.currentPosition
         val duration = p.duration
         if (duration <= 0 || duration == C.TIME_UNSET) return
-        val target = Math.max(0, Math.min(current + deltaMs, duration))
-        p.seekTo(target)
-        updateSeekBar()
+        val basePos = pendingSeekTargetMs ?: p.currentPosition
+        val target = Math.max(0L, Math.min(basePos + deltaMs, duration))
+        executeOrDebounceSeek(target, debounceMs = 400L)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -1371,6 +1427,8 @@ class PlayerActivity : AppCompatActivity() {
         titleHandler.removeCallbacksAndMessages(null)
         controlsHandler.removeCallbacksAndMessages(null)
         seekBarHandler.removeCallbacksAndMessages(null)
+        seekDebounceHandler.removeCallbacksAndMessages(null)
+        pendingSeekTargetMs = null
 
         cleanup()
     }
@@ -1378,6 +1436,8 @@ class PlayerActivity : AppCompatActivity() {
     private fun cleanup() {
         if (isCleanedUp) return
         isCleanedUp = true
+        seekDebounceHandler.removeCallbacksAndMessages(null)
+        pendingSeekTargetMs = null
 
         val phone = intent.getStringExtra(EXTRA_PHONE) ?: ""
         val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""

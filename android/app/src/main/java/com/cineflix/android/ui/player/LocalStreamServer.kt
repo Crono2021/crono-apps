@@ -51,6 +51,9 @@ class LocalStreamServer(private val engine: TelegramEngine) {
     @Volatile private var bytesStreamedSinceGc: Long = 0L
     @Volatile private var isRunning: Boolean = false
 
+    private val activeRequestId = java.util.concurrent.atomic.AtomicLong(0L)
+    @Volatile private var currentStreamingSocket: Socket? = null
+
     var listeningPort: Int = 0
         private set
 
@@ -80,6 +83,8 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         listeningPort = s.localPort
 
         val streamUrl = "http://127.0.0.1:$listeningPort/stream"
+        activeRequestId.set(0L)
+        com.cineflix.android.util.ErrorLogCollector.log(TAG, "start: fileId=$fileId size=$activeSize port=$listeningPort parts=${multipartParts?.size ?: 1}")
         Log.i(TAG, "🚀 LocalStreamServer iniciado en $streamUrl (size=$activeSize, mime=$activeMime, parts=${multipartParts?.size ?: 1})")
 
         executor.execute {
@@ -103,6 +108,8 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
     fun stop() {
         isRunning = false
+        activeRequestId.incrementAndGet()
+        currentStreamingSocket = null
         clients.forEach { try { it.close() } catch (_: Exception) {} }
         clients.clear()
         executor.shutdownNow()
@@ -119,6 +126,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         try {
             engine.optimizeStorage(30L * 1024L * 1024L, immunityDelaySec = 0)
         } catch (_: Exception) {}
+        com.cineflix.android.util.ErrorLogCollector.log(TAG, "stop: LocalStreamServer stopped")
         Log.i(TAG, "🛑 LocalStreamServer detenido y almacenamiento optimizado")
     }
 
@@ -230,6 +238,21 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             return
         }
 
+        val oldSocket = currentStreamingSocket
+        currentStreamingSocket = socket
+        if (oldSocket != null && oldSocket != socket && !oldSocket.isClosed) {
+            try {
+                oldSocket.close()
+            } catch (_: Exception) {}
+        }
+
+        val myRequestId = activeRequestId.incrementAndGet()
+        val reqStartTime = System.currentTimeMillis()
+        com.cineflix.android.util.ErrorLogCollector.log(
+            TAG,
+            "Req #$myRequestId start: range=$globalStart-$requestedEnd ($totalLength bytes)"
+        )
+
         val out = socket.getOutputStream()
         val header = "HTTP/1.1 206 Partial Content\r\n" +
                      "Content-Type: $activeMime\r\n" +
@@ -243,6 +266,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             out.flush()
         } catch (e: Exception) {
             Log.d(TAG, "Socket closed before writing header: ${e.message}")
+            com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId closed before header: ${e.message}")
             return
         }
 
@@ -251,13 +275,18 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         var currentPos = globalStart
         var isFirstChunk = true
 
-        while (currentPos <= requestedEnd && isRunning) {
+        while (currentPos <= requestedEnd && isRunning && myRequestId == activeRequestId.get()) {
             val (partFileId, localOffset) = resolvePart(currentPos)
             val partSize = activeParts?.find { it.fileId == partFileId }?.size ?: activeSize
             val availableInPart = maxOf(0L, partSize - localOffset)
             val remainingInRequest = requestedEnd - currentPos + 1
             val maxCanReadFromPart = minOf(remainingInRequest, availableInPart)
             if (maxCanReadFromPart <= 0) break
+
+            if (myRequestId != activeRequestId.get() || !isRunning) {
+                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId superseded before fetch at pos=$currentPos")
+                break
+            }
 
             // Instant first chunk: 512KB for initial load or seek, then 2MB for continuous streaming
             val targetChunkSize = if (isFirstChunk) {
@@ -276,14 +305,15 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
             // All reads go through the same bounded window, including cache hits.
             var chunk: ByteArray? = null
-            if (isRunning) {
+            if (isRunning && myRequestId == activeRequestId.get()) {
                 var attempts = 0
-                while (attempts < 4 && isRunning) {
+                while (attempts < 4 && isRunning && myRequestId == activeRequestId.get()) {
                     attempts++
                     chunk = engine.readBoundedVideoRange(partFileId, alignedOffset, fetchSize)
                     if (chunk != null && chunk.size > offsetInsideBlock) {
                         break
                     }
+                    if (myRequestId != activeRequestId.get() || !isRunning) break
                     try {
                         Thread.sleep(80L * attempts)
                     } catch (_: InterruptedException) {
@@ -293,8 +323,14 @@ class LocalStreamServer(private val engine: TelegramEngine) {
                 }
             }
 
+            if (myRequestId != activeRequestId.get() || !isRunning) {
+                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId superseded after fetch at pos=$currentPos")
+                break
+            }
+
             if (chunk == null || chunk.size <= offsetInsideBlock) {
                 Log.e(TAG, "❌ Error al descargar chunk TDLib: offset=$alignedOffset fetchSize=$fetchSize")
+                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId fetch error: offset=$alignedOffset fetchSize=$fetchSize")
                 break
             }
 
@@ -308,7 +344,13 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             } catch (e: Exception) {
                 // Client disconnection or seek is normal during video streaming
                 Log.d(TAG, "Client socket closed during stream: ${e.message}")
+                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId client disconnected at pos=$currentPos: ${e.message}")
                 break
+            }
+
+            if (isFirstChunk) {
+                val elapsed = System.currentTimeMillis() - reqStartTime
+                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId first chunk delivered ($sliceSize bytes) in ${elapsed}ms")
             }
 
             currentPos += sliceSize
@@ -320,6 +362,10 @@ class LocalStreamServer(private val engine: TelegramEngine) {
                 bytesStreamedSinceGc = 0L
                 engine.logStreamStorage("delivered fileId=$partFileId offset=$currentPos")
             }
+        }
+
+        if (currentStreamingSocket == socket) {
+            currentStreamingSocket = null
         }
     }
 

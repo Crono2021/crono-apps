@@ -66,9 +66,9 @@ object ErrorLogCollector {
         sb.appendLine("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         sb.appendLine("ABIs soportadas: ${Build.SUPPORTED_ABIS.joinToString(", ")}")
         val pkgInfo = try { context.packageManager.getPackageInfo(context.packageName, 0) } catch (_: Exception) { null }
-        val vName = pkgInfo?.versionName ?: "1.4.4c"
+        val vName = pkgInfo?.versionName ?: "1.4.4e"
         @Suppress("DEPRECATION")
-        val vCode = pkgInfo?.versionCode ?: 51
+        val vCode = pkgInfo?.versionCode ?: 55
         sb.appendLine("App Version: $vName (versionCode $vCode)")
         sb.appendLine()
 
@@ -127,7 +127,8 @@ object ErrorLogCollector {
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     if (line!!.contains("$pid") || line!!.contains("Tdlib") || line!!.contains("Telegram") || 
-                        line!!.contains("ExoPlayer") || line!!.contains("Cineflix") || line!!.contains("StreamProxy")) {
+                        line!!.contains("ExoPlayer") || line!!.contains("Cineflix") || line!!.contains("StreamProxy") ||
+                        line!!.contains("LocalStreamServer") || line!!.contains("CCodec") || line!!.contains("MediaCodec")) {
                         sb.appendLine(line)
                     }
                 }
