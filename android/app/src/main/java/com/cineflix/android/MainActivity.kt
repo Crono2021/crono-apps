@@ -74,6 +74,8 @@ class MainActivity : ComponentActivity() {
 
         WebView.setWebContentsDebuggingEnabled(true)
         webView.apply {
+            isFocusable = true
+            isFocusableInTouchMode = true
             keepScreenOn = true
             settings.apply {
                 javaScriptEnabled = true
@@ -108,7 +110,10 @@ class MainActivity : ComponentActivity() {
                     request: WebResourceRequest
                 ): WebResourceResponse? {
                     val path = request.url.path ?: ""
-                    if (path.contains("/assets/index-") && path.endsWith(".js")) {
+                    val cineflixOrigin = request.url.scheme == "https" &&
+                        request.url.host == "cineflixapp.duckdns.org"
+                    if (cineflixOrigin && path.startsWith("/assets/index-") &&
+                        (path.endsWith(".js") || path.endsWith(".css"))) {
                         try {
                             val assetFiles = assets.list("www/assets") ?: emptyArray()
                             // Hashed URLs identify a specific build. Never replace a
@@ -118,7 +123,8 @@ class MainActivity : ComponentActivity() {
                             if (localJs != null) {
                                 android.util.Log.i("CineflixMain", "⚡ Intercepted $path -> serving local APK asset www/assets/$localJs")
                                 val stream = assets.open("www/assets/$localJs")
-                                return WebResourceResponse("application/javascript", "UTF-8", stream)
+                                val mime = if (path.endsWith(".css")) "text/css" else "application/javascript"
+                                return WebResourceResponse(mime, "UTF-8", stream)
                             }
                         } catch (e: Throwable) {
                             android.util.Log.e("CineflixMain", "Failed to intercept JS asset: ${e.message}")
@@ -398,17 +404,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // KEY FIX: Only load fresh URL if there is no saved state.
-            // If savedInstanceState exists, restoreState() below will bring back the exact
-            // page the user was on (catalog, episodes view, etc.) without re-running init().
-            if (savedInstanceState != null) {
-                restoreState(savedInstanceState)
-                android.util.Log.d("CineflixMain", "WebView state restored from savedInstanceState")
-            } else {
-                val cacheBuster = System.currentTimeMillis()
-                loadUrl("https://cineflixapp.duckdns.org/?v=$cacheBuster")
-                android.util.Log.d("CineflixMain", "WebView loading remote catalog URL with cache-buster")
-            }
+            // Always load a clean URL. In an SPA connected to WebSockets & TDLib,
+            // restoring a frozen DOM state corrupts runtime state, drops onPageFinished,
+            // and breaks TV navigation when the OS recreates the activity after backgrounding.
+            val cacheBuster = System.currentTimeMillis()
+            loadUrl("https://cineflixapp.duckdns.org/?v=$cacheBuster")
+            android.util.Log.d("CineflixMain", "WebView loading remote catalog URL with cache-buster")
         }
         
         // Fix white flash on startup
@@ -421,7 +422,18 @@ class MainActivity : ComponentActivity() {
 
         // Manejar el botón de atrás del sistema
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            private var lastBackPressTime = 0L
+
             override fun handleOnBackPressed() {
+                val now = System.currentTimeMillis()
+                // Salida de emergencia nativa: si el usuario pulsa Atrás dos veces en menos de 1.5s,
+                // cerrar SIEMPRE la app para que nunca se quede atrapado si JS o el foco no responden.
+                if (now - lastBackPressTime < 1500) {
+                    finish()
+                    return
+                }
+                lastBackPressTime = now
+
                 // Let JS handle back navigation first (modal → view transitions)
                 val jsHandled = runCatching {
                     webView.evaluateJavascript("window.__cineflixBack ? window.__cineflixBack() : false") { result ->
@@ -443,10 +455,9 @@ class MainActivity : ComponentActivity() {
         })
     }
 
-    /** Save WebView navigation state so it survives background/recreation */
+    /** Do NOT save frozen WebView state — ensure fresh clean boot on process recreation */
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        webView.saveState(outState)
     }
 
     /**
@@ -493,22 +504,43 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
 
-    /** Only pause WebView timers + rendering when activity is fully stopped (backgrounded) AND not streaming */
+    /** Only pause WebView rendering when activity is fully stopped (backgrounded) */
     override fun onStop() {
         super.onStop()
-        if (GramJSStreamManager.currentPlaybackId.isEmpty()) {
-            webView.onPause()
-            webView.pauseTimers()
-        } else {
-            android.util.Log.i("CineflixMain", "Preserving WebView timers during active GramJS streaming: ${GramJSStreamManager.currentPlaybackId}")
-        }
+        // NEVER call webView.pauseTimers() — it pauses the V8/Chromium timer loop process-wide,
+        // which permanently freezes timers, WebSockets, and animations on Android TV when resumed.
+        webView.onPause()
     }
 
-    /** Resume WebView timers + rendering when app comes back to foreground */
+    /** Resume WebView rendering and ensure focus and TV navigation flags are restored */
     override fun onResume() {
         super.onResume()
-        webView.resumeTimers()
         webView.onResume()
+
+        if (isAndroidTV) {
+            webView.isFocusable = true
+            webView.isFocusableInTouchMode = true
+            webView.requestFocus()
+
+            // Ensure TV flags and spatial focus are restored on resume
+            webView.evaluateJavascript(
+                """
+                (function() {
+                    window._cineflixIsTV = true;
+                    window.__appPlatform = 'android_tv';
+                    document.documentElement.classList.add('android-tv');
+                    document.body.classList.add('is-tv');
+                    if (window.cineflixTvNav) {
+                        setTimeout(function() {
+                            window.cineflixTvNav.restoreFocus();
+                        }, 100);
+                    }
+                })();
+                """.trimIndent(),
+                null
+            )
+        }
+
         webView.evaluateJavascript("if (typeof window._clearCardLoadingOverlays === 'function') window._clearCardLoadingOverlays();", null)
         webView.evaluateJavascript("if (typeof window.fetchWatchProgress === 'function') window.fetchWatchProgress();", null)
         
