@@ -1,9 +1,9 @@
 {
-  "versionCode": 55,
-  "versionName": "1.4.4e",
-  "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/6bda7cf6a350647a44610013a0f51595c5e60b05/cineflix.apk",
-  "sha256": "f7ea21da74838df6610ab5ee9a2110d07498076714e80709ba19aa6d76325be8",
-  "changelog": "Corrección de actualización y compatibilidad de instalación en Android TV y móviles",
-  "mandatory": false,
-  "minVersionCode": 1
+    "versionCode":  56,
+    "versionName":  "1.4.4f",
+    "apkUrl":  "https://raw.githubusercontent.com/Crono2021/crono-apps/566b91f40420df493ecf64c1f8c49a61f3b59f4d/cineflix.apk",
+    "sha256":  "b0c2590929c94ba2faaeb87826eb28851d49dbfe0a68b1c6c1730202e8794cdc",
+    "changelog":  "- Mejorado soporte para archivos 4k multipart.",
+    "mandatory":  false,
+    "minVersionCode":  1
 }
