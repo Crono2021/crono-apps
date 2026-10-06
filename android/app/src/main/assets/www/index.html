@@ -98,8 +98,8 @@
             }
         };
     </script>
-  <script type="module" crossorigin src="./assets/index-SyVG5pZu.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-K3UHBSsG.css">
+  <script type="module" crossorigin src="./assets/index-CFbFWTaC.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-B1JEl6TG.css">
 </head>
 <body>
     <!-- Real-time error diagnostic banner (only visible if an error occurs) -->
@@ -178,48 +178,44 @@
         if (qt) { qt.textContent = pick[0]; qt.style.opacity = '1'; }
         if (qa) { qa.textContent = pick[1]; qa.style.opacity = '1'; }
 
-        // Use the FIRST load time (survives reloads) for the 3.5s minimum
-        var startKey = '_splashT';
-        var startTime = parseInt(sessionStorage.getItem(startKey)) || Date.now();
-        try { sessionStorage.setItem(startKey, String(startTime)); } catch(e){}
-
-        window.__splashReady = false;
-        window.__splashDismissRequested = false;
+        var fading = false;
         function doFade() {
+            if (fading) return;
+            fading = true;
             var s = document.getElementById('splash-quotes');
             if (s) {
-                s.style.opacity = '0';
                 s.style.pointerEvents = 'none';
+                s.style.opacity = '0';
                 setTimeout(function(){
                     s.style.setProperty('display', 'none', 'important');
                     s.classList.add('splash-hidden');
                     if (s.parentNode) s.parentNode.removeChild(s);
-                }, 400);
+                }, 300);
             }
-            try { sessionStorage.removeItem('_splashQ'); sessionStorage.removeItem(startKey); } catch(e){}
+            try { sessionStorage.removeItem('_splashQ'); sessionStorage.removeItem('_splashT'); } catch(e){}
         }
-        var elapsed = Date.now() - startTime;
-        var wait = Math.max(0, 800 - elapsed);
-        setTimeout(function() {
-            window.__splashReady = true;
-            if (window.__splashDismissRequested) doFade();
-        }, wait);
+
+        var sEl = document.getElementById('splash-quotes');
+        if (sEl) {
+            sEl.addEventListener('click', doFade);
+            sEl.addEventListener('touchstart', doFade, { passive: true });
+        }
+
         window.__dismissSplash = function() {
-            if (window.__splashReady) { doFade(); }
-            else { window.__splashDismissRequested = true; }
+            doFade();
         };
 
-        // Watchdog de emergencia (máximo 3.5s): NUNCA dejar la app congelada en la frase de bienvenida
+        // Watchdog de emergencia (máximo 2.5s): NUNCA dejar la app congelada en la frase de bienvenida
         setTimeout(function() {
             var s = document.getElementById('splash-quotes');
             if (s) {
-                console.warn('[Splash] Watchdog de emergencia activado tras 3.5s — forzando cierre inmediato');
+                console.warn('[Splash] Watchdog de emergencia activado — forzando cierre inmediato');
                 s.style.pointerEvents = 'none';
                 s.style.setProperty('display', 'none', 'important');
                 s.classList.add('splash-hidden');
                 if (s.parentNode) s.parentNode.removeChild(s);
             }
-        }, 3500);
+        }, 2500);
     })();
     </script>
 
@@ -310,7 +306,7 @@
                 <div class="topbar-right">
                     <!-- Netflix Reference Search Box -->
                     <div class="topbar-search">
-                        <input type="text" id="search-input" placeholder="Search..." autocomplete="off">
+                        <input type="text" id="search-input" placeholder="Search..." autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
                         <button id="search-clear-btn" class="search-clear-btn hidden focusable" title="Borrar búsqueda" tabindex="0" aria-label="Borrar búsqueda">
                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                         </button>
@@ -1201,7 +1197,7 @@
         })();
     </script>
     <script src="./qrcode.min.js"></script>
-    <script src="./tv-nav.js?v=2.77" defer></script>
+    <script src="./tv-nav.js?v=2.79" defer></script>
 
 </body>
 </html>
