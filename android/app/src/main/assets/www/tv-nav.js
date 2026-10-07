@@ -107,7 +107,7 @@
 
       // Ensure search input does not hold initial focus on TV
       const searchInput = document.getElementById('search-input');
-      if (searchInput && document.activeElement === searchInput) {
+      if (this.isTV() && searchInput && document.activeElement === searchInput) {
         searchInput.blur();
       }
 
@@ -140,7 +140,18 @@
       console.log('[TV-NAV] Initialized (no MutationObserver)');
     }
 
+    preserveNativeTextInput(e) {
+      // Android IMEs may emit legacy key codes while committing Unicode text.
+      // Never interpret composing input as D-pad/Enter, or take over mobile editing.
+      if (e.isComposing || e.keyCode === 229 || e.key === 'Process' || e.key === 'Dead') return true;
+      const target = e.target;
+      const active = document.activeElement;
+      const editable = el => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      return !this.isTV() && (editable(target) || editable(active));
+    }
+
     handleKeyDown(e) {
+      if (this.preserveNativeTextInput(e)) return;
       const key = e.key || e.code;
       const keyCode = e.keyCode || e.which;
       
@@ -294,6 +305,7 @@
     }
 
     handleKeyUp(e) {
+      if (this.preserveNativeTextInput(e)) return;
       const key = e.key || e.code;
       const keyCode = e.keyCode || e.which;
       const isEnter = key === 'Enter' || keyCode === 13 || keyCode === 23 || keyCode === 66;
@@ -553,7 +565,7 @@
         }
       }
 
-      const inModal = this.focused.closest('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card');
+      const inModal = this.focused.closest('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card, #modal-profiles-screen, #modal-profile-editor');
 
       const currentRect = this.focused.getBoundingClientRect();
       const currentCenter = { 
@@ -565,7 +577,7 @@
       // 1.5. STRICT MODAL FOCUS TRAP: Directional nav must NEVER escape modal!
       // ═════════════════════════════════════════════════════════════════════
       if (inModal) {
-        const modalContainer = inModal.closest('#season-picker-modal, #movie-files-modal, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #filter-sort-modal') || inModal;
+        const modalContainer = inModal.closest('#season-picker-modal, #movie-files-modal, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #filter-sort-modal, #modal-profiles-screen, #modal-profile-editor') || inModal;
 
         // ── SPECIALIZED LOGIC FOR ORDENAR Y FILTRAR MODAL (#filter-sort-modal) ──
         const isFilterSortModal = !!modalContainer.closest('#filter-sort-modal, .filter-sort-card') || modalContainer.id === 'filter-sort-modal';
@@ -1798,7 +1810,7 @@
     getNavigableElements() {
       let root = document.body;
       
-      const openModals = Array.from(document.querySelectorAll('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card')).filter(m => this.visible(m) && !m.classList.contains('hidden'));
+      const openModals = Array.from(document.querySelectorAll('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card, #modal-profiles-screen, #modal-profile-editor')).filter(m => this.visible(m) && !m.classList.contains('hidden'));
       if (openModals.length > 0) {
         root = openModals[openModals.length - 1];
       }
@@ -2393,7 +2405,7 @@
       }
 
       // Never prioritize main-nav-btn if any modal is currently visible!
-      const inAnyModal = Array.from(document.querySelectorAll('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card')).some(m => this.visible(m) && !m.classList.contains('hidden'));
+      const inAnyModal = Array.from(document.querySelectorAll('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card, #modal-profiles-screen, #modal-profile-editor')).some(m => this.visible(m) && !m.classList.contains('hidden'));
       if (inAnyModal) return false;
 
       // Priority 3: In app shell views, prioritize the active main-nav button!
@@ -2487,6 +2499,10 @@
       document.documentElement.classList.add('is-tv');
       console.log('[TV-NAV] Activating SPATIAL D-pad navigation for TV');
     }
+
+    // Skip spatial-nav on mobile phones – the pointerdown/blur handlers
+    // break native input focus and soft keyboard text entry (e.g. "ñ").
+    if (!isTVPlatform && !isDesktopPC()) return;
 
     if (window.cineflixTvNav) return;
     window.cineflixTvNav = new CineflixTVNav();

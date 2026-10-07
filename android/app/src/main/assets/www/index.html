@@ -98,8 +98,8 @@
             }
         };
     </script>
-  <script type="module" crossorigin src="./assets/index-CFbFWTaC.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-B1JEl6TG.css">
+  <script type="module" crossorigin src="./assets/index-CTEME3-F.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CX6XOeTF.css">
 </head>
 <body>
     <!-- Real-time error diagnostic banner (only visible if an error occurs) -->
@@ -319,6 +319,11 @@
                         <!-- Admin God Mode Buttons -->
                         <button id="btn-admin-toggle-payload" class="btn-icon focusable" style="display:none; color: #22c55e;" title="Modo Dios: Fuente MP4">🎥</button>
                         <button id="btn-admin-create-movie" class="btn-icon focusable" style="display:none; color: #e50914;" title="Modo Dios: Crear Película">✨</button>
+
+                        <!-- Profile Switcher Button -->
+                        <button id="btn-profile-switch" class="btn-icon focusable btn-profile-trigger" title="Cambiar perfil">
+                            <span id="topbar-profile-avatar" class="profile-avatar-mini avatar-red">P</span>
+                        </button>
 
                         <!-- Remote Control Button -->
                         <button id="btn-remote" class="btn-icon focusable btn-remote-trigger" title="Mando TV remoto">
@@ -1148,6 +1153,52 @@
                     <button class="vk-key vk-space" data-action="space">Espacio</button>
                     <button class="vk-key vk-delete" data-action="delete">⌫ Borrar</button>
                     <button class="vk-key vk-search" data-action="search">🔍 Buscar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- PROFILE SELECTION SCREEN (Netflix-style) -->
+        <div id="modal-profiles-screen" class="modal-overlay profiles-overlay hidden">
+            <button id="btn-profiles-close" class="profiles-close-btn focusable" title="Cerrar">✕</button>
+            <div class="profiles-container">
+                <h1 class="profiles-title">¿Quién está viendo ahora?</h1>
+                <div id="profiles-grid" class="profiles-grid">
+                    <!-- Profile cards and Add Profile card will be rendered here dynamically -->
+                </div>
+                <div class="profiles-actions">
+                    <button id="btn-profiles-manage" class="btn-profiles-secondary focusable" tabindex="0">Administrar perfiles</button>
+                    <button id="btn-profiles-done" class="btn-profiles-secondary focusable hidden" tabindex="0">Listo</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- CREATE / EDIT PROFILE MODAL -->
+        <div id="modal-profile-editor" class="modal-overlay profile-editor-overlay hidden">
+            <div class="profile-editor-modal">
+                <h2 id="profile-editor-title" class="profile-editor-heading">Crear perfil</h2>
+                <div class="profile-editor-body">
+                    <div class="profile-editor-avatar-col">
+                        <div id="profile-editor-current-avatar" class="profile-avatar-big avatar-red">P</div>
+                        <span class="avatar-choose-hint">Elige un avatar:</span>
+                        <div class="avatar-palette" id="profile-avatar-palette">
+                            <button class="avatar-palette-item avatar-red selected focusable" data-avatar="avatar_red" title="Rojo"></button>
+                            <button class="avatar-palette-item avatar-blue focusable" data-avatar="avatar_blue" title="Azul"></button>
+                            <button class="avatar-palette-item avatar-green focusable" data-avatar="avatar_green" title="Verde"></button>
+                            <button class="avatar-palette-item avatar-yellow focusable" data-avatar="avatar_yellow" title="Amarillo"></button>
+                            <button class="avatar-palette-item avatar-purple focusable" data-avatar="avatar_purple" title="Púrpura"></button>
+                            <button class="avatar-palette-item avatar-pink focusable" data-avatar="avatar_pink" title="Rosa"></button>
+                        </div>
+                    </div>
+                    <div class="profile-editor-fields">
+                        <label for="profile-name-input">Nombre del perfil</label>
+                        <input type="text" id="profile-name-input" class="profile-name-input focusable" placeholder="Ej: Mamá, Niños, etc." maxlength="25" autocomplete="off">
+                        <input type="hidden" id="profile-id-editing" value="">
+                    </div>
+                </div>
+                <div class="profile-editor-buttons">
+                    <button id="btn-profile-save" class="btn-profile-action btn-save focusable" tabindex="0">Guardar</button>
+                    <button id="btn-profile-cancel" class="btn-profile-action btn-cancel focusable" tabindex="0">Cancelar</button>
+                    <button id="btn-profile-delete" class="btn-profile-action btn-delete hidden focusable" tabindex="0">Eliminar</button>
                 </div>
             </div>
         </div>

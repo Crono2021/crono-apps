@@ -61,7 +61,7 @@ var __async = (__this, __arguments, generator) => {
 };
 var __forAwait = (obj, it2, method) => (it2 = obj[__knownSymbol("asyncIterator")]) ? it2.call(obj) : (obj = obj[__knownSymbol("iterator")](), it2 = {}, method = (key2, fn) => (fn = obj[key2]) && (it2[key2] = (arg) => new Promise((yes, no, done) => (arg = fn.call(obj, arg), done = arg.done, Promise.resolve(arg.value).then((value) => yes({ value, done }), no)))), method("next"), method("return"), it2);
 var require_index_001 = __commonJS({
-  "assets/index-CFbFWTaC.js"(exports) {
+  "assets/index-CTEME3-F.js"(exports) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     (/* @__PURE__ */ __name(function polyfill2() {
       const relList = document.createElement("link").relList;
@@ -89477,7 +89477,7 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         let episode = "";
         let creditsStartStr = "";
         try {
-          phone2 = (yield getUserPhone()) || "";
+          phone2 = (typeof window.getProfileUserPhone === "function" ? yield window.getProfileUserPhone() : yield getUserPhone()) || "";
           if (window.currentWatchContext) {
             contentId = window.currentWatchContext.content_id || "";
             season = window.currentWatchContext.season != null ? window.currentWatchContext.season.toString() : "";
@@ -90825,6 +90825,29 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       37: "Western"
     };
     let catalogReady = false;
+    let userProfiles = [];
+    let currentProfile = null;
+    window.userProfiles = userProfiles;
+    window.currentProfile = currentProfile;
+    function getProfileUserPhone() {
+      return __async(this, null, function* () {
+        const basePhone = yield getUserPhone();
+        if (!basePhone || basePhone === "unknown" || basePhone === "native_user") return basePhone;
+        if (!currentProfile) {
+          try {
+            const saved = localStorage.getItem("cineflix_current_profile");
+            if (saved) currentProfile = JSON.parse(saved);
+          } catch (e) {
+          }
+        }
+        if (currentProfile && currentProfile.profile_id && currentProfile.profile_id !== "default") {
+          return `${basePhone}:${currentProfile.profile_id}`;
+        }
+        return basePhone;
+      });
+    }
+    __name(getProfileUserPhone, "getProfileUserPhone");
+    window.getProfileUserPhone = getProfileUserPhone;
     let watchProgressMap = /* @__PURE__ */ new Map();
     window.watchProgressMap = watchProgressMap;
     let currentWatchContext = null;
@@ -90836,7 +90859,7 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         if (!force && Date.now() - _lastWatchProgressFetch < 2e4) return;
         _lastWatchProgressFetch = Date.now();
         try {
-          const phone2 = yield getUserPhone();
+          const phone2 = yield getProfileUserPhone();
           const res = yield fetch(`${RAILWAY_API}/api/progress`, {
             headers: { "x-user-phone": phone2 }
           });
@@ -90868,7 +90891,7 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
           if (progress < 5) return;
         }
         try {
-          const phone2 = yield getUserPhone();
+          const phone2 = yield getProfileUserPhone();
           yield fetch(`${RAILWAY_API}/api/progress`, {
             method: "POST",
             headers: { "x-user-phone": phone2, "Content-Type": "application/json" },
@@ -91217,7 +91240,7 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
           }, 300);
         }
         try {
-          const phone2 = yield getUserPhone();
+          const phone2 = yield getProfileUserPhone();
           yield fetch(`${RAILWAY_API}/api/progress`, {
             method: "POST",
             headers: { "x-user-phone": phone2, "Content-Type": "application/json" },
@@ -91940,6 +91963,19 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       if (vkOverlay && !vkOverlay.classList.contains("hidden")) {
         closeVirtualKeyboard();
         return true;
+      }
+      const profileEditorM = $("modal-profile-editor");
+      if (profileEditorM && !profileEditorM.classList.contains("hidden")) {
+        profileEditorM.classList.add("hidden");
+        if (window.cineflixTvNav) window.cineflixTvNav.restoreFocus();
+        return true;
+      }
+      const profilesScreenM = $("modal-profiles-screen");
+      if (profilesScreenM && !profilesScreenM.classList.contains("hidden")) {
+        if (currentProfile) {
+          hideProfileSelectionScreen();
+          return true;
+        }
       }
       const remoteM = $("remote-modal");
       if (remoteM && !remoteM.classList.contains("hidden")) {
@@ -98498,7 +98534,7 @@ ${err.message}`);
     function fetchFavorites() {
       return __async(this, null, function* () {
         try {
-          const phone2 = yield getUserPhone();
+          const phone2 = yield getProfileUserPhone();
           if (!phone2 || phone2 === "unknown") return [];
           const res = yield fetch(`${RAILWAY_API}/api/favorites`, {
             headers: { "x-user-phone": phone2 }
@@ -98523,7 +98559,7 @@ ${err.message}`);
     function addFavorite(type2, data) {
       return __async(this, null, function* () {
         try {
-          const phone2 = yield getUserPhone();
+          const phone2 = yield getProfileUserPhone();
           if (!phone2 || phone2 === "unknown") return;
           yield fetch(`${RAILWAY_API}/api/favorites`, {
             method: "POST",
@@ -98550,7 +98586,7 @@ ${err.message}`);
     function removeFavorite(contentId) {
       return __async(this, null, function* () {
         try {
-          const phone2 = yield getUserPhone();
+          const phone2 = yield getProfileUserPhone();
           if (!phone2 || phone2 === "unknown") return;
           yield fetch(`${RAILWAY_API}/api/favorites/${encodeURIComponent(contentId)}`, {
             method: "DELETE",
@@ -99908,6 +99944,313 @@ ${err.message}`);
       }
     }
     __name(initModalObserver, "initModalObserver");
+    let isManagingProfiles = false;
+    const AVATAR_CLASS_MAP = {
+      avatar_red: "avatar-red",
+      avatar_blue: "avatar-blue",
+      avatar_green: "avatar-green",
+      avatar_yellow: "avatar-yellow",
+      avatar_purple: "avatar-purple",
+      avatar_pink: "avatar-pink"
+    };
+    function loadUserProfiles(autoShowPicker = false) {
+      return __async(this, null, function* () {
+        try {
+          const phone2 = yield getUserPhone();
+          if (!phone2 || phone2 === "unknown" || phone2 === "native_user") return;
+          const res = yield fetch(`${RAILWAY_API}/api/profiles`, {
+            headers: { "x-user-phone": phone2 }
+          });
+          if (res.ok) {
+            userProfiles = yield res.json();
+            if (!userProfiles || userProfiles.length === 0) {
+              userProfiles = [{ profile_id: "default", name: "Principal", avatar: "avatar_red" }];
+            }
+          }
+        } catch (e) {
+          console.warn("[Profiles] load error:", e);
+          if (!userProfiles || userProfiles.length === 0) {
+            userProfiles = [{ profile_id: "default", name: "Principal", avatar: "avatar_red" }];
+          }
+        }
+        try {
+          const saved = localStorage.getItem("cineflix_current_profile");
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            const found = userProfiles.find((p) => p.profile_id === parsed.profile_id);
+            currentProfile = found || userProfiles[0];
+          } else {
+            currentProfile = userProfiles[0];
+          }
+        } catch (e) {
+          currentProfile = userProfiles[0];
+        }
+        updateTopbarProfileAvatar();
+        const hasChosenThisSession = sessionStorage.getItem("cineflix_profile_chosen");
+        if (autoShowPicker && userProfiles.length > 1 && !hasChosenThisSession) {
+          showProfileSelectionScreen();
+        }
+      });
+    }
+    __name(loadUserProfiles, "loadUserProfiles");
+    window.loadUserProfiles = loadUserProfiles;
+    function updateTopbarProfileAvatar() {
+      const avatarEl = $("topbar-profile-avatar");
+      if (!avatarEl) return;
+      const p = currentProfile || { name: "Principal", avatar: "avatar_red" };
+      const initial = (p.name || "P").trim().charAt(0).toUpperCase();
+      avatarEl.textContent = initial;
+      Object.values(AVATAR_CLASS_MAP).forEach((cls) => avatarEl.classList.remove(cls));
+      const targetClass = AVATAR_CLASS_MAP[p.avatar] || "avatar-red";
+      avatarEl.classList.add(targetClass);
+    }
+    __name(updateTopbarProfileAvatar, "updateTopbarProfileAvatar");
+    function showProfileSelectionScreen() {
+      const modal = $("modal-profiles-screen");
+      if (!modal) return;
+      isManagingProfiles = false;
+      $("btn-profiles-manage").classList.remove("hidden");
+      $("btn-profiles-done").classList.add("hidden");
+      renderProfilesGrid();
+      modal.classList.remove("hidden");
+      if (window._cineflixIsTV && window.cineflixTvNav) {
+        window.cineflixTvNav.saveFocus();
+        setTimeout(() => {
+          const firstCard = modal.querySelector(".profile-card");
+          if (firstCard && window.cineflixTvNav) window.cineflixTvNav.setFocus(firstCard);
+        }, 150);
+      }
+    }
+    __name(showProfileSelectionScreen, "showProfileSelectionScreen");
+    window.showProfileSelectionScreen = showProfileSelectionScreen;
+    function hideProfileSelectionScreen() {
+      const modal = $("modal-profiles-screen");
+      if (modal) modal.classList.add("hidden");
+      if (window.cineflixTvNav) window.cineflixTvNav.restoreFocus();
+    }
+    __name(hideProfileSelectionScreen, "hideProfileSelectionScreen");
+    function renderProfilesGrid() {
+      const grid = $("profiles-grid");
+      if (!grid) return;
+      grid.innerHTML = "";
+      userProfiles.forEach((p) => {
+        const card = document.createElement("button");
+        card.className = "profile-card focusable";
+        card.setAttribute("tabindex", "0");
+        card.dataset.profileId = p.profile_id;
+        const initial = (p.name || "P").trim().charAt(0).toUpperCase();
+        const avatarColorClass = AVATAR_CLASS_MAP[p.avatar] || "avatar-red";
+        card.innerHTML = `
+            <div class="profile-avatar-box ${avatarColorClass}">
+                ${initial}
+                ${isManagingProfiles ? '<span class="profile-edit-badge">✏️</span>' : ""}
+            </div>
+            <span class="profile-card-name">${escapeHtml(p.name || "Perfil")}</span>
+        `;
+        card.onclick = () => {
+          if (isManagingProfiles) {
+            openProfileEditor(p);
+          } else {
+            selectProfile(p);
+          }
+        };
+        grid.appendChild(card);
+      });
+      const addCard = document.createElement("button");
+      addCard.className = "profile-card profile-add-card focusable";
+      addCard.setAttribute("tabindex", "0");
+      addCard.title = "Añadir perfil";
+      addCard.innerHTML = `
+        <div class="profile-avatar-box">
+            +
+        </div>
+        <span class="profile-card-name">Añadir perfil</span>
+    `;
+      addCard.onclick = () => {
+        openProfileEditor(null);
+      };
+      grid.appendChild(addCard);
+    }
+    __name(renderProfilesGrid, "renderProfilesGrid");
+    function selectProfile(profile) {
+      return __async(this, null, function* () {
+        currentProfile = profile;
+        try {
+          localStorage.setItem("cineflix_current_profile", JSON.stringify(profile));
+          sessionStorage.setItem("cineflix_profile_chosen", "true");
+        } catch (e) {
+        }
+        updateTopbarProfileAvatar();
+        hideProfileSelectionScreen();
+        try {
+          favoritesLoaded = false;
+          yield fetchFavorites();
+          yield fetchWatchProgress(true);
+          if (typeof renderFavoritesGrid === "function" && $("view-favorites").classList.contains("active")) {
+            renderFavoritesGrid();
+          }
+        } catch (e) {
+          console.warn("[Profiles] Switch reload error:", e);
+        }
+      });
+    }
+    __name(selectProfile, "selectProfile");
+    function openProfileEditor(profile = null) {
+      const modal = $("modal-profile-editor");
+      if (!modal) return;
+      const titleEl = $("profile-editor-title");
+      const nameInput = $("profile-name-input");
+      const idInput = $("profile-id-editing");
+      const deleteBtn = $("btn-profile-delete");
+      const bigAvatar = $("profile-editor-current-avatar");
+      let currentAvatarKey = profile ? profile.avatar || "avatar_red" : "avatar_red";
+      const updateBigAvatar = /* @__PURE__ */ __name(() => {
+        const letter = (nameInput.value.trim() || (profile ? profile.name : "N")).charAt(0).toUpperCase() || "P";
+        bigAvatar.textContent = letter;
+        Object.values(AVATAR_CLASS_MAP).forEach((cls) => bigAvatar.classList.remove(cls));
+        bigAvatar.classList.add(AVATAR_CLASS_MAP[currentAvatarKey] || "avatar-red");
+      }, "updateBigAvatar");
+      if (profile) {
+        titleEl.textContent = "Editar perfil";
+        nameInput.value = profile.name || "";
+        idInput.value = profile.profile_id;
+        if (profile.profile_id === "default") {
+          deleteBtn.classList.add("hidden");
+        } else {
+          deleteBtn.classList.remove("hidden");
+        }
+      } else {
+        titleEl.textContent = "Añadir perfil";
+        nameInput.value = "";
+        idInput.value = "";
+        deleteBtn.classList.add("hidden");
+      }
+      updateBigAvatar();
+      nameInput.oninput = updateBigAvatar;
+      const paletteItems = document.querySelectorAll("#profile-avatar-palette .avatar-palette-item");
+      paletteItems.forEach((item) => {
+        const itemKey = item.dataset.avatar;
+        item.classList.toggle("selected", itemKey === currentAvatarKey);
+        item.onclick = (e) => {
+          e.preventDefault();
+          currentAvatarKey = itemKey;
+          paletteItems.forEach((i2) => i2.classList.remove("selected"));
+          item.classList.add("selected");
+          updateBigAvatar();
+        };
+      });
+      modal.classList.remove("hidden");
+      if (window._cineflixIsTV && window.cineflixTvNav) {
+        window.cineflixTvNav.saveFocus();
+        setTimeout(() => {
+          nameInput.focus();
+          if (window.cineflixTvNav) window.cineflixTvNav.setFocus(nameInput);
+        }, 150);
+      }
+      $("btn-profile-save").onclick = () => __async(null, null, function* () {
+        const name = nameInput.value.trim();
+        if (!name) {
+          alert("Por favor, introduce un nombre para el perfil.");
+          nameInput.focus();
+          return;
+        }
+        const phone2 = yield getUserPhone();
+        if (!phone2) return;
+        try {
+          const body = {
+            name,
+            avatar: currentAvatarKey
+          };
+          if (idInput.value) {
+            body.profile_id = idInput.value;
+          }
+          const res = yield fetch(`${RAILWAY_API}/api/profiles`, {
+            method: "POST",
+            headers: { "x-user-phone": phone2, "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+          });
+          if (res.ok) {
+            modal.classList.add("hidden");
+            yield loadUserProfiles(false);
+            renderProfilesGrid();
+            if (currentProfile && currentProfile.profile_id === (idInput.value || "default")) {
+              currentProfile.name = name;
+              currentProfile.avatar = currentAvatarKey;
+              updateTopbarProfileAvatar();
+            }
+          } else {
+            alert("No se pudo guardar el perfil.");
+          }
+        } catch (e) {
+          console.error("[Profiles] Save error:", e);
+          alert("Error de conexión al guardar el perfil.");
+        }
+      });
+      $("btn-profile-cancel").onclick = () => {
+        modal.classList.add("hidden");
+        if (window.cineflixTvNav) window.cineflixTvNav.restoreFocus();
+      };
+      deleteBtn.onclick = () => __async(null, null, function* () {
+        if (!idInput.value || idInput.value === "default") return;
+        if (!confirm(`¿Eliminar el perfil "${nameInput.value}" y todos sus favoritos/progreso?`)) return;
+        const phone2 = yield getUserPhone();
+        try {
+          const res = yield fetch(`${RAILWAY_API}/api/profiles/${encodeURIComponent(idInput.value)}`, {
+            method: "DELETE",
+            headers: { "x-user-phone": phone2 }
+          });
+          if (res.ok) {
+            modal.classList.add("hidden");
+            if (currentProfile && currentProfile.profile_id === idInput.value) {
+              currentProfile = userProfiles[0];
+              try {
+                localStorage.setItem("cineflix_current_profile", JSON.stringify(currentProfile));
+              } catch (e) {
+              }
+            }
+            yield loadUserProfiles(false);
+            renderProfilesGrid();
+          } else {
+            alert("No se pudo eliminar el perfil.");
+          }
+        } catch (e) {
+          console.error("[Profiles] Delete error:", e);
+          alert("Error de conexión al eliminar el perfil.");
+        }
+      });
+    }
+    __name(openProfileEditor, "openProfileEditor");
+    function setupProfileEventListeners() {
+      const triggerBtn = $("btn-profile-switch");
+      if (triggerBtn) {
+        triggerBtn.onclick = () => {
+          showProfileSelectionScreen();
+        };
+      }
+      const closeBtn = $("btn-profiles-close");
+      if (closeBtn) {
+        closeBtn.onclick = () => {
+          hideProfileSelectionScreen();
+        };
+      }
+      const manageBtn = $("btn-profiles-manage");
+      const doneBtn = $("btn-profiles-done");
+      if (manageBtn && doneBtn) {
+        manageBtn.onclick = () => {
+          isManagingProfiles = true;
+          manageBtn.classList.add("hidden");
+          doneBtn.classList.remove("hidden");
+          renderProfilesGrid();
+        };
+        doneBtn.onclick = () => {
+          isManagingProfiles = false;
+          doneBtn.classList.add("hidden");
+          manageBtn.classList.remove("hidden");
+          renderProfilesGrid();
+        };
+      }
+    }
+    __name(setupProfileEventListeners, "setupProfileEventListeners");
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", () => {
         setupUnifiedSearch();
@@ -99915,6 +100258,8 @@ ${err.message}`);
         initCardSynopsisAutoScroll();
         initFilterSortEvents();
         initModalObserver();
+        setupProfileEventListeners();
+        loadUserProfiles(true);
       });
     } else {
       setupUnifiedSearch();
@@ -99922,6 +100267,8 @@ ${err.message}`);
       initCardSynopsisAutoScroll();
       initFilterSortEvents();
       initModalObserver();
+      setupProfileEventListeners();
+      loadUserProfiles(true);
     }
   }
 });
