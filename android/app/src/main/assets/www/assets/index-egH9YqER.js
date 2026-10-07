@@ -61,7 +61,7 @@ var __async = (__this, __arguments, generator) => {
 };
 var __forAwait = (obj, it2, method) => (it2 = obj[__knownSymbol("asyncIterator")]) ? it2.call(obj) : (obj = obj[__knownSymbol("iterator")](), it2 = {}, method = (key2, fn) => (fn = obj[key2]) && (it2[key2] = (arg) => new Promise((yes, no, done) => (arg = fn.call(obj, arg), done = arg.done, Promise.resolve(arg.value).then((value) => yes({ value, done }), no)))), method("next"), method("return"), it2);
 var require_index_001 = __commonJS({
-  "assets/index-CTEME3-F.js"(exports) {
+  "assets/index-egH9YqER.js"(exports) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     (/* @__PURE__ */ __name(function polyfill2() {
       const relList = document.createElement("link").relList;
@@ -100006,19 +100006,32 @@ ${err.message}`);
     }
     __name(updateTopbarProfileAvatar, "updateTopbarProfileAvatar");
     function showProfileSelectionScreen() {
-      const modal = $("modal-profiles-screen");
-      if (!modal) return;
-      isManagingProfiles = false;
-      $("btn-profiles-manage").classList.remove("hidden");
-      $("btn-profiles-done").classList.add("hidden");
-      renderProfilesGrid();
-      modal.classList.remove("hidden");
-      if (window._cineflixIsTV && window.cineflixTvNav) {
-        window.cineflixTvNav.saveFocus();
-        setTimeout(() => {
-          const firstCard = modal.querySelector(".profile-card");
-          if (firstCard && window.cineflixTvNav) window.cineflixTvNav.setFocus(firstCard);
-        }, 150);
+      try {
+        const modal = $("modal-profiles-screen");
+        if (!modal) {
+          console.warn("[Profiles] modal-profiles-screen not found");
+          return;
+        }
+        isManagingProfiles = false;
+        const manageBtn = $("btn-profiles-manage");
+        if (manageBtn) manageBtn.classList.remove("hidden");
+        const doneBtn = $("btn-profiles-done");
+        if (doneBtn) doneBtn.classList.add("hidden");
+        renderProfilesGrid();
+        modal.classList.remove("hidden");
+        if (!Array.isArray(userProfiles) || userProfiles.length === 0) {
+          loadUserProfiles(false).then(() => renderProfilesGrid()).catch(() => {
+          });
+        }
+        if (window._cineflixIsTV && window.cineflixTvNav) {
+          window.cineflixTvNav.saveFocus();
+          setTimeout(() => {
+            const firstCard = modal.querySelector(".profile-card");
+            if (firstCard && window.cineflixTvNav) window.cineflixTvNav.setFocus(firstCard);
+          }, 150);
+        }
+      } catch (err) {
+        console.error("[Profiles] showProfileSelectionScreen error:", err);
       }
     }
     __name(showProfileSelectionScreen, "showProfileSelectionScreen");
@@ -100029,25 +100042,32 @@ ${err.message}`);
       if (window.cineflixTvNav) window.cineflixTvNav.restoreFocus();
     }
     __name(hideProfileSelectionScreen, "hideProfileSelectionScreen");
+    window.hideProfileSelectionScreen = hideProfileSelectionScreen;
     function renderProfilesGrid() {
       const grid = $("profiles-grid");
       if (!grid) return;
       grid.innerHTML = "";
-      userProfiles.forEach((p) => {
+      const profilesList = Array.isArray(userProfiles) && userProfiles.length > 0 ? userProfiles : [{ profile_id: "default", name: "Principal", avatar: "avatar_red" }];
+      profilesList.forEach((p) => {
         const card = document.createElement("button");
         card.className = "profile-card focusable";
         card.setAttribute("tabindex", "0");
         card.dataset.profileId = p.profile_id;
-        const initial = (p.name || "P").trim().charAt(0).toUpperCase();
-        const avatarColorClass = AVATAR_CLASS_MAP[p.avatar] || "avatar-red";
+        const initial = (p.name || "P").trim().charAt(0).toUpperCase() || "P";
+        const avatarColorClass = AVATAR_CLASS_MAP && AVATAR_CLASS_MAP[p.avatar] ? AVATAR_CLASS_MAP[p.avatar] : "avatar-red";
+        const displayName = typeof escapeHtml === "function" ? escapeHtml(p.name || "Perfil") : p.name || "Perfil";
         card.innerHTML = `
             <div class="profile-avatar-box ${avatarColorClass}">
                 ${initial}
                 ${isManagingProfiles ? '<span class="profile-edit-badge">✏️</span>' : ""}
             </div>
-            <span class="profile-card-name">${escapeHtml(p.name || "Perfil")}</span>
+            <span class="profile-card-name">${displayName}</span>
         `;
-        card.onclick = () => {
+        card.onclick = (e) => {
+          if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
           if (isManagingProfiles) {
             openProfileEditor(p);
           } else {
@@ -100066,7 +100086,11 @@ ${err.message}`);
         </div>
         <span class="profile-card-name">Añadir perfil</span>
     `;
-      addCard.onclick = () => {
+      addCard.onclick = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
         openProfileEditor(null);
       };
       grid.appendChild(addCard);
@@ -100221,11 +100245,31 @@ ${err.message}`);
     }
     __name(openProfileEditor, "openProfileEditor");
     function setupProfileEventListeners() {
+      document.addEventListener("click", (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest("#btn-profile-switch, .btn-profile-trigger") : null;
+        if (btn) {
+          e.preventDefault();
+          e.stopPropagation();
+          showProfileSelectionScreen();
+        }
+      }, true);
       const triggerBtn = $("btn-profile-switch");
       if (triggerBtn) {
-        triggerBtn.onclick = () => {
+        triggerBtn.onclick = (e) => {
+          if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
           showProfileSelectionScreen();
         };
+        makeFocusable(triggerBtn);
+        triggerBtn.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.keyCode === 13 || e.key === "DPadCenter") {
+            e.preventDefault();
+            e.stopPropagation();
+            showProfileSelectionScreen();
+          }
+        });
       }
       const closeBtn = $("btn-profiles-close");
       if (closeBtn) {

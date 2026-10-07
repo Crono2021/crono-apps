@@ -7378,6 +7378,7 @@ body.android-tv .row-cards .series-card,
     font-size: 0.85rem;
     box-shadow: 0 2px 6px rgba(0,0,0,0.4);
     text-transform: uppercase;
+    pointer-events: none;
 }
 
 /* Fullscreen Profile Selection Screen */
@@ -7567,6 +7568,12 @@ body.android-tv .row-cards .series-card,
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+.profile-editor-overlay.hidden {
+    display: none !important;
+    opacity: 0;
+    pointer-events: none;
 }
 
 .profile-editor-modal {
