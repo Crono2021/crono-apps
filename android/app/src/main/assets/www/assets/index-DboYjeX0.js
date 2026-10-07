@@ -61,7 +61,7 @@ var __async = (__this, __arguments, generator) => {
 };
 var __forAwait = (obj, it2, method) => (it2 = obj[__knownSymbol("asyncIterator")]) ? it2.call(obj) : (obj = obj[__knownSymbol("iterator")](), it2 = {}, method = (key2, fn) => (fn = obj[key2]) && (it2[key2] = (arg) => new Promise((yes, no, done) => (arg = fn.call(obj, arg), done = arg.done, Promise.resolve(arg.value).then((value) => yes({ value, done }), no)))), method("next"), method("return"), it2);
 var require_index_001 = __commonJS({
-  "assets/index-DHG62wht.js"(exports) {
+  "assets/index-DboYjeX0.js"(exports) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     (/* @__PURE__ */ __name(function polyfill2() {
       const relList = document.createElement("link").relList;
@@ -91261,7 +91261,19 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
     window.renderContinueWatchingRow = renderContinueWatchingRow;
     function renderContinueWatchingRow() {
       return __async(this, null, function* () {
-        if (!watchProgressMap || watchProgressMap.size === 0) return;
+        const seriesContainer = $("continue-watching-series");
+        const moviesContainer = $("continue-watching-movies");
+        if (!watchProgressMap || watchProgressMap.size === 0) {
+          if (seriesContainer) {
+            seriesContainer.innerHTML = "";
+            seriesContainer.style.display = "none";
+          }
+          if (moviesContainer) {
+            moviesContainer.innerHTML = "";
+            moviesContainer.style.display = "none";
+          }
+          return;
+        }
         const neededMovieIds = [];
         for (const [id] of watchProgressMap.entries()) {
           if (id.startsWith("mv_")) {
@@ -91323,8 +91335,6 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         }
         const activeView = document.querySelector("#views-viewport > .view.active, .view.active");
         const savedActiveScrollY = activeView ? activeView.scrollTop : 0;
-        const seriesContainer = $("continue-watching-series");
-        const moviesContainer = $("continue-watching-movies");
         const tvNav = window.cineflixTvNav;
         let savedFocusKey = null;
         if (tvNav && tvNav.focused) {
@@ -100098,6 +100108,7 @@ ${err.message}`);
     __name(renderProfilesGrid, "renderProfilesGrid");
     function selectProfile(profile) {
       return __async(this, null, function* () {
+        if (!profile) return;
         currentProfile = profile;
         try {
           localStorage.setItem("cineflix_current_profile", JSON.stringify(profile));
@@ -100108,10 +100119,14 @@ ${err.message}`);
         hideProfileSelectionScreen();
         try {
           favoritesLoaded = false;
+          favoritesCache = [];
+          watchProgressMap.clear();
+          _lastWatchProgressFetch = 0;
+          yield renderContinueWatchingRow();
           yield fetchFavorites();
           yield fetchWatchProgress(true);
-          if (typeof renderFavoritesGrid === "function" && $("view-favorites").classList.contains("active")) {
-            renderFavoritesGrid();
+          if (typeof renderFavoritesGrid === "function" && $("view-favorites") && $("view-favorites").classList.contains("active")) {
+            renderFavoritesGrid(favoritesCurrentTab || "series");
           }
         } catch (e) {
           console.warn("[Profiles] Switch reload error:", e);
@@ -100172,6 +100187,7 @@ ${err.message}`);
         }, 150);
       }
       $("btn-profile-save").onclick = () => __async(null, null, function* () {
+        var _a2;
         const name = nameInput.value.trim();
         if (!name) {
           alert("Por favor, introduce un nombre para el perfil.");
@@ -100180,13 +100196,15 @@ ${err.message}`);
         }
         const phone2 = yield getUserPhone();
         if (!phone2) return;
+        const isEditing = Boolean(idInput.value);
+        const editingProfileId = idInput.value;
         try {
           const body = {
             name,
             avatar: currentAvatarKey
           };
-          if (idInput.value) {
-            body.profile_id = idInput.value;
+          if (isEditing) {
+            body.profile_id = editingProfileId;
           }
           const res = yield fetch(`${RAILWAY_API}/api/profiles`, {
             method: "POST",
@@ -100194,13 +100212,26 @@ ${err.message}`);
             body: JSON.stringify(body)
           });
           if (res.ok) {
+            const resData = yield res.json();
             modal.classList.add("hidden");
             yield loadUserProfiles(false);
             renderProfilesGrid();
-            if (currentProfile && currentProfile.profile_id === (idInput.value || "default")) {
-              currentProfile.name = name;
-              currentProfile.avatar = currentAvatarKey;
-              updateTopbarProfileAvatar();
+            if (isEditing) {
+              if (currentProfile && currentProfile.profile_id === editingProfileId) {
+                currentProfile.name = name;
+                currentProfile.avatar = currentAvatarKey;
+                try {
+                  localStorage.setItem("cineflix_current_profile", JSON.stringify(currentProfile));
+                } catch (e) {
+                }
+                updateTopbarProfileAvatar();
+              }
+            } else {
+              const createdPid = (_a2 = resData == null ? void 0 : resData.profile) == null ? void 0 : _a2.profile_id;
+              const newProfile = createdPid && userProfiles.find((p) => p.profile_id === createdPid) || resData && resData.profile || userProfiles.find((p) => p.profile_id !== "default" && p.name === name);
+              if (newProfile) {
+                yield selectProfile(newProfile);
+              }
             }
           } else {
             alert("No se pudo guardar el perfil.");
@@ -100225,15 +100256,13 @@ ${err.message}`);
           });
           if (res.ok) {
             modal.classList.add("hidden");
-            if (currentProfile && currentProfile.profile_id === idInput.value) {
-              currentProfile = userProfiles[0];
-              try {
-                localStorage.setItem("cineflix_current_profile", JSON.stringify(currentProfile));
-              } catch (e) {
-              }
-            }
+            const wasActiveProfile = currentProfile && currentProfile.profile_id === idInput.value;
             yield loadUserProfiles(false);
             renderProfilesGrid();
+            if (wasActiveProfile) {
+              const defaultProfile = userProfiles.find((p) => p.profile_id === "default") || userProfiles[0];
+              yield selectProfile(defaultProfile);
+            }
           } else {
             alert("No se pudo eliminar el perfil.");
           }
