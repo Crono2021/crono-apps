@@ -7383,23 +7383,34 @@ body.android-tv .row-cards .series-card,
 
 /* Fullscreen Profile Selection Screen */
 
+#modal-profiles-screen.modal-overlay,
 .profiles-overlay {
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    width: 100vw; height: 100vh;
-    background: #141414;
-    z-index: 99999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 1;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    background: #141414 !important;
+    z-index: 999999 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow-y: auto !important;
     transition: opacity 0.25s ease;
 }
 
+#modal-profiles-screen.modal-overlay.hidden,
 .profiles-overlay.hidden {
     display: none !important;
-    opacity: 0;
-    pointer-events: none;
+    opacity: 0 !important;
+    pointer-events: none !important;
 }
 
 .profiles-close-btn {
@@ -7559,21 +7570,32 @@ body.android-tv .row-cards .series-card,
 
 /* Modal Crear / Editar Perfil */
 
+#modal-profile-editor.modal-overlay,
 .profile-editor-overlay {
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    width: 100vw; height: 100vh;
-    background: rgba(0,0,0,0.85);
-    z-index: 100000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    background: rgba(0, 0, 0, 0.88) !important;
+    z-index: 1000000 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
+#modal-profile-editor.modal-overlay.hidden,
 .profile-editor-overlay.hidden {
     display: none !important;
-    opacity: 0;
-    pointer-events: none;
+    opacity: 0 !important;
+    pointer-events: none !important;
 }
 
 .profile-editor-modal {
