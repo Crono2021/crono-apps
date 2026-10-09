@@ -36,6 +36,21 @@ class AndroidBridge(
 
     init {
         GramJSStreamManager.webView = webView
+        scope.launch {
+            engine.authState.collect { authState ->
+                val state = when (authState) {
+                    is TelegramEngine.AuthState.Ready -> "READY"
+                    is TelegramEngine.AuthState.WaitPhone -> "WAIT_PHONE"
+                    is TelegramEngine.AuthState.WaitCode -> "WAIT_CODE"
+                    is TelegramEngine.AuthState.WaitPassword -> "WAIT_PASSWORD"
+                    is TelegramEngine.AuthState.WaitQrCode -> "WAIT_QR|${authState.link}"
+                    else -> null
+                }
+                if (state != null) {
+                    sendAuthState(state)
+                }
+            }
+        }
     }
 
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -836,6 +851,20 @@ class AndroidBridge(
                 }
             }
         }
+    }
+
+    @JavascriptInterface
+    fun getSavedPhone(): String {
+        return context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+            .getString("user_phone", "") ?: ""
+    }
+
+    @JavascriptInterface
+    fun savePhone(phone: String) {
+        context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("user_phone", phone)
+            .apply()
     }
 }
 

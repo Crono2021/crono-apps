@@ -438,7 +438,11 @@ class TelegramEngine(private val context: Context) {
 
     /** Send /start <payload> to bot, wait for inline keyboard reply */
     suspend fun sendBotCommand(payload: String): SeasonResponse? = withContext(Dispatchers.IO) {
-        val chatId = getBotChatId() ?: return@withContext null
+        if (!ensureReady()) {
+            throw IllegalStateException("AUTH_REQUIRED: No hay sesión activa en Telegram.")
+        }
+        val chatId = getBotChatId() ?: throw IllegalStateException("BOT_NOT_FOUND: No se pudo conectar con @$BOT_USERNAME")
+        client?.send(TdApi.OpenChat(chatId)) { }
         val deferred = CompletableDeferred<SeasonResponse?>()
 
         // Register a keyboard-reply listener BEFORE sending the command
@@ -450,6 +454,7 @@ class TelegramEngine(private val context: Context) {
             TdApi.InputMessageText(text, null, false)
         )) { sendResult ->
             if (sendResult is TdApi.Error) {
+                Log.e(TAG, "SendMessage /start error: ${sendResult.code} - ${sendResult.message}")
                 inlineKeyboardListeners.remove(listenerKey)
                 deferred.complete(null)
             }
@@ -468,6 +473,10 @@ class TelegramEngine(private val context: Context) {
      */
     suspend fun clickInlineButton(chatId: Long, msgId: Long, dataBase64: String): List<VideoInfo> =
         withContext(Dispatchers.IO) {
+            if (!ensureReady()) {
+                throw IllegalStateException("AUTH_REQUIRED: No hay sesión activa en Telegram.")
+            }
+            client?.send(TdApi.OpenChat(chatId)) { }
             val dataBytes = android.util.Base64.decode(dataBase64, android.util.Base64.DEFAULT)
             val collectorKey = "click_${System.currentTimeMillis()}"
             val collector = MsgCollector(chatId = chatId, afterMsgId = msgId)
@@ -510,7 +519,13 @@ class TelegramEngine(private val context: Context) {
      */
     suspend fun searchMovieByPayload(searchTitle: String): List<VideoInfo> =
         withContext(Dispatchers.IO) {
-            val chatId = getBotChatId() ?: return@withContext emptyList()
+            if (!ensureReady()) {
+                throw IllegalStateException("AUTH_REQUIRED: No hay sesión activa en Telegram.")
+            }
+            val chatId = getBotChatId() ?: throw IllegalStateException("BOT_NOT_FOUND: No se pudo conectar con @$BOT_USERNAME")
+
+            // Open chat to force live updates
+            client?.send(TdApi.OpenChat(chatId)) { }
 
             // Get the last message id before sending so we only collect AFTER our command
             val anchorDeferred = CompletableDeferred<Long>()
@@ -519,7 +534,7 @@ class TelegramEngine(private val context: Context) {
                     hist.messages[0].id else 0L
                 anchorDeferred.complete(lastId)
             }
-            val anchorMsgId = anchorDeferred.await()
+            val anchorMsgId = withTimeoutOrNull(3000) { anchorDeferred.await() } ?: 0L
 
             // Register collector BEFORE sending command
             val collectorKey = "peli_${System.currentTimeMillis()}"
@@ -531,11 +546,18 @@ class TelegramEngine(private val context: Context) {
             val sendDeferred = CompletableDeferred<Boolean>()
             client?.send(TdApi.SendMessage(chatId, null, null, null, null,
                 TdApi.InputMessageText(text, null, false)
-            )) { result -> sendDeferred.complete(result !is TdApi.Error) }
+            )) { result ->
+                if (result is TdApi.Error) {
+                    Log.e(TAG, "SendMessage /peli error: ${result.code} - ${result.message}")
+                    sendDeferred.complete(false)
+                } else {
+                    sendDeferred.complete(true)
+                }
+            }
 
             if (!sendDeferred.await()) {
                 msgCollectors.remove(collectorKey)
-                return@withContext emptyList()
+                throw IllegalStateException("BOT_SEND_FAILED: No se pudo enviar el comando al bot")
             }
 
             // Wait 4s + smart silence (same logic as web: "await new Promise(r => setTimeout(r, 4000))")
@@ -557,7 +579,10 @@ class TelegramEngine(private val context: Context) {
 
     suspend fun waitForMyContentVideos(): List<VideoInfo> =
         withContext(Dispatchers.IO) {
-            val chatId = getBotChatId() ?: return@withContext emptyList()
+            if (!ensureReady()) {
+                throw IllegalStateException("AUTH_REQUIRED: No hay sesión activa en Telegram.")
+            }
+            val chatId = getBotChatId() ?: throw IllegalStateException("BOT_NOT_FOUND: No se pudo conectar con @$BOT_USERNAME")
 
             // Get anchor message id
             val anchorDeferred = CompletableDeferred<Long>()
@@ -844,18 +869,43 @@ class TelegramEngine(private val context: Context) {
     @Volatile
     private var cachedBotChatId: Long? = null
 
+    suspend fun ensureReady(): Boolean {
+        if (_authState.value is AuthState.Ready) return true
+        Log.i(TAG, "TDLib not ready yet (current: ${_authState.value}), waiting for Ready state...")
+        val reached = withTimeoutOrNull(15_000) {
+            authState.first { it is AuthState.Ready || it is AuthState.WaitPhone || it is AuthState.WaitQrCode }
+        }
+        return reached is AuthState.Ready
+    }
+
     private suspend fun getBotChatId(): Long? {
+        if (!ensureReady()) {
+            Log.e(TAG, "Cannot get bot chatId: TDLib is not ready (state: ${_authState.value})")
+            return null
+        }
         cachedBotChatId?.let { return it }
+        val savedId = context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE).getLong("bot_chat_id", 0L)
+        if (savedId != 0L) {
+            cachedBotChatId = savedId
+            return savedId
+        }
         val c = client ?: run {
             Log.e(TAG, "TDLib client is null when getting bot chatId")
             return null
         }
-        return withTimeoutOrNull(8000) {
+        return withTimeoutOrNull(12_000) {
             suspendCancellableCoroutine<Long?> { cont ->
                 try {
                     c.send(TdApi.SearchPublicChat(BOT_USERNAME)) { result ->
                         val id = if (result is TdApi.Chat) result.id else null
-                        if (id != null) cachedBotChatId = id
+                        if (id != null) {
+                            cachedBotChatId = id
+                            context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+                                .edit().putLong("bot_chat_id", id).apply()
+                            Log.i(TAG, "Resolved and cached bot chatId: $id")
+                        } else if (result is TdApi.Error) {
+                            Log.e(TAG, "SearchPublicChat error: ${result.code} - ${result.message}")
+                        }
                         if (cont.isActive) cont.resume(id) {}
                     }
                 } catch (e: Exception) {
