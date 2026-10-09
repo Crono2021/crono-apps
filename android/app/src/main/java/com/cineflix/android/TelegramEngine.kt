@@ -893,7 +893,7 @@ class TelegramEngine(private val context: Context) {
             Log.e(TAG, "TDLib client is null when getting bot chatId")
             return null
         }
-        return withTimeoutOrNull(12_000) {
+        val resolvedId = withTimeoutOrNull(12_000) {
             suspendCancellableCoroutine<Long?> { cont ->
                 try {
                     c.send(TdApi.SearchPublicChat(BOT_USERNAME)) { result ->
@@ -903,16 +903,31 @@ class TelegramEngine(private val context: Context) {
                             context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
                                 .edit().putLong("bot_chat_id", id).apply()
                             Log.i(TAG, "Resolved and cached bot chatId: $id")
-                        } else if (result is TdApi.Error) {
-                            Log.e(TAG, "SearchPublicChat error: ${result.code} - ${result.message}")
+                            if (cont.isActive) cont.resume(id) {}
+                        } else {
+                            if (result is TdApi.Error) {
+                                Log.w(TAG, "SearchPublicChat failed (${result.code} - ${result.message}), trying SearchChatsOnServer...")
+                            }
+                            c.send(TdApi.SearchChatsOnServer(BOT_USERNAME, 5)) { searchRes ->
+                                val fallbackId = if (searchRes is TdApi.Chats && searchRes.chatIds.isNotEmpty()) {
+                                    searchRes.chatIds[0]
+                                } else null
+                                if (fallbackId != null) {
+                                    cachedBotChatId = fallbackId
+                                    context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+                                        .edit().putLong("bot_chat_id", fallbackId).apply()
+                                    Log.i(TAG, "Resolved bot chatId via SearchChatsOnServer: $fallbackId")
+                                }
+                                if (cont.isActive) cont.resume(fallbackId) {}
+                            }
                         }
-                        if (cont.isActive) cont.resume(id) {}
                     }
                 } catch (e: Exception) {
                     if (cont.isActive) cont.resume(null) {}
                 }
             }
         }
+        return resolvedId
     }
 
     /** Public version for AndroidBridge (same logic, exposed outside package) */
