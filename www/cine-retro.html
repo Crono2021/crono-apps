@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Cineflix 16-Bit • La Sala & Creador RPG (Versión Test)</title>
     <link rel="icon" type="image/png" href="/favicon.png">
-    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
-            --pixel-bg: #07090e;
+            --pixel-bg: #06080d;
             --cinema-red: #c0392b;
             --cinema-darkred: #781d14;
             --cinema-gold: #f39c12;
@@ -36,6 +36,7 @@
             width: 100vw;
             display: flex;
             flex-direction: column;
+            -webkit-font-smoothing: antialiased;
         }
 
         /* Top Bar */
@@ -158,7 +159,7 @@
             inset: 0;
             display: flex;
             flex-direction: column;
-            background: #050608;
+            background: #040508;
         }
 
         .cinema-viewport-container {
@@ -170,18 +171,100 @@
             justify-content: center;
             align-items: center;
             background: #020305;
+            padding: 8px 12px 64px 12px;
+        }
+
+        .cinema-wrapper {
+            position: relative;
+            width: min(96vw, calc((100vh - 120px) * 16 / 9));
+            aspect-ratio: 16 / 9;
+            box-shadow: 0 12px 50px rgba(0, 0, 0, 0.95);
+            border-radius: 10px;
+            overflow: hidden;
+            border: 2px solid #1a2232;
+            background: #000;
         }
 
         #cinema-canvas {
             display: block;
-            image-rendering: -moz-crisp-edges;
-            image-rendering: -webkit-crisp-edges;
-            image-rendering: pixelated;
+            width: 100%;
+            height: 100%;
+            image-rendering: -webkit-optimize-contrast;
             image-rendering: crisp-edges;
-            box-shadow: 0 0 60px rgba(0, 0, 0, 0.95);
-            width: min(96vw, calc((100vh - 120px) * 16 / 9));
-            height: auto;
-            aspect-ratio: 16 / 9;
+            image-rendering: pixelated;
+        }
+
+        /* CRISP DOM VECTOR SPEECH BUBBLE LAYER */
+        .bubble-container {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 40;
+        }
+
+        .pixel-bubble {
+            position: absolute;
+            background: #ffffff;
+            color: #0f172a;
+            padding: 7px 11px;
+            border-radius: 6px;
+            font-size: clamp(11px, 1.2vw, 13px);
+            font-weight: 600;
+            line-height: 1.35;
+            max-width: min(280px, 42vw);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.65), 0 0 0 2px #0f172a;
+            transform: translate(-50%, -100%);
+            pointer-events: auto;
+            animation: bubblePop 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+
+        .pixel-bubble.fade-out {
+            opacity: 0;
+            transform: translate(-50%, -110%) scale(0.9);
+        }
+
+        .pixel-bubble::after {
+            content: '';
+            position: absolute;
+            bottom: -7px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-width: 7px 6px 0 6px;
+            border-style: solid;
+            border-color: #ffffff transparent transparent transparent;
+        }
+
+        .pixel-bubble::before {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-width: 9px 7px 0 7px;
+            border-style: solid;
+            border-color: #0f172a transparent transparent transparent;
+        }
+
+        .bubble-speaker {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 9px;
+            color: #c0392b;
+            margin-bottom: 3px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            letter-spacing: 0.5px;
+        }
+
+        .bubble-text {
+            word-break: break-word;
+        }
+
+        @keyframes bubblePop {
+            0% { transform: translate(-50%, -80%) scale(0.8); opacity: 0; }
+            100% { transform: translate(-50%, -100%) scale(1); opacity: 1; }
         }
 
         /* Live Chat / Quote Overlay Bar at Bottom */
@@ -190,24 +273,24 @@
             bottom: 12px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(13, 17, 26, 0.88);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
+            background: rgba(13, 17, 26, 0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.12);
-            padding: 8px 14px;
+            padding: 7px 14px;
             border-radius: 30px;
             display: flex;
             align-items: center;
             gap: 12px;
             box-shadow: 0 8px 24px rgba(0,0,0,0.6);
             z-index: 50;
-            width: 90%;
-            max-width: 650px;
+            width: 92%;
+            max-width: 660px;
         }
 
         .hud-avatar {
-            width: 32px;
-            height: 32px;
+            width: 34px;
+            height: 34px;
             border-radius: 50%;
             background: #1e2636;
             border: 2px solid var(--cinema-gold);
@@ -218,12 +301,18 @@
             flex-shrink: 0;
         }
 
+        #hud-avatar-canvas {
+            width: 32px;
+            height: 32px;
+            image-rendering: pixelated;
+        }
+
         .hud-input {
             flex: 1;
-            background: rgba(0, 0, 0, 0.4);
+            background: rgba(0, 0, 0, 0.45);
             border: 1px solid #2d384c;
             border-radius: 20px;
-            padding: 6px 14px;
+            padding: 8px 14px;
             color: #fff;
             font-size: 13px;
             outline: none;
@@ -232,7 +321,7 @@
 
         .hud-input:focus {
             border-color: var(--cinema-gold);
-            background: rgba(0, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.65);
         }
 
         .hud-btn {
@@ -240,7 +329,7 @@
             border: none;
             color: #0b0e14;
             font-weight: 700;
-            padding: 6px 16px;
+            padding: 7px 16px;
             border-radius: 20px;
             font-size: 12px;
             cursor: pointer;
@@ -257,7 +346,7 @@
         }
 
         .hud-stats {
-            color: #7f8c8d;
+            color: #94a3b8;
             font-size: 11px;
             font-weight: 600;
             white-space: nowrap;
@@ -277,7 +366,7 @@
 
         .creator-preview-panel {
             flex: 0 0 340px;
-            background: rgba(18, 24, 35, 0.85);
+            background: rgba(18, 24, 35, 0.88);
             border: 1px solid #2a3447;
             border-radius: 14px;
             padding: 24px;
@@ -289,9 +378,9 @@
         }
 
         .character-stage {
-            width: 200px;
-            height: 200px;
-            background: #090d15;
+            width: 240px;
+            height: 240px;
+            background: #070a10;
             border: 3px solid #34495e;
             border-radius: 12px;
             position: relative;
@@ -299,19 +388,22 @@
             align-items: center;
             justify-content: center;
             margin-bottom: 20px;
-            box-shadow: inset 0 0 20px rgba(0,0,0,0.8), 0 0 15px rgba(243, 156, 18, 0.2);
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8), 0 0 20px rgba(243, 156, 18, 0.15);
             background-image: 
                 radial-gradient(rgba(243, 156, 18, 0.15) 15%, transparent 16%),
                 radial-gradient(rgba(255, 255, 255, 0.05) 15%, transparent 16%);
             background-size: 20px 20px;
             background-position: 0 0, 10px 10px;
+            overflow: hidden;
         }
 
         #preview-canvas {
-            image-rendering: pixelated;
+            display: block;
+            width: 240px;
+            height: 240px;
+            image-rendering: -webkit-optimize-contrast;
             image-rendering: crisp-edges;
-            width: 144px;
-            height: 144px;
+            image-rendering: pixelated;
         }
 
         .character-card-name {
@@ -319,18 +411,18 @@
             font-size: 13px;
             color: var(--cinema-gold);
             text-align: center;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             text-shadow: 2px 2px 0 #000;
         }
 
         .character-quote-preview {
-            background: rgba(0,0,0,0.4);
-            border: 1px dashed rgba(243, 156, 18, 0.3);
+            background: rgba(0,0,0,0.45);
+            border: 1px dashed rgba(243, 156, 18, 0.35);
             border-radius: 8px;
-            padding: 8px 12px;
-            color: #bdc3c7;
+            padding: 10px 14px;
+            color: #cbd5e1;
             font-style: italic;
-            font-size: 12px;
+            font-size: 13px;
             text-align: center;
             width: 100%;
             margin-bottom: 20px;
@@ -342,7 +434,7 @@
 
         .creator-options-panel {
             flex: 1;
-            background: rgba(18, 24, 35, 0.85);
+            background: rgba(18, 24, 35, 0.88);
             border: 1px solid #2a3447;
             border-radius: 14px;
             padding: 24px;
@@ -355,7 +447,7 @@
         }
 
         .section-title {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 700;
             color: #ecf0f1;
             text-transform: uppercase;
@@ -377,7 +469,7 @@
 
         .option-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(85px, 1fr));
             gap: 10px;
         }
 
@@ -388,11 +480,11 @@
         }
 
         .color-circle {
-            width: 30px;
-            height: 30px;
+            width: 32px;
+            height: 32px;
             border-radius: 50%;
             cursor: pointer;
-            border: 2px solid transparent;
+            border: 2px solid rgba(255, 255, 255, 0.15);
             transition: transform 0.15s;
         }
 
@@ -402,7 +494,7 @@
 
         .color-circle.selected {
             border-color: #fff;
-            box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
             transform: scale(1.1);
         }
 
@@ -455,7 +547,7 @@
         .form-group label {
             font-size: 12px;
             font-weight: 600;
-            color: #95a5a6;
+            color: #94a3b8;
         }
 
         .form-input {
@@ -535,12 +627,32 @@
             background: #2c3e50;
             border-radius: 3px;
         }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #34495e;
-        }
 
-        /* Responsive Mobile Adjustments */
         @media (max-width: 768px) {
+            .retro-header {
+                height: 48px;
+                padding: 0 10px;
+            }
+            .brand-badge {
+                font-size: 10px;
+                letter-spacing: 0px;
+            }
+            .brand-sub {
+                display: none;
+            }
+            .tab-btn {
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            .tab-btn .tab-full-text {
+                display: none;
+            }
+            .icon-btn .btn-text {
+                display: none;
+            }
+            .icon-btn {
+                padding: 6px 8px;
+            }
             #view-creator {
                 flex-direction: column;
                 padding: 12px;
@@ -552,8 +664,25 @@
             .form-row {
                 flex-direction: column;
             }
-            .brand-sub {
+            .cinema-viewport-container {
+                padding: 6px 6px 54px 6px;
+            }
+            .cinema-hud {
+                bottom: 8px;
+                padding: 6px 10px;
+                gap: 8px;
+                width: 95%;
+            }
+            .hud-stats {
                 display: none;
+            }
+            .hud-input {
+                font-size: 12px;
+                padding: 6px 10px;
+            }
+            .hud-btn {
+                padding: 6px 12px;
+                font-size: 11px;
             }
         }
     </style>
@@ -563,28 +692,28 @@
     <!-- Header Navigation -->
     <header class="retro-header">
         <div class="brand-container">
-            <span class="brand-badge">🍿 CINEFLIX 16-BIT</span>
-            <span class="brand-sub">Beta Test</span>
+            <span class="brand-badge">🍿 CINEFLIX</span>
+            <span class="brand-sub">16-Bit</span>
         </div>
 
         <nav class="tabs-nav">
             <button id="btn-tab-cinema" class="tab-btn active" onclick="switchView('cinema')">
-                <span>🪑</span> La Sala de Cine
+                <span>🪑</span> <span>Sala<span class="tab-full-text"> de Cine</span></span>
             </button>
             <button id="btn-tab-creator" class="tab-btn" onclick="switchView('creator')">
-                <span>🎨</span> Creador RPG
+                <span>🎨</span> <span>Creador<span class="tab-full-text"> RPG</span></span>
             </button>
         </nav>
 
         <div class="header-actions">
-            <button id="btn-sound" class="icon-btn" onclick="toggleSound()">
-                <span id="sound-icon">🔈</span> <span id="sound-text">Mudo</span>
+            <button id="btn-sound" class="icon-btn" onclick="toggleSound()" title="Activar/Desactivar sonido">
+                <span id="sound-icon">🔈</span> <span id="sound-text" class="btn-text">Mudo</span>
             </button>
-            <button class="icon-btn" onclick="triggerRandomEvent()">
-                <span>⚡</span> Evento
+            <button class="icon-btn" onclick="triggerRandomEvent()" title="Evento aleatorio en la sala">
+                <span>⚡</span> <span class="btn-text">Evento</span>
             </button>
-            <a href="/" class="icon-btn" style="text-decoration: none; color: #ecf0f1;">
-                <span>⬅️</span> Volver
+            <a href="/" class="icon-btn" style="text-decoration: none; color: #ecf0f1;" title="Volver a Cineflix">
+                <span>⬅️</span> <span class="btn-text">Volver</span>
             </a>
         </div>
     </header>
@@ -595,30 +724,34 @@
         <!-- VIEW 1: THE VIRTUAL RETRO CINEMA -->
         <section id="view-cinema">
             <div class="cinema-viewport-container">
-                <canvas id="cinema-canvas" width="480" height="270"></canvas>
+                <div class="cinema-wrapper">
+                    <!-- Crisp Native 960x540 Resolution -->
+                    <canvas id="cinema-canvas" width="960" height="540"></canvas>
+                    <!-- Crisp Vector DOM Speech Bubbles Layer -->
+                    <div class="bubble-container" id="bubble-layer"></div>
+                </div>
 
                 <!-- Floating Chat & Interaction HUD -->
                 <div class="cinema-hud">
-                    <div class="hud-avatar" id="hud-user-avatar">
-                        <canvas id="hud-avatar-canvas" width="32" height="32"></canvas>
+                    <div class="hud-avatar" title="Tu avatar pixel-art">
+                        <canvas id="hud-avatar-canvas" width="64" height="64"></canvas>
                     </div>
                     <input type="text" id="hud-chat-input" class="hud-input" placeholder="Escribe lo que dice tu personaje en el cine..." maxlength="60">
                     <button class="hud-btn" onclick="sendCustomQuote()">
                         <span>💬</span> Soltar frase
                     </button>
-                    <div class="hud-stats" id="cinema-occupancy">
-                        👥 8 en sala
-                    </div>
+                    <div class="hud-stats" id="hud-stats-label">👥 8 en sala</div>
                 </div>
             </div>
         </section>
 
         <!-- VIEW 2: THE 16-BIT CHARACTER STUDIO -->
         <section id="view-creator" class="hidden">
-            <!-- Left: Character Live Preview Card -->
+            <!-- Left: Character Card & Actions -->
             <div class="creator-preview-panel">
                 <div class="character-stage">
-                    <canvas id="preview-canvas" width="32" height="32"></canvas>
+                    <!-- Crisp 240x240 Character Preview -->
+                    <canvas id="preview-canvas" width="240" height="240"></canvas>
                 </div>
                 <div class="character-card-name" id="preview-name">Crono</div>
                 <div class="character-quote-preview" id="preview-quote">
@@ -658,31 +791,29 @@
                 <div class="section-title">
                     <span>2. Arquetipo & Tono de Piel</span>
                 </div>
-                <div class="palette-grid" id="skin-palette">
-                    <!-- Dynamic skin colors -->
-                </div>
+                <div class="palette-grid" id="skin-palette"></div>
 
                 <!-- Hair Style & Color -->
                 <div class="section-title">
                     <span>3. Peinado</span>
                 </div>
-                <div class="option-grid" id="hair-style-grid">
-                    <!-- Hair styles populated via JS -->
-                </div>
-                <label style="font-size: 11px; color: #7f8c8d; margin-top: 4px;">Color de pelo:</label>
+                <div class="option-grid" id="hair-style-grid"></div>
+
+                <label style="font-size: 12px; font-weight: 600; color: #94a3b8; margin-top: 4px;">Color de pelo:</label>
                 <div class="palette-grid" id="hair-palette"></div>
 
-                <!-- Top Clothes -->
+                <!-- Clothing & Colors -->
                 <div class="section-title">
                     <span>4. Ropa Superior</span>
                 </div>
                 <div class="option-grid" id="top-style-grid"></div>
-                <label style="font-size: 11px; color: #7f8c8d; margin-top: 4px;">Color de prenda:</label>
+
+                <label style="font-size: 12px; font-weight: 600; color: #94a3b8; margin-top: 4px;">Color del atuendo:</label>
                 <div class="palette-grid" id="top-palette"></div>
 
                 <!-- Accessories -->
                 <div class="section-title">
-                    <span>5. Accesorios de Cine</span>
+                    <span>5. Accesorio de Cine & Rol</span>
                 </div>
                 <div class="option-grid" id="accessory-grid"></div>
             </div>
@@ -692,22 +823,20 @@
 
     <script>
         /* =========================================================================
-           16-BIT PIXEL ART ENGINE & LIVING VIRTUAL CINEMA
+           STATE & CONSTANTS
            ========================================================================= */
 
-        // User Custom Character State
         const DEFAULT_AVATAR = {
             name: 'Crono',
             quote: 'Callaos todos que empieza la película 🤫',
             skin: '#ffcc99',
-            hairStyle: 'messy', // 'bald', 'short', 'messy', 'ponytail', 'afro', 'wizard', 'anime', 'elven'
+            hairStyle: 'messy',
             hairColor: '#3a2518',
-            topStyle: 'cineflix_tee', // 'cineflix_tee', 'hoodie', 'suit', 'hawaii', 'robe', 'jacket'
-            topColor: '#e74c3c',
-            bottomStyle: 'jeans',
-            bottomColor: '#2980b9',
-            accessory: '3d_glasses', // 'none', '3d_glasses', 'popcorn', 'soda', 'wizard_hat', 'headphones', 'elf_ears'
-            seatIndex: 9 // VIP Center
+            topStyle: 'cineflix_tee',
+            topColor: '#c0392b',
+            bottomColor: '#1e293b',
+            accessory: '3d_glasses',
+            seatIndex: 9
         };
 
         let myCharacter = Object.assign({}, DEFAULT_AVATAR);
@@ -716,145 +845,140 @@
             if (saved) Object.assign(myCharacter, JSON.parse(saved));
         } catch(e) {}
 
-        // Pre-defined Community Bots in the Theater
         const COMMUNITY_CHARACTERS = [
             {
                 id: 'javi',
                 name: 'Javi Mateos',
-                quote: '¡Crono revisa la pestaña de ver todo en Android TV!',
-                skin: '#f5cba7',
+                quote: '¡Crono, el streaming en Android TV va fino!',
+                skin: '#edbb99',
                 hairStyle: 'short',
-                hairColor: '#2c3e50',
+                hairColor: '#17202a',
                 topStyle: 'hoodie',
-                topColor: '#34495e',
+                topColor: '#2563eb',
+                bottomColor: '#0f172a',
                 accessory: 'popcorn',
-                seatIndex: 8,
-                state: 'sitting', // 'sitting', 'eating', 'walking_to_bath', 'in_bath', 'walking_back'
-                stateTimer: 0,
+                seatIndex: 7,
+                state: 'sitting',
                 x: 0, y: 0
             },
             {
                 id: 'gandalf',
                 name: 'Gandalf',
-                quote: '¡Corred insensatos, que empieza la sesión!',
-                skin: '#fdebd0',
+                quote: '¡Corred insensatos, que empieza la sesión! 🍿',
+                skin: '#fdf2e9',
                 hairStyle: 'wizard',
-                hairColor: '#d5dbdb',
+                hairColor: '#e2e8f0',
                 topStyle: 'robe',
-                topColor: '#7f8c8d',
+                topColor: '#475569',
+                bottomColor: '#1e293b',
                 accessory: 'wizard_hat',
-                seatIndex: 2,
+                seatIndex: 1,
                 state: 'sitting',
-                stateTimer: 0,
                 x: 0, y: 0
             },
             {
                 id: 'elven',
                 name: 'Galadriel',
-                quote: 'Incluso la persona más pequeña puede cambiar el cine.',
+                quote: 'Incluso la persona más pequeña puede cambiar el cine ✨',
                 skin: '#fdf2e9',
                 hairStyle: 'elven',
-                hairColor: '#f7dc6f',
+                hairColor: '#fef08a',
                 topStyle: 'robe',
-                topColor: '#ecf0f1',
+                topColor: '#047857',
+                bottomColor: '#064e3b',
                 accessory: 'elf_ears',
-                seatIndex: 3,
+                seatIndex: 2,
                 state: 'sitting',
-                stateTimer: 0,
                 x: 0, y: 0
             },
             {
-                id: 'tester1',
-                name: 'Marcos',
-                quote: '¿Esta peli está en 4K o qué?',
+                id: 'aragorn',
+                name: 'Aragorn',
+                quote: 'Por los cinéfilos de Gondor... ¡silencio!',
                 skin: '#d7a176',
-                hairStyle: 'messy',
-                hairColor: '#17202a',
-                topStyle: 'jacket',
-                topColor: '#27ae60',
-                accessory: 'soda',
+                hairStyle: 'short',
+                hairColor: '#292524',
+                topStyle: 'suit',
+                topColor: '#18181b',
+                bottomColor: '#09090b',
+                accessory: 'none',
                 seatIndex: 13,
                 state: 'sitting',
-                stateTimer: 0,
                 x: 0, y: 0
             },
             {
-                id: 'tester2',
+                id: 'elena',
                 name: 'Elena',
-                quote: 'Pasádme las palomitas dulces porfa 🍿',
-                skin: '#fce5cd',
+                quote: '¿Alguien quiere un sorbo de refresco? 🥤',
+                skin: '#ffcc99',
                 hairStyle: 'ponytail',
-                hairColor: '#a04000',
-                topStyle: 'cineflix_tee',
-                topColor: '#9b59b6',
-                accessory: '3d_glasses',
-                seatIndex: 14,
+                hairColor: '#dc2626',
+                topStyle: 'hawaii',
+                topColor: '#f97316',
+                bottomColor: '#1e293b',
+                accessory: 'soda',
+                seatIndex: 10,
                 state: 'sitting',
-                stateTimer: 0,
                 x: 0, y: 0
             },
             {
-                id: 'tester3',
+                id: 'alex',
                 name: 'Alex Gamer',
                 quote: '¡La banda sonora de esta escena es épica!',
                 skin: '#edbb99',
                 hairStyle: 'anime',
                 hairColor: '#e74c3c',
                 topStyle: 'hoodie',
-                topColor: '#1abc9c',
+                topColor: '#0d9488',
+                bottomColor: '#1e293b',
                 accessory: 'headphones',
                 seatIndex: 4,
                 state: 'sitting',
-                stateTimer: 0,
                 x: 0, y: 0
             },
             {
-                id: 'tester4',
+                id: 'laura',
                 name: 'Laura',
-                quote: 'Silencio en la sala, por favor 🤫',
-                skin: '#f8c471',
+                quote: '¡Las palomitas dulces están buenísimas! 🍿',
+                skin: '#f5cba7',
                 hairStyle: 'afro',
                 hairColor: '#1b2631',
-                topStyle: 'hawaii',
-                topColor: '#f39c12',
+                topStyle: 'jacket',
+                topColor: '#d97706',
+                bottomColor: '#1e293b',
                 accessory: 'popcorn',
-                seatIndex: 7,
+                seatIndex: 8,
                 state: 'sitting',
-                stateTimer: 0,
                 x: 0, y: 0
             }
         ];
 
-        // 16 Theater Seats in a 3-Row Perspective layout
-        // Rows: Back (seats 0..5), Mid (seats 6..10), Front (seats 11..15)
+        // 16 Theater Seats in 3 Realistic Perspective Rows (960x540 coordinates)
         const SEATS = [
-            // Row 1 (Back, y = 142)
-            { id: 0, x: 80,  y: 138, row: 0, occ: null },
-            { id: 1, x: 125, y: 138, row: 0, occ: null },
-            { id: 2, x: 170, y: 138, row: 0, occ: null },
-            { id: 3, x: 270, y: 138, row: 0, occ: null },
-            { id: 4, x: 315, y: 138, row: 0, occ: null },
-            { id: 5, x: 360, y: 138, row: 0, occ: null },
+            // Row 0 (Back row, y = 305)
+            { id: 0, x: 120, y: 305, occ: null },
+            { id: 1, x: 230, y: 305, occ: null },
+            { id: 2, x: 340, y: 305, occ: null },
+            { id: 3, x: 570, y: 305, occ: null },
+            { id: 4, x: 680, y: 305, occ: null },
+            { id: 5, x: 790, y: 305, occ: null },
 
-            // Row 2 (Middle, y = 176)
-            { id: 6,  x: 65,  y: 172, row: 1, occ: null },
-            { id: 7,  x: 115, y: 172, row: 1, occ: null },
-            { id: 8,  x: 165, y: 172, row: 1, occ: null },
-            { id: 9,  x: 275, y: 172, row: 1, occ: null }, // VIP Center
-            { id: 10, x: 325, y: 172, row: 1, occ: null },
-            { id: 11, x: 375, y: 172, row: 1, occ: null },
+            // Row 1 (Middle row, y = 375)
+            { id: 6, x: 100, y: 375, occ: null },
+            { id: 7, x: 220, y: 375, occ: null },
+            { id: 8, x: 340, y: 375, occ: null },
+            { id: 9, x: 570, y: 375, occ: null },
+            { id: 10, x: 690, y: 375, occ: null },
+            { id: 11, x: 810, y: 375, occ: null },
 
-            // Row 3 (Front, y = 214)
-            { id: 12, x: 50,  y: 210, row: 2, occ: null },
-            { id: 13, x: 105, y: 210, row: 2, occ: null },
-            { id: 14, x: 335, y: 210, row: 2, occ: null },
-            { id: 15, x: 390, y: 210, row: 2, occ: null }
+            // Row 2 (Front row, y = 445)
+            { id: 12, x: 160, y: 445, occ: null },
+            { id: 13, x: 300, y: 445, occ: null },
+            { id: 14, x: 610, y: 445, occ: null },
+            { id: 15, x: 750, y: 445, occ: null }
         ];
 
-        // Speech Bubbles active on screen
-        let activeBubbles = [];
-
-        // Audio System (Pure Web Audio API Synthesizer - 0 dependencies)
+        // Sound System (Synthesized Web Audio API)
         let audioCtx = null;
         let isSoundEnabled = false;
 
@@ -876,7 +1000,7 @@
                 const gain = audioCtx.createGain();
                 osc.type = type;
                 osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-                gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
@@ -888,7 +1012,7 @@
         function playPopcornCrunch() {
             if (!isSoundEnabled) return;
             playBlip(320, 'triangle', 0.05);
-            setTimeout(() => playBlip(480, 'sine', 0.04), 40);
+            setTimeout(() => playBlip(480, 'sine', 0.04), 45);
         }
 
         function toggleSound() {
@@ -909,13 +1033,27 @@
             }
         }
 
+        // Color helper to shade pixels
+        function adjustColor(hex, amt) {
+            let usePound = false;
+            if (hex[0] === '#') { hex = hex.slice(1); usePound = true; }
+            let num = parseInt(hex, 16);
+            let r = (num >> 16) + amt;
+            let b = ((num >> 8) & 0x00FF) + amt;
+            let g = (num & 0x0000FF) + amt;
+            r = Math.max(Math.min(255, r), 0);
+            b = Math.max(Math.min(255, b), 0);
+            g = Math.max(Math.min(255, g), 0);
+            return (usePound ? '#' : '') + (g | (b << 8) | (r << 16)).toString(16).padStart(6, '0');
+        }
+
         /* =========================================================================
-           PALETTES & OPTIONS DEFINITION
+           PALETTES & OPTIONS
            ========================================================================= */
 
         const SKIN_PALETTE = ['#fdf2e9', '#ffcc99', '#f5cba7', '#edbb99', '#d7a176', '#875129', '#2ecc71', '#5dade2'];
         const HAIR_PALETTE = ['#17202a', '#3a2518', '#784212', '#a04000', '#f7dc6f', '#e74c3c', '#9b59b6', '#d5dbdb'];
-        const TOP_PALETTE  = ['#c0392b', '#2980b9', '#27ae60', '#8e44ad', '#f39c12', '#2c3e50', '#ecf0f1', '#16a085'];
+        const TOP_PALETTE  = ['#c0392b', '#2563eb', '#059669', '#7c3aed', '#d97706', '#334155', '#ecf0f1', '#0d9488'];
 
         const HAIR_STYLES = [
             { id: 'messy', name: 'Despeinado', icon: '💇‍♂️' },
@@ -944,581 +1082,648 @@
             { id: 'soda', name: 'Refresco', icon: '🥤' },
             { id: 'wizard_hat', name: 'Gorro Mago', icon: '🧙' },
             { id: 'headphones', name: 'Auriculares', icon: '🎧' },
-            { id: 'elf_ears', name: 'Orejas de Elfo', icon: '🧝' }
+            { id: 'elf_ears', name: 'Orejas Elfo', icon: '🧝' }
         ];
 
         /* =========================================================================
-           16-BIT PROCEDURAL SPRITE RENDERER
-           Draws a 16x24 character onto a canvas context with exact pixel coordinates
+           HIGH FIDELITY 16-BIT PROCEDURAL SPRITE RENDERER
+           Sprite Grid: 24 wide x 34 tall
            ========================================================================= */
 
-        function draw16BitCharacter(ctx, char, x, y, options = {}) {
-            const scale = options.scale || 1;
+        function draw16BitCharacterCrisp(ctx, char, originX, originY, scale = 2, options = {}) {
             const isSitting = options.isSitting !== undefined ? options.isSitting : true;
-            const animFrame = options.animFrame || 0; // 0, 1, 2 for walk or idle
+            const animFrame = options.animFrame || 0; // 0, 1, 2, 3
             const isChewing = options.isChewing || false;
             const blink = options.blink || false;
+            const s = scale;
 
             ctx.save();
-            ctx.translate(Math.floor(x), Math.floor(y));
-            ctx.scale(scale, scale);
+            ctx.imageSmoothingEnabled = false;
+            ctx.translate(Math.round(originX), Math.round(originY));
 
-            const skin = char.skin || '#ffcc99';
+            function rect(x, y, w, h, color) {
+                ctx.fillStyle = color;
+                ctx.fillRect(x * s, y * s, w * s, h * s);
+            }
+
+            const skin = char.skin || '#f5cba7';
+            const skinShadow = adjustColor(skin, -45);
             const hair = char.hairColor || '#3a2518';
-            const top = char.topColor || '#e74c3c';
-            const bot = char.bottomColor || '#2980b9';
+            const hairHighlight = adjustColor(hair, 35);
+            const hairShadow = adjustColor(hair, -35);
+            const top = char.topColor || '#c0392b';
+            const topShadow = adjustColor(top, -40);
+            const topHighlight = adjustColor(top, 30);
+            const bot = char.bottomColor || '#1e293b';
+            const botShadow = adjustColor(bot, -30);
 
-            // Shadow on floor/seat
-            ctx.fillStyle = 'rgba(0,0,0,0.35)';
-            ctx.fillRect(-6, 19, 12, 3);
+            // Ground/Seat Shadow
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.fillRect(3 * s, 31 * s, 18 * s, 4 * s);
 
-            // Legs / Pants
-            ctx.fillStyle = bot;
+            const headBob = (!isSitting && (animFrame === 1 || animFrame === 3)) ? -1 : 0;
+            const bodyBob = (!isSitting && (animFrame === 1 || animFrame === 3)) ? -1 : 0;
+
+            // 1. LEGS & SHOES
             if (isSitting) {
-                // Sitting bent legs
-                ctx.fillRect(-4, 14, 8, 4);
+                // Sitting folded legs
+                rect(5, 24, 14, 5, bot);
+                rect(5, 27, 14, 2, botShadow);
                 // Shoes
-                ctx.fillStyle = '#111';
-                ctx.fillRect(-5, 17, 4, 3);
-                ctx.fillRect(1, 17, 4, 3);
+                rect(4, 29, 6, 4, '#111827');
+                rect(14, 29, 6, 4, '#111827');
+                rect(5, 29, 4, 1, '#475569');
+                rect(15, 29, 4, 1, '#475569');
             } else {
-                // Walking animation
-                const legOffset = animFrame === 1 ? -2 : animFrame === 2 ? 2 : 0;
-                ctx.fillRect(-4, 14, 3, 5 + legOffset);
-                ctx.fillRect(1, 14, 3, 5 - legOffset);
+                // Standing / Walking
+                let leftLegOff = 0;
+                let rightLegOff = 0;
+                if (animFrame === 1) { leftLegOff = -2; rightLegOff = 2; }
+                else if (animFrame === 3) { leftLegOff = 2; rightLegOff = -2; }
+
+                rect(6, 23 + bodyBob, 5, 8 + leftLegOff, bot);
+                rect(13, 23 + bodyBob, 5, 8 + rightLegOff, bot);
                 // Shoes
-                ctx.fillStyle = '#111';
-                ctx.fillRect(-5, 18 + legOffset, 4, 2);
-                ctx.fillRect(1, 18 - legOffset, 4, 2);
+                rect(5, 31 + bodyBob + leftLegOff, 6, 3, '#111827');
+                rect(13, 31 + bodyBob + rightLegOff, 6, 3, '#111827');
+                rect(6, 31 + bodyBob + leftLegOff, 4, 1, '#475569');
+                rect(14, 31 + bodyBob + rightLegOff, 4, 1, '#475569');
             }
 
-            // Torso / Shirt
-            ctx.fillStyle = top;
-            ctx.fillRect(-4, 7, 8, 8);
+            // 2. TORSO & CLOTHING
+            rect(5, 14 + bodyBob, 14, 10, top);
+            rect(5, 14 + bodyBob, 2, 10, topShadow);
+            rect(17, 14 + bodyBob, 2, 10, topShadow);
+            rect(5, 23 + bodyBob, 14, 1, topShadow);
 
-            // Special Top details
             if (char.topStyle === 'cineflix_tee') {
-                // Golden letter "C" on chest
-                ctx.fillStyle = '#f1c40f';
-                ctx.fillRect(-1, 9, 2, 3);
-                ctx.fillRect(0, 9, 2, 1);
-                ctx.fillRect(0, 11, 2, 1);
+                // Golden Cineflix 'C' Logo
+                rect(10, 16 + bodyBob, 4, 1, '#f1c40f');
+                rect(9, 17 + bodyBob, 2, 4, '#f1c40f');
+                rect(10, 20 + bodyBob, 4, 1, '#f1c40f');
+                rect(11, 16 + bodyBob, 2, 1, '#fef08a');
+                rect(10, 14 + bodyBob, 4, 1, '#e2e8f0'); // collar
             } else if (char.topStyle === 'suit') {
-                // White shirt collar + black tie
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(-2, 7, 4, 2);
-                ctx.fillStyle = '#000';
-                ctx.fillRect(-1, 8, 2, 4);
+                rect(10, 14 + bodyBob, 4, 9, '#ffffff');
+                rect(11, 16 + bodyBob, 2, 6, '#0f172a');
+                rect(11, 15 + bodyBob, 2, 1, '#c0392b');
+                rect(8, 14 + bodyBob, 2, 8, topShadow);
+                rect(14, 14 + bodyBob, 2, 8, topShadow);
+            } else if (char.topStyle === 'hoodie') {
+                rect(9, 15 + bodyBob, 1, 4, '#ffffff');
+                rect(14, 15 + bodyBob, 1, 4, '#ffffff');
+                rect(7, 19 + bodyBob, 10, 4, topShadow);
+                rect(8, 20 + bodyBob, 8, 2, top);
             } else if (char.topStyle === 'hawaii') {
-                // Floral yellow dots
-                ctx.fillStyle = '#f1c40f';
-                ctx.fillRect(-3, 8, 1, 1);
-                ctx.fillRect(1, 10, 1, 1);
-                ctx.fillRect(-2, 12, 1, 1);
+                rect(7, 16 + bodyBob, 2, 2, '#fef08a');
+                rect(15, 18 + bodyBob, 2, 2, '#fef08a');
+                rect(9, 21 + bodyBob, 2, 2, '#67e8f9');
+                rect(13, 15 + bodyBob, 2, 2, '#67e8f9');
+                rect(11, 14 + bodyBob, 2, 3, skin);
+            } else if (char.topStyle === 'robe') {
+                rect(11, 14 + bodyBob, 2, 10, '#f1c40f');
+                rect(10, 17 + bodyBob, 4, 2, '#38bdf8');
+            } else if (char.topStyle === 'jacket') {
+                rect(10, 14 + bodyBob, 4, 9, '#1e293b');
+                rect(11, 15 + bodyBob, 1, 7, '#94a3b8'); // zipper
+                rect(7, 14 + bodyBob, 2, 5, '#0f172a'); // lapel
+                rect(15, 14 + bodyBob, 2, 5, '#0f172a');
             }
 
-            // Head / Neck Base
-            ctx.fillStyle = skin;
-            ctx.fillRect(-1, 5, 2, 2); // Neck
-            const headBob = (!isSitting && animFrame !== 0) ? -1 : 0;
-            ctx.fillRect(-4, -1 + headBob, 8, 7); // Face box
+            // 3. ARMS & SLEEVES
+            rect(3, 15 + bodyBob, 2, 7, top);
+            rect(19, 15 + bodyBob, 2, 7, top);
+            rect(3, 22 + bodyBob, 2, 2, skin);
+            rect(19, 22 + bodyBob, 2, 2, skin);
+
+            // 4. NECK & HEAD
+            rect(10, 12 + headBob, 4, 3, skinShadow);
+            rect(6, 4 + headBob, 12, 9, skin);
+            rect(6, 12 + headBob, 12, 1, skinShadow);
+            rect(6, 11 + headBob, 2, 1, skinShadow);
+            rect(16, 11 + headBob, 2, 1, skinShadow);
 
             // Elf Ears
             if (char.accessory === 'elf_ears') {
-                ctx.fillStyle = skin;
-                ctx.fillRect(-6, 0 + headBob, 2, 3);
-                ctx.fillRect(-7, -1 + headBob, 1, 2);
-                ctx.fillRect(4, 0 + headBob, 2, 3);
-                ctx.fillRect(6, -1 + headBob, 1, 2);
+                rect(4, 7 + headBob, 2, 3, skin);
+                rect(2, 6 + headBob, 2, 2, skin);
+                rect(1, 5 + headBob, 1, 2, skin);
+                rect(18, 7 + headBob, 2, 3, skin);
+                rect(20, 6 + headBob, 2, 2, skin);
+                rect(22, 5 + headBob, 1, 2, skin);
             }
 
-            // Eyes / Expression
+            // Cheeks blush
+            rect(6, 9 + headBob, 2, 1, '#fca5a5');
+            rect(16, 9 + headBob, 2, 1, '#fca5a5');
+
+            // 5. EYES & BROWS
+            rect(7, 6 + headBob, 3, 1, hairShadow);
+            rect(14, 6 + headBob, 3, 1, hairShadow);
+
             if (!blink) {
-                ctx.fillStyle = '#111';
-                ctx.fillRect(-3, 2 + headBob, 2, 2);
-                ctx.fillRect(1, 2 + headBob, 2, 2);
-                // Eye highlights
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(-3, 2 + headBob, 1, 1);
-                ctx.fillRect(1, 2 + headBob, 1, 1);
+                rect(7, 7 + headBob, 3, 3, '#ffffff');
+                rect(14, 7 + headBob, 3, 3, '#ffffff');
+                rect(8, 7 + headBob, 2, 3, '#0f172a');
+                rect(15, 7 + headBob, 2, 3, '#0f172a');
+                rect(8, 7 + headBob, 1, 1, '#ffffff');
+                rect(15, 7 + headBob, 1, 1, '#ffffff');
             } else {
-                // Closed eyes (blink)
-                ctx.fillStyle = '#333';
-                ctx.fillRect(-3, 3 + headBob, 2, 1);
-                ctx.fillRect(1, 3 + headBob, 2, 1);
+                rect(7, 8 + headBob, 3, 1, '#334155');
+                rect(14, 8 + headBob, 3, 1, '#334155');
             }
 
-            // Chewing / Mouth motion
-            if (isChewing) {
-                ctx.fillStyle = '#c0392b';
-                ctx.fillRect(-1, 4 + headBob, 2, 2);
+            // Nose
+            rect(11, 9 + headBob, 2, 1, skinShadow);
+
+            // Mouth
+            if (!isChewing) {
+                rect(11, 11 + headBob, 2, 1, '#991b1b');
+            } else {
+                rect(10, 10 + headBob, 4, 3, '#7f1d1d');
+                rect(11, 11 + headBob, 2, 1, '#ffffff');
+                rect(9, 10 + headBob, 1, 1, '#fef08a');
+                rect(14, 12 + headBob, 1, 1, '#fef08a');
             }
 
-            // 3D Glasses Accessory
+            // 6. 3D GLASSES
             if (char.accessory === '3d_glasses') {
-                ctx.fillStyle = '#ecf0f1'; // Frame
-                ctx.fillRect(-4, 1 + headBob, 8, 3);
-                // Left lens: Red
-                ctx.fillStyle = '#e74c3c';
-                ctx.fillRect(-3, 2 + headBob, 2, 2);
-                // Right lens: Cyan
-                ctx.fillStyle = '#00ffff';
-                ctx.fillRect(1, 2 + headBob, 2, 2);
+                rect(5, 6 + headBob, 14, 4, '#f8fafc');
+                rect(7, 7 + headBob, 3, 2, '#ef4444');
+                rect(14, 7 + headBob, 3, 2, '#06b6d4');
+                rect(7, 7 + headBob, 1, 1, '#ffffff');
+                rect(14, 7 + headBob, 1, 1, '#ffffff');
+                rect(10, 7 + headBob, 4, 1, '#e2e8f0');
             }
 
-            // Hair Styles
-            ctx.fillStyle = hair;
-            if (char.hairStyle === 'short') {
-                ctx.fillRect(-5, -3 + headBob, 10, 3);
-                ctx.fillRect(-5, 0 + headBob, 1, 3);
-                ctx.fillRect(4, 0 + headBob, 1, 3);
-            } else if (char.hairStyle === 'messy') {
-                ctx.fillRect(-5, -4 + headBob, 10, 4);
-                ctx.fillRect(-6, -2 + headBob, 2, 3);
-                ctx.fillRect(4, -3 + headBob, 2, 4);
-                ctx.fillRect(-1, -5 + headBob, 3, 2); // Tufts
+            // 7. HAIR STYLES
+            if (char.hairStyle === 'messy') {
+                rect(5, 2 + headBob, 14, 4, hair);
+                rect(6, 1 + headBob, 11, 2, hair);
+                rect(7, 0 + headBob, 6, 2, hairHighlight);
+                rect(14, 1 + headBob, 4, 2, hair);
+                rect(4, 4 + headBob, 2, 5, hair);
+                rect(18, 4 + headBob, 2, 5, hair);
+                rect(7, 3 + headBob, 7, 2, hairHighlight);
+                rect(6, 5 + headBob, 3, 1, hair);
+            } else if (char.hairStyle === 'short') {
+                rect(5, 2 + headBob, 14, 4, hair);
+                rect(7, 1 + headBob, 10, 2, hair);
+                rect(8, 2 + headBob, 8, 1, hairHighlight);
+                rect(5, 4 + headBob, 2, 5, hair);
+                rect(17, 4 + headBob, 2, 5, hair);
             } else if (char.hairStyle === 'ponytail') {
-                ctx.fillRect(-5, -3 + headBob, 10, 3);
-                ctx.fillRect(-5, 0 + headBob, 1, 4);
-                ctx.fillRect(4, 0 + headBob, 1, 4);
-                // Ponytail to the side
-                ctx.fillRect(5, -2 + headBob, 3, 6);
+                rect(5, 2 + headBob, 14, 4, hair);
+                rect(5, 4 + headBob, 2, 5, hair);
+                rect(17, 4 + headBob, 2, 5, hair);
+                rect(2, 4 + headBob, 3, 10, hair);
+                rect(2, 14 + headBob, 2, 5, hairShadow);
+                rect(3, 4 + headBob, 2, 1, '#e11d48');
             } else if (char.hairStyle === 'afro') {
-                ctx.fillRect(-6, -6 + headBob, 12, 7);
-                ctx.fillRect(-7, -4 + headBob, 1, 5);
-                ctx.fillRect(6, -4 + headBob, 1, 5);
+                rect(3, 0 + headBob, 18, 8, hair);
+                rect(2, 2 + headBob, 20, 6, hair);
+                rect(4, 1 + headBob, 16, 2, hairHighlight);
+                rect(2, 7 + headBob, 4, 4, hairShadow);
+                rect(18, 7 + headBob, 4, 4, hairShadow);
             } else if (char.hairStyle === 'wizard') {
-                // Long hair and big beard
-                ctx.fillRect(-5, -3 + headBob, 10, 3);
-                ctx.fillRect(-5, 0 + headBob, 1, 8);
-                ctx.fillRect(4, 0 + headBob, 1, 8);
-                // Beard
-                ctx.fillRect(-3, 4 + headBob, 6, 6);
-                ctx.fillRect(-2, 10 + headBob, 4, 3);
+                rect(5, 2 + headBob, 14, 4, hair);
+                rect(4, 4 + headBob, 3, 13, hair);
+                rect(17, 4 + headBob, 3, 13, hair);
+                rect(7, 11 + headBob, 10, 10, hair);
+                rect(8, 21 + headBob, 8, 4, hair);
+                rect(9, 25 + headBob, 6, 3, hair);
+                rect(9, 12 + headBob, 6, 2, hairHighlight);
             } else if (char.hairStyle === 'anime') {
-                ctx.fillRect(-5, -4 + headBob, 10, 4);
-                ctx.fillRect(-4, -6 + headBob, 3, 3);
-                ctx.fillRect(1, -6 + headBob, 4, 3);
-                ctx.fillRect(5, -2 + headBob, 2, 3);
+                rect(5, 1 + headBob, 14, 4, hair);
+                rect(4, -3 + headBob, 4, 5, hair);
+                rect(5, -2 + headBob, 2, 3, hairHighlight);
+                rect(10, -4 + headBob, 4, 6, hair);
+                rect(11, -3 + headBob, 2, 4, hairHighlight);
+                rect(16, -2 + headBob, 4, 5, hair);
+                rect(4, 4 + headBob, 2, 5, hair);
+                rect(18, 4 + headBob, 2, 5, hair);
             } else if (char.hairStyle === 'elven') {
-                // Smooth long hair
-                ctx.fillRect(-5, -3 + headBob, 10, 3);
-                ctx.fillRect(-5, 0 + headBob, 1, 10);
-                ctx.fillRect(4, 0 + headBob, 1, 10);
-                ctx.fillRect(-4, 7 + headBob, 1, 4);
-                ctx.fillRect(3, 7 + headBob, 1, 4);
+                rect(5, 2 + headBob, 14, 4, hair);
+                rect(7, 2 + headBob, 10, 2, hairHighlight);
+                rect(4, 4 + headBob, 3, 17, hair);
+                rect(17, 4 + headBob, 3, 17, hair);
+                rect(5, 19 + headBob, 2, 4, hairShadow);
+                rect(17, 19 + headBob, 2, 4, hairShadow);
+            } else if (char.hairStyle === 'bald') {
+                rect(6, 3 + headBob, 12, 2, hairShadow);
+                rect(5, 4 + headBob, 2, 3, hairShadow);
+                rect(17, 4 + headBob, 2, 3, hairShadow);
             }
 
-            // Head Accessories
+            // 8. ACCESSORIES
             if (char.accessory === 'wizard_hat') {
-                ctx.fillStyle = '#2c3e50';
-                ctx.fillRect(-7, -3 + headBob, 14, 2); // Brim
-                ctx.fillRect(-4, -6 + headBob, 8, 3);
-                ctx.fillRect(-2, -9 + headBob, 4, 3);
-                ctx.fillRect(-1, -12 + headBob, 2, 3); // Tip
-                // Buckle
-                ctx.fillStyle = '#f1c40f';
-                ctx.fillRect(-2, -4 + headBob, 4, 1);
+                rect(2, 2 + headBob, 20, 2, '#312e81');
+                rect(5, -1 + headBob, 14, 3, '#3730a3');
+                rect(7, -4 + headBob, 10, 3, '#4338ca');
+                rect(9, -7 + headBob, 6, 3, '#4f46e5');
+                rect(11, -10 + headBob, 3, 3, '#6366f1');
+                rect(10, 0 + headBob, 4, 2, '#facc15');
+                rect(11, -3 + headBob, 2, 2, '#fef08a');
             } else if (char.accessory === 'headphones') {
-                ctx.fillStyle = '#2ecc71';
-                ctx.fillRect(-5, -4 + headBob, 10, 2); // Arch
-                ctx.fillStyle = '#111';
-                ctx.fillRect(-6, 1 + headBob, 2, 4);
-                ctx.fillRect(4, 1 + headBob, 2, 4);
-            }
-
-            // Hand / Item Held Accessories
-            if (char.accessory === 'popcorn') {
-                // Popcorn bucket held in front
-                ctx.fillStyle = '#e74c3c'; // Red-striped bucket
-                ctx.fillRect(2, 9, 5, 6);
-                ctx.fillStyle = '#ecf0f1';
-                ctx.fillRect(3, 10, 1, 4);
-                ctx.fillRect(5, 10, 1, 4);
-                // Popcorn puffs on top
-                ctx.fillStyle = '#f1c40f';
-                ctx.fillRect(1, 7, 7, 3);
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(2, 7, 2, 2);
-                ctx.fillRect(5, 6, 2, 2);
+                rect(6, 1 + headBob, 12, 2, '#334155');
+                rect(3, 5 + headBob, 3, 7, '#10b981');
+                rect(18, 5 + headBob, 3, 7, '#10b981');
+                rect(4, 6 + headBob, 1, 5, '#a7f3d0');
+                rect(19, 6 + headBob, 1, 5, '#a7f3d0');
+            } else if (char.accessory === 'popcorn') {
+                const px = 14;
+                const py = 18 + bodyBob;
+                rect(px, py + 2, 8, 8, '#ef4444');
+                rect(px + 2, py + 3, 2, 7, '#ffffff');
+                rect(px + 5, py + 3, 1, 7, '#ffffff');
+                rect(px - 1, py, 10, 3, '#facc15');
+                rect(px, py - 1, 3, 2, '#ffffff');
+                rect(px + 4, py - 1, 3, 2, '#ffffff');
+                rect(px + 2, py - 2, 3, 2, '#fef08a');
             } else if (char.accessory === 'soda') {
-                // Soda cup with straw
-                ctx.fillStyle = '#3498db';
-                ctx.fillRect(3, 10, 4, 5);
-                ctx.fillStyle = '#ecf0f1';
-                ctx.fillRect(2, 9, 6, 1); // Lid
-                ctx.fillStyle = '#e74c3c';
-                ctx.fillRect(4, 6, 1, 3); // Straw
+                const sx = 15;
+                const sy = 19 + bodyBob;
+                rect(sx, sy + 2, 6, 8, '#0284c7');
+                rect(sx - 1, sy + 1, 8, 2, '#ffffff');
+                rect(sx + 3, sy - 3, 2, 4, '#ef4444');
+                rect(sx + 3, sy - 2, 2, 1, '#ffffff');
+                rect(sx + 4, sy - 5, 3, 2, '#ef4444');
             }
 
             ctx.restore();
         }
 
         /* =========================================================================
-           VIRTUAL CINEMA SCENERY RENDERER
+           VIRTUAL CINEMA ROOM RENDERER (960x540)
            ========================================================================= */
 
         const cinemaCanvas = document.getElementById('cinema-canvas');
         const cinemaCtx = cinemaCanvas.getContext('2d');
+        cinemaCtx.imageSmoothingEnabled = false;
 
-        let globalClock = 0;
-        let screenMovieFrame = 0;
+        function drawCinemaSala(ctx, time) {
+            const w = 960;
+            const h = 540;
 
-        function renderCinema() {
-            globalClock++;
+            // Background
+            ctx.fillStyle = '#080a10';
+            ctx.fillRect(0, 0, w, h);
 
-            const W = cinemaCanvas.width;
-            const H = cinemaCanvas.height;
-
-            // 1. Dark Theater Atmosphere & Walls
-            cinemaCtx.fillStyle = '#080a0f';
-            cinemaCtx.fillRect(0, 0, W, H);
-
-            // Acoustic wall panelling
-            cinemaCtx.fillStyle = '#0d131c';
-            for (let i = 0; i < W; i += 32) {
-                cinemaCtx.fillRect(i, 0, 2, 130);
+            // Wooden Art-Deco Wall Panels
+            const wallW = 110;
+            ctx.fillStyle = '#16131c';
+            ctx.fillRect(0, 0, wallW, h);
+            ctx.fillStyle = '#231e2d';
+            for (let i = 0; i < 6; i++) {
+                ctx.fillRect(15, 35 + i * 82, 80, 60);
+                ctx.fillStyle = '#120f18';
+                ctx.fillRect(20, 40 + i * 82, 70, 50);
+                ctx.fillStyle = '#231e2d';
+            }
+            // Right Wall
+            ctx.fillRect(w - wallW, 0, wallW, h);
+            for (let i = 0; i < 6; i++) {
+                ctx.fillRect(w - wallW + 15, 35 + i * 82, 80, 60);
+                ctx.fillStyle = '#120f18';
+                ctx.fillRect(w - wallW + 20, 40 + i * 82, 70, 50);
+                ctx.fillStyle = '#231e2d';
             }
 
-            // Glowing Green EXIT Signs
-            cinemaCtx.fillStyle = '#27ae60';
-            cinemaCtx.fillRect(16, 36, 24, 10);
-            cinemaCtx.fillRect(W - 40, 36, 24, 10);
-            cinemaCtx.fillStyle = '#000';
-            cinemaCtx.font = '6px monospace';
-            cinemaCtx.fillText('EXIT', 19, 44);
-            cinemaCtx.fillText('EXIT', W - 37, 44);
-            // Green glow
-            cinemaCtx.fillStyle = 'rgba(46, 204, 113, 0.12)';
-            cinemaCtx.fillRect(8, 28, 40, 26);
-            cinemaCtx.fillRect(W - 48, 28, 40, 26);
+            // Glowing Vintage Sconces
+            function drawSconce(x, y) {
+                ctx.fillStyle = '#d97706';
+                ctx.fillRect(x - 4, y, 8, 14);
+                ctx.fillStyle = '#fef08a';
+                ctx.fillRect(x - 6, y - 10, 12, 10);
 
-            // 2. THE GIANT MOVIE SCREEN
-            const screenX = 70;
-            const screenY = 16;
-            const screenW = W - 140;
-            const screenH = 88;
+                const grad = ctx.createRadialGradient(x, y - 5, 2, x, y - 5, 45);
+                grad.addColorStop(0, 'rgba(251, 191, 36, 0.4)');
+                grad.addColorStop(1, 'rgba(251, 191, 36, 0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(x, y - 5, 45, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            drawSconce(55, 110);
+            drawSconce(55, 270);
+            drawSconce(w - 55, 110);
+            drawSconce(w - 55, 270);
 
-            // Screen Frame / Bezel
-            cinemaCtx.fillStyle = '#1c2430';
-            cinemaCtx.fillRect(screenX - 4, screenY - 4, screenW + 8, screenH + 8);
-            cinemaCtx.fillStyle = '#000';
-            cinemaCtx.fillRect(screenX - 2, screenY - 2, screenW + 4, screenH + 4);
+            // Neon EXIT Signs
+            ctx.fillStyle = '#064e3b';
+            ctx.fillRect(35, 25, 45, 18);
+            ctx.fillRect(w - 80, 25, 45, 18);
+            ctx.font = 'bold 8px "Press Start 2P", monospace';
+            ctx.fillStyle = '#34d399';
+            ctx.fillText('SALIDA', 39, 38);
+            ctx.fillText('SALIDA', w - 76, 38);
 
-            // Screen Content: Simulated 16-Bit Sci-Fi / Fantasy Movie Loop!
-            renderSimulatedScreenMovie(cinemaCtx, screenX, screenY, screenW, screenH);
+            // Carpet Floor
+            ctx.fillStyle = '#260a0f';
+            ctx.fillRect(wallW, 240, w - wallW * 2, h - 240);
 
-            // Screen Ambient Light Projector Cone Beam
-            const beamFlicker = 0.08 + Math.sin(globalClock * 0.15) * 0.02;
-            const grad = cinemaCtx.createLinearGradient(W / 2, 0, W / 2, H);
-            grad.addColorStop(0, `rgba(180, 210, 255, ${beamFlicker * 1.5})`);
-            grad.addColorStop(0.5, `rgba(120, 160, 255, ${beamFlicker})`);
-            grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            // Red Carpet Center Aisle
+            ctx.beginPath();
+            ctx.moveTo(430, 240);
+            ctx.lineTo(530, 240);
+            ctx.lineTo(565, h);
+            ctx.lineTo(395, h);
+            ctx.closePath();
+            ctx.fillStyle = '#7f1d1d';
+            ctx.fill();
 
-            cinemaCtx.save();
-            cinemaCtx.fillStyle = grad;
-            cinemaCtx.beginPath();
-            cinemaCtx.moveTo(W / 2 - 30, 0);
-            cinemaCtx.lineTo(W / 2 + 30, 0);
-            cinemaCtx.lineTo(W, H);
-            cinemaCtx.lineTo(0, H);
-            cinemaCtx.closePath();
-            cinemaCtx.fill();
-            cinemaCtx.restore();
+            // Gold borders on carpet
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(430, 240);
+            ctx.lineTo(395, h);
+            ctx.moveTo(530, 240);
+            ctx.lineTo(565, h);
+            ctx.stroke();
 
-            // 3. Central Carpet Aisle
-            cinemaCtx.fillStyle = '#4a1515'; // Dark velvet red carpet
-            cinemaCtx.beginPath();
-            cinemaCtx.moveTo(215, 120);
-            cinemaCtx.lineTo(265, 120);
-            cinemaCtx.lineTo(290, H);
-            cinemaCtx.lineTo(190, H);
-            cinemaCtx.closePath();
-            cinemaCtx.fill();
-
-            // Carpet golden side trims
-            cinemaCtx.strokeStyle = '#d4ac0d';
-            cinemaCtx.lineWidth = 1;
-            cinemaCtx.beginPath();
-            cinemaCtx.moveTo(215, 120); cinemaCtx.lineTo(190, H);
-            cinemaCtx.moveTo(265, 120); cinemaCtx.lineTo(290, H);
-            cinemaCtx.stroke();
-
-            // 4. SEATS & CHARACTERS LAYERED (Rendered back-to-front by row)
-            // Group seats by row (0, 1, 2)
-            for (let rowIdx = 0; rowIdx < 3; rowIdx++) {
-                const rowSeats = SEATS.filter(s => s.row === rowIdx);
-
-                // Draw Seat Backrests for this row
-                rowSeats.forEach(seat => {
-                    drawSeat(cinemaCtx, seat.x, seat.y, rowIdx);
-                });
-
-                // Draw Characters in this row
-                rowSeats.forEach(seat => {
-                    const occupant = seat.occ;
-                    if (occupant) {
-                        const isChew = (globalClock + occupant.name.length * 5) % 90 < 25 && occupant.accessory === 'popcorn';
-                        const blink = (globalClock + occupant.name.length * 11) % 110 < 6;
-                        draw16BitCharacter(cinemaCtx, occupant, seat.x + 8, seat.y - 4, {
-                            scale: 1,
-                            isSitting: true,
-                            isChewing: isChew,
-                            blink: blink
-                        });
-                    }
-                });
-
-                // Draw Seat Arms / Front cushion so characters look tucked into the seats
-                rowSeats.forEach(seat => {
-                    drawSeatArmrests(cinemaCtx, seat.x, seat.y, rowIdx);
-                });
+            // Diamond carpet pattern
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.12)';
+            for (let cy = 260; cy < h; cy += 35) {
+                const spread = (cy - 240) * 0.15;
+                ctx.fillRect(475 - spread, cy, 10, 10);
+                ctx.fillRect(475 + spread, cy, 10, 10);
             }
 
-            // 5. Walking characters (e.g. going to bathroom / getting popcorn)
-            COMMUNITY_CHARACTERS.forEach(char => {
-                if (char.state && char.state.startsWith('walking')) {
-                    const walkFrame = Math.floor(globalClock / 6) % 3;
-                    draw16BitCharacter(cinemaCtx, char, char.x, char.y, {
-                        scale: 1,
-                        isSitting: false,
-                        animFrame: walkFrame,
-                        blink: false
+            // ==========================================
+            // THE MOVIE SCREEN
+            // ==========================================
+            const scrX = 170;
+            const scrY = 20;
+            const scrW = 620;
+            const scrH = 210;
+
+            // Outer Screen Frame
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(scrX - 8, scrY - 8, scrW + 16, scrH + 16);
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(scrX - 4, scrY - 4, scrW + 8, scrH + 8);
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(scrX, scrY, scrW, scrH);
+            ctx.clip();
+
+            // Space Background
+            ctx.fillStyle = '#030712';
+            ctx.fillRect(scrX, scrY, scrW, scrH);
+
+            // Stars
+            const starSpeed = (time * 0.05) % scrW;
+            ctx.fillStyle = '#ffffff';
+            for (let i = 0; i < 50; i++) {
+                const sx = scrX + ((i * 37 + starSpeed * (i % 3 + 1)) % scrW);
+                const sy = scrY + ((i * 23) % scrH);
+                const sz = (i % 3 === 0) ? 2 : 1;
+                ctx.fillRect(sx, sy, sz, sz);
+            }
+
+            // Retro Sci-Fi Planet with Rings
+            const planetX = scrX + 440;
+            const planetY = scrY + 85;
+            const pGrad = ctx.createLinearGradient(planetX - 35, planetY - 35, planetX + 35, planetY + 35);
+            pGrad.addColorStop(0, '#f97316');
+            pGrad.addColorStop(0.5, '#ea580c');
+            pGrad.addColorStop(1, '#7c2d12');
+            ctx.fillStyle = pGrad;
+            ctx.beginPath();
+            ctx.arc(planetX, planetY, 30, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Planet Ring
+            ctx.strokeStyle = 'rgba(254, 215, 170, 0.7)';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.ellipse(planetX, planetY, 52, 13, -0.25, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Spaceship flying across
+            const shipX = scrX + ((time * 0.12) % (scrW + 100)) - 50;
+            const shipY = scrY + 65 + Math.sin(time * 0.003) * 14;
+            ctx.fillStyle = '#ef4444';
+            ctx.fillRect(shipX - 12, shipY + 2, 8, 4);
+            ctx.fillStyle = '#fbbf24';
+            ctx.fillRect(shipX - 6, shipY + 3, 5, 2);
+            ctx.fillStyle = '#06b6d4';
+            ctx.fillRect(shipX, shipY, 20, 8);
+            ctx.fillRect(shipX + 8, shipY - 3, 8, 4);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(shipX + 18, shipY + 2, 6, 4);
+
+            // Scanlines & Movie Letterbox
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+            for (let y = scrY; y < scrY + scrH; y += 4) {
+                ctx.fillRect(scrX, y, scrW, 1);
+            }
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(scrX, scrY, scrW, 12);
+            ctx.fillRect(scrX, scrY + scrH - 12, scrW, 12);
+
+            ctx.font = '8px "Press Start 2P", monospace';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+            ctx.fillText('CINEFLIX STUDIOS • ESTRENO EXCLUSIVO', scrX + 16, scrY + scrH - 3);
+
+            ctx.restore();
+
+            // Volumetric Projector Beam
+            const projBeam = ctx.createLinearGradient(480, 0, 480, scrY + scrH);
+            projBeam.addColorStop(0, 'rgba(224, 242, 254, 0.35)');
+            projBeam.addColorStop(1, 'rgba(224, 242, 254, 0.02)');
+            ctx.fillStyle = projBeam;
+            ctx.beginPath();
+            ctx.moveTo(460, 0);
+            ctx.lineTo(500, 0);
+            ctx.lineTo(scrX + scrW, scrY + scrH);
+            ctx.lineTo(scrX, scrY + scrH);
+            ctx.closePath();
+            ctx.fill();
+
+            // Velvet Curtains
+            const curtainW = 60;
+            const cGradL = ctx.createLinearGradient(scrX - curtainW, 0, scrX + 10, 0);
+            cGradL.addColorStop(0, '#581c1c');
+            cGradL.addColorStop(0.5, '#991b1b');
+            cGradL.addColorStop(1, '#450a0a');
+            ctx.fillStyle = cGradL;
+            ctx.fillRect(scrX - curtainW, scrY - 15, curtainW + 10, scrH + 30);
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(scrX + 6, scrY - 15, 3, scrH + 30);
+
+            const cGradR = ctx.createLinearGradient(scrX + scrW - 10, 0, scrX + scrW + curtainW, 0);
+            cGradR.addColorStop(0, '#450a0a');
+            cGradR.addColorStop(0.5, '#991b1b');
+            cGradR.addColorStop(1, '#581c1c');
+            ctx.fillStyle = cGradR;
+            ctx.fillRect(scrX + scrW - 10, scrY - 15, curtainW + 10, scrH + 30);
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(scrX + scrW - 9, scrY - 15, 3, scrH + 30);
+
+            // Top Valance Drape
+            ctx.fillStyle = '#7f1d1d';
+            ctx.fillRect(scrX - curtainW, scrY - 15, scrW + curtainW * 2, 18);
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(scrX - curtainW, scrY + 3, scrW + curtainW * 2, 3);
+
+            // ==========================================
+            // SEATS & AUDIENCE
+            // ==========================================
+            function drawVelvetSeat(x, y, occ = null) {
+                const sw = 56;
+                const sh = 42;
+
+                ctx.fillStyle = '#1e0508';
+                ctx.fillRect(x - 2, y - 2, sw + 4, sh + 4);
+                ctx.fillStyle = '#831843';
+                ctx.fillRect(x, y, sw, sh);
+                ctx.fillStyle = '#9d174d';
+                ctx.fillRect(x + 4, y + 4, sw - 8, sh - 14);
+
+                ctx.fillStyle = '#500724';
+                ctx.fillRect(x + 16, y + 10, 2, 10);
+                ctx.fillRect(x + 36, y + 10, 2, 10);
+
+                ctx.fillStyle = '#261b17';
+                ctx.fillRect(x - 6, y + 14, 6, 26);
+                ctx.fillRect(x + sw, y + 14, 6, 26);
+                ctx.fillStyle = '#d97706';
+                ctx.fillRect(x - 5, y + 14, 4, 3);
+                ctx.fillRect(x + sw + 1, y + 14, 4, 3);
+
+                ctx.fillStyle = '#701a35';
+                ctx.fillRect(x - 2, y + sh - 8, sw + 4, 18);
+            }
+
+            // Draw all seats and their occupants
+            SEATS.forEach(seat => {
+                drawVelvetSeat(seat.x, seat.y, seat.occ);
+
+                if (seat.occ) {
+                    const charX = seat.x + 4;
+                    const charY = seat.y - 18;
+                    const isChewing = (Math.floor(time / 450) % 2 === 0) && (seat.occ.accessory === 'popcorn');
+                    const blink = (Math.floor(time / 2500) % 7 === 0);
+
+                    draw16BitCharacterCrisp(ctx, seat.occ, charX, charY, 2, {
+                        isSitting: true,
+                        isChewing: isChewing,
+                        blink: blink
                     });
                 }
             });
 
-            // 6. Draw Speech Bubbles
-            renderSpeechBubbles(cinemaCtx);
-
-            requestAnimationFrame(renderCinema);
-        }
-
-        // Draw a plush cinema seat
-        function drawSeat(ctx, x, y, row) {
-            ctx.fillStyle = '#641e16'; // Deep red frame
-            ctx.fillRect(x - 1, y - 6, 18, 18);
-            ctx.fillStyle = '#922b21'; // Velvet red back cushion
-            ctx.fillRect(x, y - 5, 16, 14);
-            // Cushion highlight
-            ctx.fillStyle = '#c0392b';
-            ctx.fillRect(x + 1, y - 4, 14, 2);
-        }
-
-        function drawSeatArmrests(ctx, x, y, row) {
-            // Front cushion
-            ctx.fillStyle = '#78281f';
-            ctx.fillRect(x, y + 8, 16, 5);
-            // Armrests with cup holders
-            ctx.fillStyle = '#1c2833';
-            ctx.fillRect(x - 3, y + 2, 3, 10);
-            ctx.fillRect(x + 16, y + 2, 3, 10);
-        }
-
-        // Animated Movie on Screen
-        function renderSimulatedScreenMovie(ctx, sx, sy, sw, sh) {
-            ctx.save();
-            ctx.beginPath();
-            ctx.rect(sx, sy, sw, sh);
-            ctx.clip();
-
-            // Space / Galaxy Background with moving stars
-            ctx.fillStyle = '#060a14';
-            ctx.fillRect(sx, sy, sw, sh);
-
-            // Pixel Starfield
-            for (let i = 0; i < 25; i++) {
-                const starX = sx + ((i * 37 + globalClock * (i % 2 === 0 ? 0.3 : 0.6)) % sw);
-                const starY = sy + (i * 19) % sh;
-                ctx.fillStyle = i % 3 === 0 ? '#f39c12' : '#ffffff';
-                ctx.fillRect(Math.floor(starX), Math.floor(starY), 1, 1);
-            }
-
-            // Big Glowing Retro Planet or Sun
-            const sunX = sx + sw * 0.7;
-            const sunY = sy + sh * 0.45;
-            const sunRadius = 16 + Math.sin(globalClock * 0.03) * 1.5;
-            const sunGrad = ctx.createRadialGradient(sunX, sunY, 2, sunX, sunY, sunRadius);
-            sunGrad.addColorStop(0, '#f1c40f');
-            sunGrad.addColorStop(0.7, '#e67e22');
-            sunGrad.addColorStop(1, 'transparent');
-            ctx.fillStyle = sunGrad;
-            ctx.beginPath();
-            ctx.arc(sunX, sunY, sunRadius, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Retro Mountains Silhouette
-            ctx.fillStyle = '#111726';
-            ctx.beginPath();
-            ctx.moveTo(sx, sy + sh);
-            ctx.lineTo(sx + 30, sy + sh - 28);
-            ctx.lineTo(sx + 80, sy + sh - 14);
-            ctx.lineTo(sx + 140, sy + sh - 35);
-            ctx.lineTo(sx + 200, sy + sh - 20);
-            ctx.lineTo(sx + 260, sy + sh - 40);
-            ctx.lineTo(sx + sw, sy + sh - 15);
-            ctx.lineTo(sx + sw, sy + sh);
-            ctx.closePath();
-            ctx.fill();
-
-            // Spaceship / Flying dragon crossing the screen!
-            const shipX = sx + ((globalClock * 1.2) % (sw + 60)) - 30;
-            const shipY = sy + 25 + Math.sin(globalClock * 0.05) * 8;
-            ctx.fillStyle = '#00ffff';
-            ctx.fillRect(Math.floor(shipX), Math.floor(shipY), 7, 2);
-            ctx.fillRect(Math.floor(shipX) + 2, Math.floor(shipY) - 1, 3, 4);
-            // Thruster fire
-            ctx.fillStyle = '#e74c3c';
-            ctx.fillRect(Math.floor(shipX) - 3, Math.floor(shipY), 3, 1);
-
-            // Movie scanlines effect
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-            for (let y = sy; y < sy + sh; y += 3) {
-                ctx.fillRect(sx, y, sw, 1);
-            }
-
-            // Cinematic Letterbox black bars
-            ctx.fillStyle = '#000';
-            ctx.fillRect(sx, sy, sw, 6);
-            ctx.fillRect(sx, sy + sh - 6, sw, 6);
-
-            ctx.restore();
+            // Draw walking characters (e.g. going to bathroom)
+            [myCharacter, ...COMMUNITY_CHARACTERS].forEach(c => {
+                if (c.state && c.state.startsWith('walking')) {
+                    const walkAnim = Math.floor(time / 150) % 4;
+                    draw16BitCharacterCrisp(ctx, c, c.x - 24, c.y - 48, 2, {
+                        isSitting: false,
+                        animFrame: walkAnim,
+                        blink: false
+                    });
+                }
+            });
         }
 
         /* =========================================================================
-           SPEECH BUBBLES SYSTEM
+           CRISP VECTOR DOM SPEECH BUBBLE SYSTEM
            ========================================================================= */
 
-        function triggerSpeech(char, text, durationMs = 4500) {
-            // Remove existing bubble for this character
-            activeBubbles = activeBubbles.filter(b => b.charId !== char.name);
+        const bubbleLayer = document.getElementById('bubble-layer');
 
-            // Find current coordinates of the character
-            let posX = char.x;
-            let posY = char.y;
+        function triggerSpeech(char, text, durationMs = 4500) {
+            // Find character position
+            let posX = char.x || 480;
+            let posY = char.y || 400;
+
             if (char.seatIndex !== undefined) {
-                const seat = SEATS[char.seatIndex];
-                if (seat) {
-                    posX = seat.x + 8;
-                    posY = seat.y - 12;
+                const s = SEATS[char.seatIndex];
+                if (s) {
+                    posX = s.x + 28;
+                    posY = s.y - 18;
                 }
             }
 
-            activeBubbles.push({
-                charId: char.name,
-                name: char.name,
-                text: text,
-                x: posX,
-                y: posY,
-                created: Date.now(),
-                expires: Date.now() + durationMs,
-                charIndex: 0
-            });
+            // Remove existing bubble for this character
+            const existing = document.getElementById('bubble-' + char.name.replace(/\s+/g, '-'));
+            if (existing) existing.remove();
 
+            const b = document.createElement('div');
+            b.id = 'bubble-' + char.name.replace(/\s+/g, '-');
+            b.className = 'pixel-bubble';
+
+            // Use percentage coordinates so it scales responsively on any screen!
+            const pctX = (posX / 960) * 100;
+            const pctY = (posY / 540) * 100;
+            b.style.left = `${pctX}%`;
+            b.style.top = `${pctY}%`;
+
+            b.innerHTML = `
+                <div class="bubble-speaker">
+                    <span>🎬</span> ${char.name}
+                </div>
+                <div class="bubble-text">${text}</div>
+            `;
+
+            bubbleLayer.appendChild(b);
             playBlip(520, 'sine', 0.08);
-        }
 
-        function renderSpeechBubbles(ctx) {
-            const now = Date.now();
-            activeBubbles = activeBubbles.filter(b => b.expires > now);
-
-            activeBubbles.forEach(b => {
-                ctx.save();
-
-                // Typewriter effect: increase visible chars
-                const elapsed = now - b.created;
-                const visibleChars = Math.min(b.text.length, Math.floor(elapsed / 30));
-                const displayText = b.text.slice(0, visibleChars);
-
-                ctx.font = '7px "Outfit", sans-serif';
-                const textWidth = ctx.measureText(displayText).width;
-                ctx.font = 'bold 6px "Press Start 2P", monospace';
-                const nameWidth = ctx.measureText(b.name).width;
-                const boxW = Math.max(textWidth, nameWidth) + 14;
-                const boxH = 22;
-
-                let bx = b.x - boxW / 2;
-                let by = b.y - 28;
-
-                // Clamp to screen bounds
-                bx = Math.max(8, Math.min(cinemaCanvas.width - boxW - 8, bx));
-                by = Math.max(6, by);
-
-                // Drop shadow
-                ctx.fillStyle = 'rgba(0,0,0,0.6)';
-                ctx.fillRect(bx + 1, by + 1, boxW, boxH);
-
-                // Speech bubble box (Pixelated 16-bit style)
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(bx, by, boxW, boxH);
-
-                // Bubble pointer arrow
-                ctx.beginPath();
-                ctx.moveTo(b.x - 3, by + boxH);
-                ctx.lineTo(b.x + 3, by + boxH);
-                ctx.lineTo(b.x, by + boxH + 4);
-                ctx.closePath();
-                ctx.fill();
-
-                // Bubble border
-                ctx.strokeStyle = '#1e2636';
-                ctx.lineWidth = 1;
-                ctx.strokeRect(bx, by, boxW, boxH);
-
-                // Speaker Name header
-                ctx.font = 'bold 6px "Press Start 2P", monospace';
-                ctx.fillStyle = '#c0392b';
-                ctx.fillText(b.name, bx + 5, by + 8);
-
-                // Bubble text
-                ctx.font = '7px "Outfit", sans-serif';
-                ctx.fillStyle = '#0f172a';
-                ctx.fillText(displayText, bx + 5, by + 18);
-
-                ctx.restore();
-            });
+            // Auto fade-out and remove
+            setTimeout(() => {
+                b.classList.add('fade-out');
+                setTimeout(() => {
+                    if (b.parentNode) b.remove();
+                }, 300);
+            }, durationMs);
         }
 
         /* =========================================================================
-           COMMUNITY AUTONOMOUS BEHAVIOR & AI
+           SEAT OCCUPANCY & AI
            ========================================================================= */
 
         function setupCinemaOccupants() {
-            // Clear seats
             SEATS.forEach(s => s.occ = null);
 
             // Seat my character
-            const mySeat = SEATS[myCharacter.seatIndex || 9];
-            if (mySeat) mySeat.occ = myCharacter;
+            const mySeat = SEATS[myCharacter.seatIndex !== undefined ? myCharacter.seatIndex : 9];
+            if (mySeat) {
+                mySeat.occ = myCharacter;
+                myCharacter.state = 'sitting';
+            }
 
             // Seat community characters
             COMMUNITY_CHARACTERS.forEach(bot => {
                 const s = SEATS[bot.seatIndex];
                 if (s && !s.occ) {
                     s.occ = bot;
-                    bot.x = s.x + 8;
+                    bot.state = 'sitting';
+                    bot.x = s.x + 28;
                     bot.y = s.y;
                 }
             });
         }
 
-        // Autonomous cycle: random phrases, restroom trips, popcorn crunch
+        // Autonomous community speech and events
         setInterval(() => {
-            const allChars = [myCharacter, ...COMMUNITY_CHARACTERS];
+            const allChars = [myCharacter, ...COMMUNITY_CHARACTERS].filter(c => c.state === 'sitting');
+            if (allChars.length === 0) return;
+
             const randomChar = allChars[Math.floor(Math.random() * allChars.length)];
 
             if (Math.random() < 0.45) {
-                // Speak their quote
                 if (randomChar.quote) {
                     triggerSpeech(randomChar, randomChar.quote);
                 }
-            } else if (Math.random() < 0.25) {
-                // Popcorn crunch sound
+            } else if (Math.random() < 0.3) {
                 playPopcornCrunch();
             }
-        }, 4000);
+        }, 4500);
 
-        // Rare "Voy al baño" Event
+        // Restroom Trip Event
         function triggerRestroomTrip(char) {
             if (!char || char.state !== 'sitting') return;
             triggerSpeech(char, "Voy al baño, guardadme el sitio...", 3000);
@@ -1526,36 +1731,31 @@
             const seat = SEATS[char.seatIndex];
             seat.occ = null;
             char.state = 'walking_to_bath';
-            char.x = seat.x + 8;
-            char.y = seat.y;
+            char.x = seat.x + 28;
+            char.y = seat.y + 10;
 
-            // Animate walking to aisle and down to exit door
             const walkInterval = setInterval(() => {
-                // Move towards center aisle (x = 240)
-                if (Math.abs(char.x - 240) > 4) {
-                    char.x += char.x < 240 ? 3 : -3;
-                } else if (char.y < 250) {
-                    char.y += 3; // Walk down towards the exit
+                if (Math.abs(char.x - 480) > 6) {
+                    char.x += char.x < 480 ? 4 : -4;
+                } else if (char.y < 530) {
+                    char.y += 4;
                 } else {
-                    // Out of screen
                     clearInterval(walkInterval);
                     char.state = 'in_bath';
 
-                    // Come back after 5 seconds with new popcorn!
                     setTimeout(() => {
                         char.state = 'walking_back';
                         char.accessory = 'popcorn';
-                        char.x = 240;
-                        char.y = 250;
+                        char.x = 480;
+                        char.y = 530;
                         triggerSpeech(char, "¡Ya he vuelto! Traigo más palomitas 🍿", 3500);
 
                         const returnInterval = setInterval(() => {
-                            if (char.y > seat.y) {
-                                char.y -= 3;
-                            } else if (Math.abs(char.x - (seat.x + 8)) > 4) {
-                                char.x += char.x < (seat.x + 8) ? 3 : -3;
+                            if (char.y > seat.y + 10) {
+                                char.y -= 4;
+                            } else if (Math.abs(char.x - (seat.x + 28)) > 6) {
+                                char.x += char.x < (seat.x + 28) ? 4 : -4;
                             } else {
-                                // Returned to seat!
                                 clearInterval(returnInterval);
                                 char.state = 'sitting';
                                 seat.occ = char;
@@ -1574,14 +1774,13 @@
             }
         }
 
-        // Custom Quote Sending
         function sendCustomQuote() {
             const input = document.getElementById('hud-chat-input');
             const text = input.value.trim();
             if (!text) return;
 
             myCharacter.quote = text;
-            triggerSpeech(myCharacter, text, 6000);
+            triggerSpeech(myCharacter, text, 5500);
             input.value = '';
 
             try {
@@ -1593,22 +1792,19 @@
             if (e.key === 'Enter') sendCustomQuote();
         });
 
-        // Click on Seats in Cinema to inspect or sit down!
+        // Click on Seats in Cinema
         cinemaCanvas.addEventListener('click', (e) => {
             const rect = cinemaCanvas.getBoundingClientRect();
-            const scaleX = cinemaCanvas.width / rect.width;
-            const scaleY = cinemaCanvas.height / rect.height;
+            const scaleX = 960 / rect.width;
+            const scaleY = 540 / rect.height;
             const clickX = (e.clientX - rect.left) * scaleX;
             const clickY = (e.clientY - rect.top) * scaleY;
 
-            // Check if clicked a seat
             SEATS.forEach(seat => {
-                if (clickX >= seat.x - 4 && clickX <= seat.x + 20 && clickY >= seat.y - 8 && clickY <= seat.y + 16) {
+                if (clickX >= seat.x - 6 && clickX <= seat.x + 62 && clickY >= seat.y - 12 && clickY <= seat.y + 44) {
                     if (seat.occ) {
-                        // Clicked an occupant: trigger their speech
                         triggerSpeech(seat.occ, seat.occ.quote || `¡Hola! Soy ${seat.occ.name}.`);
                     } else {
-                        // Empty seat: move my character here!
                         const oldSeat = SEATS[myCharacter.seatIndex];
                         if (oldSeat) oldSeat.occ = null;
                         seat.occ = myCharacter;
@@ -1629,26 +1825,39 @@
 
         const previewCanvas = document.getElementById('preview-canvas');
         const previewCtx = previewCanvas.getContext('2d');
+        previewCtx.imageSmoothingEnabled = false;
+
         const hudAvatarCanvas = document.getElementById('hud-avatar-canvas');
         const hudAvatarCtx = hudAvatarCanvas.getContext('2d');
+        hudAvatarCtx.imageSmoothingEnabled = false;
+
+        let previewBlink = false;
+        setInterval(() => {
+            previewBlink = true;
+            renderCreatorPreview();
+            setTimeout(() => {
+                previewBlink = false;
+                renderCreatorPreview();
+            }, 180);
+        }, 3200);
 
         function renderCreatorPreview() {
-            previewCtx.clearRect(0, 0, 32, 32);
+            previewCtx.clearRect(0, 0, 240, 240);
 
-            // Draw character in center of 32x32 canvas, standing
-            draw16BitCharacter(previewCtx, myCharacter, 16, 8, {
-                scale: 1,
+            // Draw character standing in center with scale = 5 (24x34 * 5 = 120x170)
+            draw16BitCharacterCrisp(previewCtx, myCharacter, 60, 32, 5, {
+                isSitting: false,
+                animFrame: 0,
+                isChewing: false,
+                blink: previewBlink
+            });
+
+            // HUD Mini Avatar (64x64 scaled down)
+            hudAvatarCtx.clearRect(0, 0, 64, 64);
+            draw16BitCharacterCrisp(hudAvatarCtx, myCharacter, 8, 2, 2, {
                 isSitting: false,
                 animFrame: 0,
                 blink: false
-            });
-
-            // Also update HUD mini avatar
-            hudAvatarCtx.clearRect(0, 0, 32, 32);
-            draw16BitCharacter(hudAvatarCtx, myCharacter, 16, 8, {
-                scale: 1.1,
-                isSitting: false,
-                animFrame: 0
             });
 
             document.getElementById('preview-name').textContent = myCharacter.name || 'Crono';
@@ -1673,19 +1882,19 @@
             });
 
             // 2. Hair Styles
-            const hairCont = document.getElementById('hair-style-grid');
-            hairCont.innerHTML = '';
+            const hairStyleCont = document.getElementById('hair-style-grid');
+            hairStyleCont.innerHTML = '';
             HAIR_STYLES.forEach(style => {
                 const btn = document.createElement('button');
                 btn.className = 'choice-btn' + (myCharacter.hairStyle === style.id ? ' selected' : '');
                 btn.innerHTML = `<span class="choice-icon">${style.icon}</span><span>${style.name}</span>`;
                 btn.onclick = () => {
                     myCharacter.hairStyle = style.id;
-                    hairCont.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('selected'));
+                    hairStyleCont.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('selected'));
                     btn.classList.add('selected');
                     renderCreatorPreview();
                 };
-                hairCont.appendChild(btn);
+                hairStyleCont.appendChild(btn);
             });
 
             // 3. Hair Palette
@@ -1789,14 +1998,12 @@
 
         function exportAvatarPNG() {
             const expCanvas = document.createElement('canvas');
-            expCanvas.width = 128;
-            expCanvas.height = 128;
+            expCanvas.width = 256;
+            expCanvas.height = 256;
             const expCtx = expCanvas.getContext('2d');
             expCtx.imageSmoothingEnabled = false;
 
-            // Render scaled up to 128x128
-            draw16BitCharacter(expCtx, myCharacter, 64, 32, {
-                scale: 4,
+            draw16BitCharacterCrisp(expCtx, myCharacter, 48, 16, 6, {
                 isSitting: false
             });
 
@@ -1806,7 +2013,6 @@
             link.click();
         }
 
-        // View Switcher
         function switchView(viewName) {
             const cinemaView = document.getElementById('view-cinema');
             const creatorView = document.getElementById('view-creator');
@@ -1823,15 +2029,28 @@
                 creatorView.classList.remove('hidden');
                 btnCinema.classList.remove('active');
                 btnCreator.classList.add('active');
-                initCreatorOptions();
                 renderCreatorPreview();
             }
         }
 
-        // Initial Boot
+        // Main Animation Loop
+        let startTime = Date.now();
+        function animationLoop() {
+            const elapsed = Date.now() - startTime;
+            drawCinemaSala(cinemaCtx, elapsed);
+            requestAnimationFrame(animationLoop);
+        }
+
+        // Initialize Everything
+        initCreatorOptions();
         setupCinemaOccupants();
         renderCreatorPreview();
-        requestAnimationFrame(renderCinema);
+        animationLoop();
+
+        // Welcome speech bubble
+        setTimeout(() => {
+            triggerSpeech(myCharacter, myCharacter.quote || "Callaos todos que empieza la película 🤫", 5000);
+        }, 1200);
     </script>
 </body>
 </html>
