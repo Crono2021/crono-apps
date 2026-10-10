@@ -152,7 +152,9 @@ function onNetMessage(m) {
         }
         case 'count': net.viewers = m.viewers; net.seated = m.seated; updateRoomUI(); break;
         case 'say': {
-            if (trips[m.seat] && now - trips[m.seat].start < trips[m.seat].duration) break;
+            // Solo las frases aleatorias se descartan mientras el personaje está fuera; el chat siempre se muestra
+            if (m.kind !== 'chat' && trips[m.seat] && now - trips[m.seat].start < trips[m.seat].duration) break;
+            if (m.kind === 'chat') { if (net.seats[m.seat]) net.seats[m.seat].away = false; delete trips[m.seat]; }
             showBubble(m.seat, m.name, m.text, m.kind);
             break;
         }
@@ -165,13 +167,20 @@ function onNetMessage(m) {
             } else if (m.kind === 'back') {
                 if (net.seats[m.seat]) net.seats[m.seat].away = false;
                 delete trips[m.seat];
-                popcornUntil[m.seat] = now + 9000;
-                playSfx('crunch');
+                if (!m.instant) { popcornUntil[m.seat] = now + 9000; playSfx('crunch'); }
             }
             break;
         }
         case 'you': updateRoomUI(); break;
-        case 'error': toast(m.msg || 'Error'); break;
+        case 'error': {
+            toast(m.msg || 'Error');
+            // Mensaje rechazado por antispam: se devuelve al cuadro de texto para no perderlo
+            if (m.code === 'slow' && lastSentText) {
+                const inp = document.getElementById('hud-chat-input');
+                if (inp && !inp.value) inp.value = lastSentText;
+            }
+            break;
+        }
         case 'replaced': {
             net.replaced = true;
             document.getElementById('overlay-text').textContent = 'Has abierto el cine en otra pestaña o dispositivo, así que esta sesión se ha cerrado.';
@@ -182,8 +191,18 @@ function onNetMessage(m) {
 }
 
 /* ───────────────────────── Acciones de usuario ───────────────────────── */
+/* Nombre genérico ("Cinéfilo", "Cinéfilo 2"…): hay que ponerle un nombre real al personaje antes de entrar */
+const GENERIC_NAME = /^cin[eé]filo( \d+)?$/i;
+function askName() {
+    switchView('creator');
+    toast('✏️ Ponle un nombre a tu personaje para que te reconozcan');
+    const inp = document.getElementById('input-char-name');
+    if (inp) { try { inp.focus(); inp.select(); } catch (e) {} }
+}
+
 function enterRoom(id) {
     if (!ROOMS.some(r => r.id === id)) return;
+    if (!myCharacter.name || GENERIC_NAME.test(myCharacter.name)) { askName(); return; }
     net.wantRoom = id; net.wantSeated = true; net.replaced = false; net.retry = 0;
     net.seats = new Array(SEAT_COUNT).fill(null); net.youId = null; net.meta = ROOMS.find(r => r.id === id);
     for (const k in trips) delete trips[k];
@@ -225,11 +244,13 @@ function trySit(idx) {
     net.wantSeated = true;
     netSend({ type: 'sit', seat: idx });
 }
+let lastSentText = '';
 function sendChat() {
     const inp = document.getElementById('hud-chat-input');
     const t = inp.value.trim();
     if (!t) return;
     if (mySeat() < 0) return toast('Siéntate primero para poder hablar 🪑');
+    lastSentText = t;
     netSend({ type: 'say', text: t });
     inp.value = '';
 }
@@ -332,6 +353,8 @@ function clearBubbles() { bubbles.forEach(b => b.remove()); bubbles.clear(); }
 
 function showBubble(seat, name, text, kind) {
     if (!bubblesOn || view !== 'cinema') return;
+    // Una frase aleatoria nunca pisa un bocadillo activo; un mensaje de chat siempre sustituye al anterior al instante
+    if (kind === 'ambient' && bubbles.has(seat)) return;
     removeBubble(seat);
     while (bubbles.size >= 6) { const first = bubbles.keys().next().value; removeBubble(first); }
     const p = seatPos(seat);
@@ -771,6 +794,8 @@ function randomizeCharacter() {
     playBlip(784, 'triangle', 0.1);
 }
 function saveCharacter() {
+    const typed = document.getElementById('input-char-name').value.trim();
+    if (!typed || GENERIC_NAME.test(typed)) { askName(); return; }
     updateProfileMeta();
     try { localStorage.setItem(STORAGE_AVATAR, JSON.stringify(myCharacter)); hasSavedAvatar = true; } catch (e) {}
     playBlip(880, 'sine', 0.15);
