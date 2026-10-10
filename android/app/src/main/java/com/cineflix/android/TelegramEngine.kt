@@ -375,13 +375,19 @@ class TelegramEngine(private val context: Context) {
     // ── Auth Operations ───────────────────────────────────────────────────────
 
     fun requestQrLogin(onError: (String) -> Unit) {
+        val current = _authState.value
+        if (current is AuthState.WaitCode || current is AuthState.WaitPassword || current is AuthState.Ready) {
+            Log.w(TAG, "requestQrLogin ignored because authState is already $current")
+            return
+        }
         client?.send(TdApi.RequestQrCodeAuthentication(LongArray(0))) { result ->
             if (result is TdApi.Error) onError(result.message)
         }
     }
 
     fun sendPhone(phone: String, onError: (String) -> Unit) {
-        if (_authState.value is AuthState.WaitQrCode) {
+        val current = _authState.value
+        if (current is AuthState.WaitQrCode) {
             // TDLib cannot transition from WaitOtherDeviceConfirmation to phone auth.
             // Close() preserves the DB so the new client goes BACK to QR state.
             // Destroy() wipes everything — since user isn't logged in yet, nothing is lost.
@@ -405,6 +411,11 @@ class TelegramEngine(private val context: Context) {
                     onError("Error reiniciando sesión. Cierra la app y ábrela de nuevo.")
                 }
             }
+        } else if (current is AuthState.WaitCode) {
+            Log.i(TAG, "Already in WaitCode; calling ResendAuthenticationCode instead of SetAuthenticationPhoneNumber...")
+            client?.send(TdApi.ResendAuthenticationCode()) { result ->
+                if (result is TdApi.Error) onError(result.message)
+            }
         } else {
             client?.send(TdApi.SetAuthenticationPhoneNumber(phone, null)) { result ->
                 if (result is TdApi.Error) onError(result.message)
@@ -413,6 +424,16 @@ class TelegramEngine(private val context: Context) {
     }
 
     fun sendCode(code: String, onError: (String) -> Unit) {
+        val current = _authState.value
+        if (current is AuthState.Ready || current is AuthState.WaitPassword) {
+            Log.i(TAG, "sendCode skipped because authState is already $current")
+            return
+        }
+        if (current !is AuthState.WaitCode) {
+            Log.w(TAG, "sendCode called while authState is $current (expected WaitCode)")
+            onError("Call to checkAuthenticationCode unexpected")
+            return
+        }
         client?.send(TdApi.CheckAuthenticationCode(code)) { result ->
             if (result is TdApi.Error) onError(result.message)
         }

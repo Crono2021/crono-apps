@@ -15,7 +15,336 @@
     <meta name="apple-mobile-web-app-title" content="Cineflix">
     <meta name="theme-color" content="#0a0a12">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700;800&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script src="./qrcode.min.js"></script>
+    <style id="elven-login-critical-css">
+    /* Elven Rivendell Login Screen Critical Styles (Cache-proof) */
+    #view-login.elven-login-screen {
+        display: none !important;
+    }
+    #view-login.elven-login-screen.active {
+        position: relative !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: radial-gradient(ellipse at 50% 20%, rgba(10, 18, 36, 0.45) 0%, rgba(5, 8, 16, 0.94) 85%),
+                    url('bg_twilight_rivendell.jpg') no-repeat center center / cover fixed,
+                    #070a12 !important;
+        overflow-y: auto !important;
+        min-height: 100vh !important;
+        padding: 30px 16px !important;
+        box-sizing: border-box !important;
+    }
+    #login-starlight-canvas {
+        position: fixed !important;
+        top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+        width: 100% !important; height: 100% !important;
+        pointer-events: none !important;
+        z-index: 2 !important;
+    }
+    .elven-login-wrapper {
+        position: relative !important;
+        z-index: 5 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        width: 100% !important;
+        max-width: 940px !important;
+        margin: auto !important;
+    }
+    .login-header-elven {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        margin-bottom: 28px !important;
+        text-align: center !important;
+    }
+    .login-logo-img {
+        height: 60px !important;
+        max-width: 320px !important;
+        width: auto !important;
+        object-fit: contain !important;
+        filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.95)) drop-shadow(0 0 25px rgba(255, 215, 0, 0.45)) !important;
+    }
+    #view-login .login-subtitle {
+        font-family: 'Cinzel', 'Cormorant Garamond', Georgia, serif !important;
+        font-size: 1.25rem !important;
+        color: #f1f5f9 !important;
+        letter-spacing: 2px !important;
+        margin-top: 8px !important;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.95), 0 0 20px rgba(255, 225, 130, 0.45) !important;
+    }
+    .elven-login-dual-grid {
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 32px !important;
+        width: 100% !important;
+        max-width: 900px !important;
+        align-items: stretch !important;
+    }
+    @media (max-width: 768px) {
+        .elven-login-dual-grid {
+            grid-template-columns: 1fr !important;
+            max-width: 440px !important;
+            gap: 24px !important;
+        }
+    }
+    .elven-login-card {
+        position: relative !important;
+        background: rgba(10, 16, 28, 0.84) !important;
+        backdrop-filter: blur(24px) !important;
+        -webkit-backdrop-filter: blur(24px) !important;
+        border-radius: 24px !important;
+        padding: 34px 28px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        text-align: center !important;
+        box-sizing: border-box !important;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        min-height: 380px !important;
+    }
+    .elven-card-qr {
+        border: 1px solid rgba(160, 205, 250, 0.3) !important;
+        box-shadow: 0 16px 45px rgba(0, 0, 0, 0.85), 0 0 35px rgba(90, 175, 255, 0.12) !important;
+    }
+    .elven-card-phone {
+        border: 1px solid rgba(225, 195, 115, 0.35) !important;
+        box-shadow: 0 16px 45px rgba(0, 0, 0, 0.85), 0 0 35px rgba(245, 195, 80, 0.12) !important;
+    }
+    .elven-card-corner {
+        position: absolute !important;
+        width: 52px !important;
+        height: 52px !important;
+        pointer-events: none !important;
+        z-index: 6 !important;
+        background-repeat: no-repeat !important;
+        background-position: center !important;
+        background-size: contain !important;
+        opacity: 0.9 !important;
+    }
+    .elven-card-corner.silver { background-image: url('elven_corner_silver.png') !important; }
+    .elven-card-corner.gold { background-image: url('elven_corner_gold.png') !important; }
+    .elven-card-corner.tl { top: 4px !important; left: 4px !important; }
+    .elven-card-corner.tr { top: 4px !important; right: 4px !important; transform: scaleX(-1) !important; }
+    .elven-card-corner.bl { bottom: 4px !important; left: 4px !important; transform: scaleY(-1) !important; }
+    .elven-card-corner.br { bottom: 4px !important; right: 4px !important; transform: scale(-1, -1) !important; }
+    .elven-card-title {
+        font-family: 'Cinzel', 'Cormorant Garamond', Georgia, serif !important;
+        font-size: 1.35rem !important;
+        font-weight: 600 !important;
+        color: #e2e8f0 !important;
+        letter-spacing: 1.2px !important;
+        margin: 0 0 20px 0 !important;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.95), 0 0 16px rgba(160, 215, 255, 0.4) !important;
+    }
+    .elven-title-gold {
+        color: #fef08a !important;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.95), 0 0 16px rgba(255, 215, 75, 0.45) !important;
+    }
+    .elven-qr-frame-wrapper {
+        position: relative !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 224px !important;
+        height: 162px !important;
+        margin: 4px auto 14px auto !important;
+    }
+    .elven-qr-filigree-frame {
+        position: relative !important;
+        width: 100% !important;
+        height: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    .elven-qr-frame-overlay {
+        position: absolute !important;
+        top: 0 !important; left: 0 !important;
+        width: 100% !important; height: 100% !important;
+        object-fit: fill !important;
+        pointer-events: none !important;
+        z-index: 4 !important;
+        filter: drop-shadow(0 0 12px rgba(100, 205, 255, 0.45)) !important;
+    }
+    .elven-qr-canvas-box {
+        background: #ffffff !important;
+        border-radius: 8px !important;
+        padding: 6px !important;
+        width: 120px !important;
+        height: 120px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.75) !important;
+        z-index: 2 !important;
+        box-sizing: border-box !important;
+    }
+    .elven-qr-canvas-box svg, .elven-qr-canvas-box canvas {
+        width: 100% !important;
+        height: 100% !important;
+        display: block !important;
+    }
+    .qr-loading {
+        position: absolute !important;
+        inset: 0 !important;
+        margin: auto !important;
+        width: 120px !important;
+        height: 120px !important;
+        display: none;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        z-index: 3 !important;
+    }
+    .elven-loading-text {
+        font-size: 0.85rem !important;
+        color: #94a3b8 !important;
+        font-family: 'Cinzel', serif !important;
+        margin-top: 8px !important;
+    }
+    .elven-pin-container {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        margin-top: 6px !important;
+    }
+    .elven-pin-badge {
+        background: rgba(14, 22, 38, 0.9) !important;
+        border: 1px solid rgba(220, 190, 100, 0.5) !important;
+        border-radius: 8px !important;
+        padding: 6px 18px !important;
+        font-family: 'Cinzel', serif !important;
+        font-size: 1.25rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 3px !important;
+        color: #fef08a !important;
+        text-shadow: 0 0 14px rgba(255, 215, 75, 0.5) !important;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6) !important;
+    }
+    .elven-qr-instruction {
+        font-family: 'Cinzel', 'Cormorant Garamond', Georgia, serif !important;
+        font-size: 0.95rem !important;
+        color: #94a3b8 !important;
+        margin: 12px 0 0 0 !important;
+        letter-spacing: 0.8px !important;
+    }
+    .elven-remote-status {
+        margin-top: 10px !important;
+        font-size: 0.9rem !important;
+        color: #38bdf8 !important;
+        font-weight: 600 !important;
+    }
+    .elven-card-phone .login-step {
+        width: 100% !important;
+        display: none;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex: 1 !important;
+        padding-top: 8px !important;
+    }
+    .elven-card-phone .login-step.active {
+        display: flex !important;
+    }
+    .elven-input-group {
+        width: 100% !important;
+        margin-bottom: 20px !important;
+    }
+    .elven-login-input {
+        width: 100% !important;
+        box-sizing: border-box !important;
+        background: rgba(12, 18, 32, 0.8) !important;
+        border: 1px solid rgba(220, 190, 110, 0.35) !important;
+        color: #f8fafc !important;
+        font-size: 1.2rem !important;
+        padding: 14px 20px !important;
+        border-radius: 14px !important;
+        text-align: center !important;
+        font-family: inherit !important;
+        letter-spacing: 1px !important;
+        transition: all 0.25s ease !important;
+        outline: none !important;
+    }
+    .elven-login-input:focus {
+        border-color: rgba(56, 189, 248, 0.8) !important;
+        box-shadow: 0 0 18px rgba(56, 189, 248, 0.4) !important;
+        background: rgba(16, 24, 42, 0.9) !important;
+    }
+    .elven-btn-enter {
+        width: 100% !important;
+        padding: 14px 28px !important;
+        font-size: 1.15rem !important;
+        border-radius: 9999px !important;
+        font-family: 'Cinzel', 'Cormorant Garamond', Georgia, serif !important;
+        font-weight: 700 !important;
+        letter-spacing: 2px !important;
+        cursor: pointer !important;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        text-transform: uppercase !important;
+        background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%) !important;
+        color: #ffffff !important;
+        border: 1px solid rgba(186, 230, 253, 0.85) !important;
+        box-shadow: 0 6px 20px rgba(2, 132, 199, 0.5), 0 0 20px rgba(56, 189, 248, 0.45) !important;
+    }
+    .elven-btn-enter:hover, .elven-btn-enter:focus {
+        transform: translateY(-2px) scale(1.02) !important;
+        box-shadow: 0 8px 30px rgba(56, 189, 248, 0.75), 0 0 25px rgba(186, 230, 253, 0.65) !important;
+        background: linear-gradient(135deg, #7dd3fc 0%, #0369a1 100%) !important;
+    }
+    .elven-login-footer-hint {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 8px !important;
+        margin-top: 22px !important;
+        color: #94a3b8 !important;
+        font-size: 0.92rem !important;
+        font-family: 'Cinzel', serif !important;
+        letter-spacing: 0.6px !important;
+    }
+    .elven-step-label {
+        font-family: 'Cinzel', serif !important;
+        font-size: 1.1rem !important;
+        color: #bae6fd !important;
+        margin-bottom: 6px !important;
+    }
+    .elven-step-hint {
+        font-size: 0.88rem !important;
+        color: #94a3b8 !important;
+        margin-bottom: 16px !important;
+    }
+    .elven-test-bypass-bar {
+        margin-top: 28px !important;
+        display: flex !important;
+        justify-content: center !important;
+        width: 100% !important;
+    }
+    .elven-test-bypass-btn {
+        background: rgba(15, 23, 42, 0.75) !important;
+        border: 1px dashed rgba(212, 175, 55, 0.6) !important;
+        color: #fde047 !important;
+        font-family: 'Cinzel', serif !important;
+        font-size: 0.95rem !important;
+        font-weight: 600 !important;
+        padding: 10px 24px !important;
+        border-radius: 12px !important;
+        cursor: pointer !important;
+        transition: all 0.25s ease !important;
+        backdrop-filter: blur(12px) !important;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5) !important;
+        letter-spacing: 0.8px !important;
+    }
+    .elven-test-bypass-btn:hover {
+        background: rgba(212, 175, 55, 0.2) !important;
+        border-color: #ffd700 !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 20px rgba(255, 215, 0, 0.4) !important;
+        transform: translateY(-2px) !important;
+    }
+    </style>
     <script>
         // Polyfills for older Android TV WebViews (Chrome 55 - 79)
         if (typeof globalThis === 'undefined') {
@@ -98,8 +427,8 @@
             }
         };
     </script>
-  <script type="module" crossorigin src="./assets/index-DboYjeX0.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-CAMOe_iY.css">
+  <script type="module" crossorigin src="./assets/index-CKV3V0r7.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-YA3Lx1er.css">
 </head>
 <body>
     <!-- Real-time error diagnostic banner (only visible if an error occurs) -->
@@ -221,65 +550,103 @@
 
     <div id="app">
         <!-- LOGIN -->
-        <div id="view-login" class="view">
-            <div class="login-container">
-                <h1 class="login-title">Cine en Castellano HD</h1>
-                <p class="login-subtitle">Tu videoclub en streaming (v2.2)</p>
-                <div id="remote-login-section" style="display:none; margin-top: 24px; text-align: center;">
-                    <p style="font-size: 1.1rem; font-weight: bold; margin-bottom: 8px;">Conexión Rápida TV</p>
-                    <div id="remote-qr-canvas" style="margin: 0 auto; max-width: 220px; padding: 8px; background: white; border-radius: 8px; display: flex; justify-content: center; align-items: center;"></div>
-                    <div id="remote-loading" class="qr-loading" style="padding: 20px 0;">
-                        <div class="spinner"></div>
-                        <p style="font-size: 0.85rem; color: #a1a1aa;">Generando código...</p>
-                    </div>
-                    <div id="remote-pin-info" style="margin-top: 12px; display: none;">
-                        <p style="font-size: 0.9rem; margin-bottom: 4px;">Escanea este código o visita:</p>
-                        <p style="font-size: 1rem; color: #3b82f6; font-weight: bold;" id="remote-url-text"></p>
-                        <p style="font-size: 0.9rem; margin-top: 8px;">Y escribe el PIN:</p>
-                        <p style="font-size: 2rem; font-weight: bold; letter-spacing: 4px; color: #fff; margin: 4px 0;" id="remote-pin-display">----</p>
-                    </div>
-                    <p id="remote-status" style="margin-top: 12px; font-size: 0.9rem; color: #10b981; font-weight: bold; display: none;"></p>
-                    
-                    <div style="margin: 24px 0 12px; border-top: 1px solid rgba(255,255,255,0.1); position: relative;">
-                        <span style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #1a1a2e; padding: 0 12px; font-size: 0.8rem; color: #71717a; border-radius: 4px;">O USA EL MANDO</span>
-                    </div>
+        <div id="view-login" class="view elven-login-screen">
+            <canvas id="login-starlight-canvas"></canvas>
+            
+            <div class="elven-login-wrapper">
+                <!-- Header -->
+                <div class="login-header-elven">
+                    <img src="./elven_logo.png" alt="Cineflix" class="login-logo-img">
+                    <p class="login-subtitle">Di amigo y entra</p>
                 </div>
-
-                <div id="step-phone" class="login-step active" style="margin-top: 16px;">
-                    <label>Número de teléfono</label>
-                    <div class="input-row">
-                        <input type="tel" id="input-phone" placeholder="+34 600 000 000" value="+34" autocomplete="off">
-                        <button id="btn-phone" class="btn-primary">Enviar</button>
+                
+                <!-- Dual Panel Grid (Side by side on Web) -->
+                <div class="elven-login-dual-grid">
+                    <!-- LEFT CARD: Conexión Rápida (QR Code) -->
+                    <div class="elven-login-card elven-card-qr" id="remote-login-section">
+                        <!-- Silver Corner Filigrees -->
+                        <div class="elven-card-corner tl silver"></div>
+                        <div class="elven-card-corner tr silver"></div>
+                        <div class="elven-card-corner bl silver"></div>
+                        <div class="elven-card-corner br silver"></div>
+                        
+                        <h2 class="elven-card-title">Vincular con Telegram</h2>
+                        
+                        <div class="elven-qr-frame-wrapper">
+                            <div class="elven-qr-filigree-frame">
+                                <img src="./elven_qr_frame.png" class="elven-qr-frame-overlay" alt="Marco Élfico" />
+                                <div id="remote-qr-canvas" class="elven-qr-canvas-box"></div>
+                                <div id="remote-loading" class="qr-loading">
+                                    <div class="spinner"></div>
+                                    <p class="elven-loading-text">Generando código...</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="remote-pin-info" class="elven-pin-container">
+                            <p class="elven-qr-instruction" style="text-align: center; line-height: 1.4; margin-top: 6px;">
+                                Abre Telegram en tu móvil:<br>
+                                <span style="color: #60a5fa; font-weight: 600;">Ajustes &gt; Dispositivos &gt; Vincular dispositivo</span><br>
+                                y apunta la cámara a este código
+                            </p>
+                            <a id="btn-telegram-direct-link" href="#" class="btn-primary elven-btn-enter" style="display:none; margin-top: 10px; font-size: 0.9rem; text-decoration: none; text-align: center; width: 100%; box-sizing: border-box; padding: 10px;">📱 Abrir en Telegram</a>
+                            <p id="remote-url-text" style="display:none;"></p>
+                        </div>
+                        
+                        <p id="remote-status" class="elven-remote-status" style="display: none;"></p>
                     </div>
-                    <p id="phone-error" class="error-text"></p>
-                </div>
 
-                <div id="step-otp" class="login-step">
-                    <label>Código de verificación</label>
-                    <p class="hint">Te hemos enviado un código a Telegram</p>
-                    <div class="input-row">
-                        <input type="text" id="input-otp" placeholder="12345" maxlength="5" autocomplete="one-time-code">
-                        <button id="btn-otp" class="btn-primary">Verificar</button>
+                    <!-- RIGHT CARD: Acceso por Teléfono -->
+                    <div class="elven-login-card elven-card-phone" id="panel-phone-login">
+                        <!-- Gold Corner Filigrees -->
+                        <div class="elven-card-corner tl gold"></div>
+                        <div class="elven-card-corner tr gold"></div>
+                        <div class="elven-card-corner bl gold"></div>
+                        <div class="elven-card-corner br gold"></div>
+                        
+                        <h2 class="elven-card-title elven-title-gold">Acceso por Teléfono</h2>
+
+                        <div id="step-phone" class="login-step active">
+                            <div class="elven-input-group">
+                                <input type="tel" id="input-phone" placeholder="+34 600 000 000" value="+34" autocomplete="off" class="elven-login-input">
+                            </div>
+                            <button id="btn-phone" class="btn-primary elven-btn-enter">Entrar</button>
+                            <p id="phone-error" class="error-text"></p>
+                            
+                            <div class="elven-login-footer-hint">
+                                <svg class="tg-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="#29b6f6" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
+                                <span>Sistema oficial y seguro de Telegram</span>
+                            </div>
+                        </div>
+
+                        <div id="step-otp" class="login-step">
+                            <label class="elven-step-label">Código de verificación</label>
+                            <p class="hint elven-step-hint">Te hemos enviado un código a Telegram</p>
+                            <div class="elven-input-group">
+                                <input type="text" id="input-otp" placeholder="12345" maxlength="5" autocomplete="one-time-code" class="elven-login-input">
+                            </div>
+                            <button id="btn-otp" class="btn-primary elven-btn-enter">Verificar</button>
+                            <p id="otp-error" class="error-text"></p>
+                            <p id="otp-resend" style="margin-top: 10px; text-align: center;">
+                                <a href="#" id="btn-resend-code" style="color: #67e8f9; font-size: 0.85rem; text-decoration: none;">¿No recibiste el código? Reenviar</a>
+                            </p>
+                        </div>
+
+                        <div id="step-2fa" class="login-step">
+                            <label class="elven-step-label">Contraseña 2FA</label>
+                            <p class="hint elven-step-hint">Tu cuenta tiene verificación en dos pasos</p>
+                            <div class="elven-input-group">
+                                <input type="password" id="input-2fa" placeholder="Contraseña" class="elven-login-input">
+                            </div>
+                            <button id="btn-2fa" class="btn-primary elven-btn-enter">Entrar</button>
+                            <p id="twofa-error" class="error-text"></p>
+                        </div>
+
+                        <div id="login-loading" class="login-step">
+                            <div class="spinner"></div>
+                            <p class="hint elven-step-hint">Conectando con Telegram...</p>
+                        </div>
                     </div>
-                    <p id="otp-error" class="error-text"></p>
-                    <p id="otp-resend" style="margin-top: 8px; text-align: center;">
-                        <a href="#" id="btn-resend-code" style="color: #8b5cf6; font-size: 0.85rem; text-decoration: none;">¿No recibiste el código? Reenviar</a>
-                    </p>
-                </div>
-
-                <div id="step-2fa" class="login-step">
-                    <label>Contraseña 2FA</label>
-                    <p class="hint">Tu cuenta tiene verificación en dos pasos</p>
-                    <div class="input-row">
-                        <input type="password" id="input-2fa" placeholder="Contraseña">
-                        <button id="btn-2fa" class="btn-primary">Entrar</button>
-                    </div>
-                    <p id="twofa-error" class="error-text"></p>
-                </div>
-
-                <div id="login-loading" class="login-step">
-                    <div class="spinner"></div>
-                    <p>Conectando con Telegram...</p>
                 </div>
             </div>
         </div>
@@ -289,7 +656,7 @@
             <header id="main-topbar" class="topbar">
                 <div class="topbar-left">
                     <div class="topbar-brand focusable" id="app-brand-title" tabindex="0" role="button" aria-label="Cineflix">
-                        <span class="brand-logo-text">CINEFLIX</span>
+                        <img src="./elven_logo.png" alt="Cineflix" class="brand-logo-img" style="height: 42px; width: auto; object-fit: contain; filter: drop-shadow(0 2px 10px rgba(0,0,0,0.9)) drop-shadow(0 0 16px rgba(255, 215, 0, 0.35)); vertical-align: middle; display: block;">
                     </div>
                     <!-- Netflix Flat Nav Links -->
                     <nav id="main-nav-bar" class="main-nav">
@@ -341,6 +708,9 @@
             <div id="views-viewport">
                 <!-- MOVIES VIEW — Netflix layout -->
                 <div id="view-movies" class="view active">
+                    <!-- Genre tabs directly under topbar -->
+                    <div id="movies-genre-tabs" class="genre-tabs"></div>
+
                     <!-- Search / Genre result grid -->
                     <div id="movies-search-results" class="search-results">
                         <div class="search-header">
@@ -391,8 +761,6 @@
                             </div>
                             <div id="movies-hero-dots" class="hero-dots"></div>
                         </div>
-                        <!-- Genre tabs below hero -->
-                        <div id="movies-genre-tabs" class="genre-tabs"></div>
                         <div id="continue-watching-movies" class="catalog-rows" style="display: none;"></div>
                         <div id="movies-rows" class="catalog-rows"></div>
                     </div>
@@ -400,6 +768,9 @@
 
                 <!-- CATALOG (SERIES) -->
                 <div id="view-catalog" class="view">
+                    <!-- Genre tabs directly under topbar -->
+                    <div id="genre-tabs" class="genre-tabs"></div>
+
                     <!-- Search / Genre result grid -->
                     <div id="search-results" class="search-results">
                         <div class="search-header">
@@ -444,8 +815,6 @@
                             </div>
                             <div id="hero-dots" class="hero-dots"></div>
                         </div>
-                        <!-- Genre tabs below hero -->
-                        <div id="genre-tabs" class="genre-tabs"></div>
                         <!-- Content rows -->
                         <div id="continue-watching-series" class="catalog-rows" style="display: none;"></div>
                         <div id="catalog-rows" class="catalog-rows"></div>
@@ -985,7 +1354,8 @@
                     <div class="filter-section">
                         <h4 class="filter-section-title">Ordenar por</h4>
                         <div class="filter-pills-grid" id="sort-options">
-                            <button class="filter-pill focusable active" data-sort="views" tabindex="0">🔥 Más vistas en Cineflix</button>
+                            <button class="filter-pill focusable active" data-sort="random" tabindex="0">🎲 Aleatorio (Descubrir)</button>
+                            <button class="filter-pill focusable" data-sort="views" tabindex="0">🔥 Más vistas en Cineflix</button>
                             <button class="filter-pill focusable" data-sort="year_desc" tabindex="0">📅 Más recientes (Año)</button>
                             <button class="filter-pill focusable" data-sort="year_asc" tabindex="0">📅 Más antiguas (Clásicos)</button>
                             <button class="filter-pill focusable" data-sort="rating" tabindex="0">⭐ Mejor valoradas</button>
@@ -1158,17 +1528,44 @@
         </div>
     </div>
 
-    <!-- PROFILE SELECTION SCREEN (Netflix-style) -->
-    <div id="modal-profiles-screen" class="modal-overlay profiles-overlay hidden">
+    <!-- SVG Definitions for Perfect Avatar Clipping -->
+    <svg width="0" height="0" style="position: absolute; pointer-events: none;">
+        <defs>
+            <clipPath id="elven-avatar-clip" clipPathUnits="objectBoundingBox">
+                <!-- Exact mathematical inner arch path -->
+                <path d="M 0.5,0.008 
+                         C 0.65,0.026 0.94,0.11 0.98,0.22 
+                         L 0.98,0.76 
+                         C 0.98,0.99 0.02,0.99 0.02,0.76 
+                         L 0.02,0.22 
+                         C 0.06,0.11 0.35,0.026 0.5,0.008 Z" />
+            </clipPath>
+        </defs>
+    </svg>
+
+    <!-- PROFILE SELECTION SCREEN (Elven Rivendell Theme) -->
+    <div id="modal-profiles-screen" class="modal-overlay profiles-overlay elven-screen hidden">
+        <canvas id="profiles-starlight-canvas"></canvas>
         <button id="btn-profiles-close" class="profiles-close-btn focusable" title="Cerrar" onclick="window.hideProfileSelectionScreen && window.hideProfileSelectionScreen()">✕</button>
-        <div class="profiles-container">
-            <h1 class="profiles-title">¿Quién está viendo ahora?</h1>
-            <div id="profiles-grid" class="profiles-grid">
+        <div class="profiles-container elven-container">
+            <div class="elven-header">
+                <img src="./elven_logo.png" alt="Cineflix" class="elven-header-logo">
+                <h1 class="elven-subtitle">¿Quién cruza el umbral?</h1>
+            </div>
+            <div id="profiles-grid" class="elven-profiles-row profiles-grid">
                 <!-- Profile cards and Add Profile card will be rendered here dynamically -->
             </div>
-            <div class="profiles-actions">
-                <button id="btn-profiles-manage" class="btn-profiles-secondary focusable" tabindex="0">Administrar perfiles</button>
-                <button id="btn-profiles-done" class="btn-profiles-secondary focusable hidden" tabindex="0">Listo</button>
+            <div class="elven-actions">
+                <button id="btn-profiles-manage" class="elven-manage-btn focusable" tabindex="0">
+                    <span class="elven-btn-leaf elven-leaf-left"></span>
+                    <span class="elven-btn-text">Gestionar Comunidad</span>
+                    <span class="elven-btn-leaf elven-leaf-right"></span>
+                </button>
+                <button id="btn-profiles-done" class="elven-manage-btn focusable hidden" tabindex="0">
+                    <span class="elven-btn-leaf elven-leaf-left"></span>
+                    <span class="elven-btn-text">Listo</span>
+                    <span class="elven-btn-leaf elven-leaf-right"></span>
+                </button>
             </div>
         </div>
     </div>
@@ -1177,29 +1574,32 @@
     <div id="modal-profile-editor" class="modal-overlay profile-editor-overlay hidden">
         <div class="profile-editor-modal">
             <h2 id="profile-editor-title" class="profile-editor-heading">Crear perfil</h2>
-            <div class="profile-editor-body">
-                <div class="profile-editor-avatar-col">
-                    <div id="profile-editor-current-avatar" class="profile-avatar-big avatar-red">P</div>
-                    <span class="avatar-choose-hint">Elige un avatar:</span>
-                    <div class="avatar-palette" id="profile-avatar-palette">
-                        <button class="avatar-palette-item avatar-red selected focusable" data-avatar="avatar_red" title="Rojo"></button>
-                        <button class="avatar-palette-item avatar-blue focusable" data-avatar="avatar_blue" title="Azul"></button>
-                        <button class="avatar-palette-item avatar-green focusable" data-avatar="avatar_green" title="Verde"></button>
-                        <button class="avatar-palette-item avatar-yellow focusable" data-avatar="avatar_yellow" title="Amarillo"></button>
-                        <button class="avatar-palette-item avatar-purple focusable" data-avatar="avatar_purple" title="Púrpura"></button>
-                        <button class="avatar-palette-item avatar-pink focusable" data-avatar="avatar_pink" title="Rosa"></button>
-                    </div>
+            
+            <div class="profile-editor-header-row">
+                <div id="profile-editor-current-avatar" class="profile-avatar-big avatar-red">
+                    <span class="profile-avatar-initial">P</span>
                 </div>
                 <div class="profile-editor-fields">
                     <label for="profile-name-input">Nombre del perfil</label>
-                    <input type="text" id="profile-name-input" class="profile-name-input focusable" placeholder="Ej: Mamá, Niños, etc." maxlength="25" autocomplete="off">
+                    <input type="text" id="profile-name-input" class="profile-name-input focusable" placeholder="Ej: Mamá, Cine, Niños..." maxlength="25" autocomplete="off">
                     <input type="hidden" id="profile-id-editing" value="">
                 </div>
             </div>
+
+            <div class="profile-avatar-picker-section">
+                <span class="avatar-choose-hint">Elige un personaje o color:</span>
+                <div class="avatar-category-tabs" id="avatar-category-tabs">
+                    <!-- Categorías renderizadas dinámicamente -->
+                </div>
+                <div class="avatar-palette-grid" id="profile-avatar-palette">
+                    <!-- Avatares renderizados dinámicamente -->
+                </div>
+            </div>
+
             <div class="profile-editor-buttons">
-                <button id="btn-profile-save" class="btn-profile-action btn-save focusable" tabindex="0">Guardar</button>
-                <button id="btn-profile-cancel" class="btn-profile-action btn-cancel focusable" tabindex="0">Cancelar</button>
-                <button id="btn-profile-delete" class="btn-profile-action btn-delete hidden focusable" tabindex="0">Eliminar</button>
+                <button id="btn-profile-save" type="button" class="btn-profile-action btn-save focusable" tabindex="0">Guardar</button>
+                <button id="btn-profile-cancel" type="button" class="btn-profile-action btn-cancel focusable" tabindex="0">Cancelar</button>
+                <button id="btn-profile-delete" type="button" class="btn-profile-action btn-delete hidden focusable" tabindex="0">Eliminar</button>
             </div>
         </div>
     </div>
