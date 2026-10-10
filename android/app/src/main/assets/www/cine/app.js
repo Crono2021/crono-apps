@@ -132,7 +132,8 @@ function connectRoom() {
     ws.onopen = () => {
         net.retry = 0;
         netSend({ type: 'join', room: net.wantRoom, clientKey: CLIENT_KEY, legacyKey: LEGACY_KEY, name: myCharacter.name, character: charPayload(), quote: myCharacter.quote || '', autoSit: net.wantSeated });
-        net.pingTimer = setInterval(() => netSend({ type: 'ping' }), 25000);
+        net.pingTimer = setInterval(() => netSend({ type: 'ping', c: Date.now() }), 25000);
+        showOnOpen();
     };
     ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } onNetMessage(m); };
     ws.onclose = () => {
@@ -160,8 +161,11 @@ function onNetMessage(m) {
             net.seats.forEach((u, i) => { if (u && u.away) trips[i] = { start: now - 8000, duration: 16000 }; });
             clearBubbles();
             setStatus('online'); updateRoomUI();
+            if (m.show) showOnState(m.show);
             break;
         }
+        case 'pong': showClockSample(m); break;
+        case 'show': showOnState(m); break;
         case 'seat': {
             const prev = net.seats[m.seat];
             net.seats[m.seat] = m.user; net.seated = m.seated; net.standby = m.standby || 0;
@@ -176,7 +180,7 @@ function onNetMessage(m) {
         case 'say': {
             // Solo las frases aleatorias se descartan mientras el personaje está fuera; el chat siempre se muestra
             if (m.kind !== 'chat' && trips[m.seat] && now - trips[m.seat].start < trips[m.seat].duration) break;
-            if (m.kind === 'chat') { if (net.seats[m.seat]) net.seats[m.seat].away = false; delete trips[m.seat]; }
+            if (m.kind === 'chat') { if (net.seats[m.seat]) net.seats[m.seat].away = false; delete trips[m.seat]; showCaption(m.name, m.text); }
             showBubble(m.seat, m.name, m.text, m.kind);
             break;
         }
@@ -238,6 +242,7 @@ function enterRoom(id) {
     net.seats = new Array(SEAT_COUNT).fill(null); net.youId = null; net.meta = ROOMS.find(r => r.id === id);
     for (const k in trips) delete trips[k];
     clearBubbles();
+    showResetLocal();
     document.getElementById('room-title').textContent = '🎬 ' + net.meta.name;
     switchView('cinema');
     updateRoomUI();
@@ -247,7 +252,7 @@ function enterRoom(id) {
 
 function leaveToLobby() {
     netSend({ type: 'leave' });
-    net.wantRoom = null; closeSocket(); clearBubbles();
+    net.wantRoom = null; closeSocket(); clearBubbles(); showResetLocal();
     try { history.replaceState(null, '', location.pathname); } catch (e) {}
     goLobby();
 }
@@ -540,6 +545,7 @@ function drawRoom(now) {
     ctx.beginPath(); ctx.rect(SCR.x, SCR.y, SCR.w, SCR.h); ctx.clip();
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(sc, 0, 0, SCENE_W, SCENE_H, SCR.x, SCR.y, SCENE_W * 3, SCENE_H * 3);
+    drawShowScreen(ctx, now, SCR);   // votación / cuenta atrás / película de la sesión de cine
     ctx.restore();
     ctx.drawImage(fgLayer, 0, 0);
 
@@ -652,11 +658,13 @@ cinemaCanvas.addEventListener('mousemove', (ev) => {
 });
 cinemaCanvas.addEventListener('mouseleave', () => { hoverSeat = -1; seatTip.classList.add('hidden'); cinemaCanvas.classList.remove('hover-seat'); });
 cinemaCanvas.addEventListener('click', (ev) => {
-    const idx = seatAt(canvasPoint(ev));
+    const pt = canvasPoint(ev), idx = seatAt(pt);
     if (idx >= 0) trySit(idx);
+    else if (SHOW.phase === 'playing' && SHOW.prepared && pt.x >= SCR.x && pt.x <= SCR.x + SCR.w && pt.y >= SCR.y && pt.y <= SCR.y + SCR.h) showSetExpanded(true);   // clic en la pantalla: ampliar
 });
 document.getElementById('hud-chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });
 document.getElementById('seat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') sitAtNumber(); });
+document.getElementById('so-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') showOverlaySend(); });
 
 /* ───────────────────────── Creador de personaje ───────────────────────── */
 let previewBlink = false;

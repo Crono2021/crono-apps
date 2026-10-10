@@ -6,8 +6,8 @@
     <title>Cineflix 16-Bit • Salas de cine en directo (Versión Test)</title>
     <link rel="icon" type="image/png" href="/favicon.png">
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/cine/cine.css?v=20261010g">
-    <link rel="stylesheet" href="/cine/room.css?v=20261010g">
+    <link rel="stylesheet" href="/cine/cine.css?v=20261010h">
+    <link rel="stylesheet" href="/cine/room.css?v=20261010h">
 </head>
 <body>
 
@@ -74,6 +74,8 @@
                     </div>
                 </div>
 
+                <div class="show-panel hidden" id="show-panel" aria-live="polite"></div>
+
                 <div class="cinema-hud">
                     <div class="hud-avatar" title="Tu personaje">
                         <canvas id="hud-avatar-canvas" width="64" height="64"></canvas>
@@ -137,6 +139,19 @@
     </main>
 
     <div class="toast hidden" id="toast"></div>
+    <!-- Vídeo de la sesión de cine: minúsculo mientras se ve en la pantalla de la sala; ampliable a pantalla completa -->
+    <div class="screen-overlay mini" id="screen-overlay">
+        <div class="screen-box">
+            <video id="show-video" playsinline muted preload="auto"></video>
+            <div class="screen-caps" id="screen-caps"></div>
+            <div class="screen-ctrl">
+                <input type="text" id="so-input" class="hud-input" maxlength="60" placeholder="Comenta la película…" autocomplete="off">
+                <button type="button" class="tool-btn" onclick="showOverlaySend()">💬 Decir</button>
+                <button type="button" class="tool-btn" id="so-mute" onclick="showToggleSound()">🔇 Activar sonido</button>
+                <button type="button" class="tool-btn" id="so-close" onclick="showSetExpanded(false)">✖ Cerrar</button>
+            </div>
+        </div>
+    </div>
     <div class="overlay hidden" id="overlay">
         <div class="overlay-box">
             <div id="overlay-text"></div>
@@ -144,10 +159,11 @@
         </div>
     </div>
 
-    <script src="/cine/sprite.js?v=20261010g"></script>
-    <script src="/cine/audio.js?v=20261010g"></script>
-    <script src="/cine/scenes.js?v=20261010g"></script>
-    <script src="/cine/app.js?v=20261010g"></script>
-    <script src="/cine/tv.js?v=20261010g"></script>
+    <script src="/cine/sprite.js?v=20261010h"></script>
+    <script src="/cine/audio.js?v=20261010h"></script>
+    <script src="/cine/scenes.js?v=20261010h"></script>
+    <script src="/cine/show.js?v=20261010h"></script>
+    <script src="/cine/app.js?v=20261010h"></script>
+    <script src="/cine/tv.js?v=20261010h"></script>
 </body>
 </html>

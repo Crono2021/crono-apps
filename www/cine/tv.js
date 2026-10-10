@@ -69,6 +69,7 @@
         if (vk.open) return vk.el;
         const ov = $('overlay');
         if (ov && !ov.classList.contains('hidden')) return ov;
+        if (typeof SHOW !== 'undefined' && SHOW.expanded) return $('screen-overlay');
         return document.body;
     }
     function focusEl(el) {
@@ -144,6 +145,7 @@
     /* ───────────── Atrás ───────────── */
     function handleBack() {
         if (vk.open) { closeVK(false); return true; }
+        if (window.showHandleBack && showHandleBack()) return true;   // vídeo ampliado de la sesión de cine
         const ov = $('overlay');
         if (ov && !ov.classList.contains('hidden')) return false;
         if (view === 'cinema') { leaveToLobby(); return true; }
@@ -156,6 +158,7 @@
     const vk = { open: false, input: null, orig: '', text: '', shift: false, el: null, numeric: false, max: 60, disp: null };
     const VK_LABELS = {
         'hud-chat-input': ['Mensaje para la sala', 'Enviar'],
+        'so-input': ['Comenta la película', 'Enviar'],
         'input-char-name': ['Nombre de tu personaje', 'Aceptar'],
         'input-char-quote': ['Tu frase (opcional)', 'Aceptar'],
         'seat-input': ['Número de butaca (1-32)', 'Ir']
@@ -255,6 +258,7 @@
             focusEl(inp);
             if (accept) {
                 if (inp.id === 'hud-chat-input') sendChat();
+                else if (inp.id === 'so-input') showOverlaySend();
                 else if (inp.id === 'seat-input') sitAtNumber();
             }
         }
