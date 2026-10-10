@@ -6,8 +6,8 @@
     <title>Cineflix 16-Bit • Salas de cine en directo (Versión Test)</title>
     <link rel="icon" type="image/png" href="/favicon.png">
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/cine/cine.css?v=20261010h">
-    <link rel="stylesheet" href="/cine/room.css?v=20261010h">
+    <link rel="stylesheet" href="/cine/cine.css?v=20261011a">
+    <link rel="stylesheet" href="/cine/room.css?v=20261011a">
 </head>
 <body>
 
@@ -80,11 +80,15 @@
                     <div class="hud-avatar" title="Tu personaje">
                         <canvas id="hud-avatar-canvas" width="64" height="64"></canvas>
                     </div>
+                    <div class="hud-companion-indicator" id="hud-companion-indicator">
+                        <span>📱</span> <b>Móvil conectado:</b> Chatea desde tu teléfono
+                    </div>
                     <input type="text" id="hud-chat-input" class="hud-input" placeholder="Escribe algo y tu personaje lo dirá en voz alta…" maxlength="60" autocomplete="off">
                     <button class="hud-btn" id="hud-send" onclick="sendChat()"><span>💬</span> Decir</button>
                 </div>
 
                 <div class="room-tools">
+                    <button class="tool-btn highlight" id="tool-qr-chat" onclick="openQrChatModal()">📱 Conectar teléfono para chatear</button>
                     <button class="tool-btn" id="tool-sit" onclick="toggleSit()">🪑 Sentarme</button>
                     <label class="tool-seat">Butaca nº
                         <input type="number" id="seat-input" min="1" max="32" inputmode="numeric" placeholder="1-32">
@@ -142,13 +146,15 @@
     <!-- Vídeo de la sesión de cine: minúsculo mientras se ve en la pantalla de la sala; ampliable a pantalla completa -->
     <div class="screen-overlay mini" id="screen-overlay">
         <div class="screen-box">
-            <video id="show-video" playsinline muted preload="auto"></video>
+            <video id="show-video" playsinline preload="auto"></video>
             <div class="screen-caps" id="screen-caps"></div>
             <div class="screen-ctrl">
-                <input type="text" id="so-input" class="hud-input" maxlength="60" placeholder="Comenta la película…" autocomplete="off">
-                <button type="button" class="tool-btn" onclick="showOverlaySend()">💬 Decir</button>
-                <button type="button" class="tool-btn" id="so-mute" onclick="showToggleSound()">🔇 Activar sonido</button>
-                <button type="button" class="tool-btn" id="so-close" onclick="showSetExpanded(false)">✖ Cerrar</button>
+                <button type="button" class="tool-btn highlight" id="so-qr" onclick="openQrChatModal()">📱 QR Chat Móvil</button>
+                <div class="so-companion-badge hidden" id="so-companion-indicator"><span>📱</span> <b>Móvil conectado:</b> Chatea desde tu teléfono</div>
+                <input type="text" id="so-input" class="hud-input" maxlength="60" placeholder="Comenta la película con la sala…" autocomplete="off">
+                <button type="button" class="tool-btn" id="so-send-btn" onclick="showOverlaySend()">💬 Decir</button>
+                <button type="button" class="tool-btn" id="so-mute" onclick="showToggleSound()">🔊 Sonido: ON</button>
+                <button type="button" class="tool-btn" id="so-close" onclick="showSetExpanded(false)">✖ Volver a la sala</button>
             </div>
         </div>
     </div>
@@ -159,11 +165,36 @@
         </div>
     </div>
 
-    <script src="/cine/sprite.js?v=20261010h"></script>
-    <script src="/cine/audio.js?v=20261010h"></script>
-    <script src="/cine/scenes.js?v=20261010h"></script>
-    <script src="/cine/show.js?v=20261010h"></script>
-    <script src="/cine/app.js?v=20261010h"></script>
-    <script src="/cine/tv.js?v=20261010h"></script>
+    <!-- Modal Código QR para chat móvil de acompañamiento -->
+    <div class="qr-modal-backdrop hidden" id="qr-modal" onclick="if(event.target===this)closeQrChatModal()">
+        <div class="qr-modal-box">
+            <button class="qr-modal-close" onclick="closeQrChatModal()" title="Cerrar">✕</button>
+            <div class="qr-modal-header">
+                <span class="qr-badge">📱 SEGUNDA PANTALLA</span>
+                <h3 class="qr-title">Conectar teléfono para chatear</h3>
+                <p class="qr-desc">Escanea este código QR con la cámara de tu móvil para chatear cómodamente en tiempo real durante la película sin usar el mando.</p>
+            </div>
+            <div class="qr-code-frame" id="qr-code-target">
+                <!-- SVG del QR generado dinámicamente -->
+            </div>
+            <div class="qr-modal-footer">
+                <div class="qr-url-hint">O entra desde el navegador de tu móvil a:</div>
+                <div class="qr-url-text" id="qr-url-text">...</div>
+                <div class="qr-tips">
+                    <span>✨ Vinculado a tu butaca</span> •
+                    <span>💬 Aparece en la gran pantalla</span> •
+                    <span>🍿 Vota y reacciona</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/qrcode.min.js"></script>
+    <script src="/cine/sprite.js?v=20261011c"></script>
+    <script src="/cine/audio.js?v=20261011c"></script>
+    <script src="/cine/scenes.js?v=20261011c"></script>
+    <script src="/cine/show.js?v=20261011c"></script>
+    <script src="/cine/app.js?v=20261011c"></script>
+    <script src="/cine/tv.js?v=20261011c"></script>
 </body>
 </html>

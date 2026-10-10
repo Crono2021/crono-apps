@@ -69,6 +69,8 @@
         if (vk.open) return vk.el;
         const ov = $('overlay');
         if (ov && !ov.classList.contains('hidden')) return ov;
+        const qrModal = $('qr-modal');
+        if (qrModal && !qrModal.classList.contains('hidden')) return qrModal;
         if (typeof SHOW !== 'undefined' && SHOW.expanded) return $('screen-overlay');
         return document.body;
     }
@@ -145,6 +147,12 @@
     /* ───────────── Atrás ───────────── */
     function handleBack() {
         if (vk.open) { closeVK(false); return true; }
+        const qrModal = $('qr-modal');
+        if (qrModal && !qrModal.classList.contains('hidden')) {
+            if (typeof window.closeQrChatModal === 'function') window.closeQrChatModal();
+            else qrModal.classList.add('hidden');
+            return true;
+        }
         if (window.showHandleBack && showHandleBack()) return true;   // vídeo ampliado de la sesión de cine
         const ov = $('overlay');
         if (ov && !ov.classList.contains('hidden')) return false;

@@ -55,7 +55,12 @@ function cyrb53(str, seed) {
 function getClientKey() {
     // Con sesión de Telegram conocida, la clave sale de la cuenta: el mismo personaje en móvil, TV y web
     try {
-        const ph = String(localStorage.getItem('cineflix_current_phone') || localStorage.getItem('user_phone') || '').replace(/[^0-9]/g, '');
+        let ph = '';
+        if (window.AndroidBridge && typeof window.AndroidBridge.getSavedPhone === 'function') {
+            try { ph = window.AndroidBridge.getSavedPhone() || ''; } catch (e) {}
+        }
+        if (!ph) ph = String(localStorage.getItem('cineflix_current_phone') || localStorage.getItem('user_phone') || '');
+        ph = ph.replace(/[^0-9]/g, '');
         if (ph.length >= 6) return 'tg' + cyrb53('cf:' + ph, 1) + cyrb53('cf:' + ph, 2) + cyrb53('cf:' + ph, 3);
     } catch (e) {}
     let k = null;
@@ -162,6 +167,18 @@ function onNetMessage(m) {
             clearBubbles();
             setStatus('online'); updateRoomUI();
             if (m.show) showOnState(m.show);
+            if (m.hasCompanion) setCompanionActive(true); else setCompanionActive(false);
+            break;
+        }
+        case 'companion_connected': {
+            setCompanionActive(true);
+            closeQrChatModal();
+            toast('📱 Teléfono conectado para chatear');
+            break;
+        }
+        case 'companion_disconnected': {
+            setCompanionActive(false);
+            toast('📱 Teléfono desconectado (chat en TV reactivado)');
             break;
         }
         case 'pong': showClockSample(m); break;
@@ -243,7 +260,9 @@ function enterRoom(id) {
     for (const k in trips) delete trips[k];
     clearBubbles();
     showResetLocal();
-    document.getElementById('room-title').textContent = '🎬 ' + net.meta.name;
+    const rIdx = ROOMS.findIndex(r => r.id === id);
+    const rNum = rIdx >= 0 ? (rIdx + 1) : 1;
+    document.getElementById('room-title').textContent = `🎬 Sala ${rNum}: ${net.meta.name} (Código: ${rNum})`;
     switchView('cinema');
     updateRoomUI();
     connectRoom();
@@ -887,6 +906,93 @@ function animationLoop() {
     }
     requestAnimationFrame(animationLoop);
 }
+
+/* ───────────────────────── QR Chat Móvil (Segunda Pantalla) ───────────────────────── */
+function openQrChatModal() {
+    const origin = window.location.origin;
+    const room = net.wantRoom || 'bttf';
+    const key = CLIENT_KEY;
+    const name = encodeURIComponent(myCharacter.name || 'Cinéfilo');
+    const v = Date.now();
+    const companionUrl = `${origin}/chat-cine.html?v=${v}&room=${encodeURIComponent(room)}&key=${encodeURIComponent(key)}&name=${name}`;
+
+    const container = document.getElementById('qr-code-target');
+    if (container) {
+        container.innerHTML = '';
+        if (typeof qrcode === 'function') {
+            try {
+                const qr = qrcode(0, 'M');
+                qr.addData(companionUrl);
+                qr.make();
+                container.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2 });
+            } catch (err) {
+                console.error('[QR] Error generating QR code:', err);
+                container.innerHTML = '<div style="color:#ef4444;font-size:12px;padding:20px;">Error al generar el código QR</div>';
+            }
+        } else {
+            container.innerHTML = '<div style="color:#ef4444;font-size:12px;padding:20px;">Librería QR no disponible</div>';
+        }
+    }
+
+    const urlEl = document.getElementById('qr-url-text');
+    if (urlEl) urlEl.textContent = companionUrl;
+
+    const modal = document.getElementById('qr-modal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        const closeBtn = modal.querySelector('.qr-modal-close');
+        if (closeBtn && window.cineIsTV) {
+            setTimeout(() => { try { closeBtn.focus(); } catch (e) {} }, 50);
+        }
+    }
+}
+
+function closeQrChatModal() {
+    const modal = document.getElementById('qr-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function setCompanionActive(active) {
+    net.hasCompanion = !!active;
+    const hud = document.querySelector('.cinema-hud');
+    const qrBtn = document.getElementById('tool-qr-chat');
+    const soQrBtn = document.getElementById('so-qr');
+    const soInput = document.getElementById('so-input');
+    const soSendBtn = document.getElementById('so-send-btn');
+    const soInd = document.getElementById('so-companion-indicator');
+
+    if (active) {
+        if (hud) hud.classList.add('companion-active');
+        if (qrBtn) {
+            qrBtn.textContent = '📱 Móvil conectado ✅';
+            qrBtn.classList.add('on');
+        }
+        if (soQrBtn) {
+            soQrBtn.textContent = '📱 Móvil conectado ✅';
+            soQrBtn.classList.add('on');
+        }
+        if (soInput) soInput.style.display = 'none';
+        if (soSendBtn) soSendBtn.style.display = 'none';
+        if (soInd) soInd.classList.remove('hidden');
+    } else {
+        if (hud) hud.classList.remove('companion-active');
+        if (qrBtn) {
+            qrBtn.textContent = '📱 Conectar teléfono para chatear';
+            qrBtn.classList.remove('on');
+        }
+        if (soQrBtn) {
+            soQrBtn.textContent = '📱 QR Chat Móvil';
+            soQrBtn.classList.remove('on');
+        }
+        if (soInput) soInput.style.display = '';
+        if (soSendBtn) soSendBtn.style.display = '';
+        if (soInd) soInd.classList.add('hidden');
+    }
+}
+
+window.openQrChatModal = openQrChatModal;
+window.closeQrChatModal = closeQrChatModal;
+window.setCompanionActive = setCompanionActive;
 
 /* ───────────────────────── Arranque ───────────────────────── */
 buildLobby();

@@ -9,7 +9,7 @@ const SHOW = {
     phase: 'idle', candidates: [], votes: [], endsAt: 0, movie: null, startAt: 0, duration: 0, by: '', myVote: -1, cooldownUntil: 0,
     offset: 0, bestRtt: Infinity,
     key: '', prepared: false, preparing: false, status: '', error: '', blocked: false,
-    expanded: false, soundOn: false, caps: [], engine: null, lastDur: 0
+    expanded: false, soundOn: true, caps: [], engine: null, lastDur: 0
 };
 let showVideo = null, showPix = null, showPixCtx = null;
 
@@ -33,7 +33,12 @@ function showFmt(ms) {
     const s = Math.max(0, Math.ceil(ms / 1000));
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
-function showTitle(m) { return m ? m.title + (m.year ? ' (' + m.year + ')' : '') : ''; }
+function showTitle(m) {
+    if (!m) return '';
+    const title = String(m.title || '');
+    if (m.year && !title.includes(String(m.year))) return title + ' (' + m.year + ')';
+    return title;
+}
 
 /* ── Estado del servidor ── */
 function showOnState(st, fromJoin) {
@@ -62,6 +67,36 @@ function showOnState(st, fromJoin) {
 }
 
 /* ── Preparación del vídeo (cada espectador desde su propia cuenta de Telegram) ── */
+const nativeResolvers = new Map();
+const prevOnTelegramCallback = window.onTelegramCallback;
+window.onTelegramCallback = (queryId, success, payload) => {
+    const r = nativeResolvers.get(queryId);
+    if (r) {
+        nativeResolvers.delete(queryId);
+        if (success) {
+            try { r.resolve(typeof payload === 'string' ? JSON.parse(payload) : payload); }
+            catch (_) { r.resolve(payload); }
+        } else {
+            r.reject(new Error(payload));
+        }
+        return;
+    }
+    if (prevOnTelegramCallback) prevOnTelegramCallback(queryId, success, payload);
+};
+
+function callNativeCineStream(searchTitle, yearStr) {
+    return new Promise((resolve, reject) => {
+        const queryId = 'cine_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        nativeResolvers.set(queryId, { resolve, reject });
+        try {
+            window.AndroidBridge.startCineScreenStream(queryId, String(searchTitle || ''), String(yearStr || ''));
+        } catch (e) {
+            nativeResolvers.delete(queryId);
+            reject(e);
+        }
+    });
+}
+
 function showLoadEngine() {
     if (window.__cineStreamMock) return Promise.resolve(window.__cineStreamMock);
     if (SHOW.engine) return Promise.resolve(SHOW.engine);
@@ -70,7 +105,7 @@ function showLoadEngine() {
 const SHOW_ERRORS = {
     NATIVE: '📺 Tu app aún no puede reproducirla en la sala; sigue el chat y las votaciones. En la web (PC) sí.',
     UNSUPPORTED: 'Este dispositivo no admite la reproducción en la sala.',
-    NO_LOGIN: '🔒 Inicia sesión en Cineflix (Telegram) en esta web para ver la película.',
+    NO_LOGIN: '🔒 Inicia sesión en Cineflix (Telegram) para ver la película.',
     NO_MP4: '🎞️ Esa película no tiene versión mp4.',
     NOT_FOUND: '🔎 El bot no ha encontrado la película.',
     FAILED: '⚠️ No se pudo preparar el vídeo.'
@@ -82,6 +117,34 @@ async function showStartPrepare() {
     SHOW.key = key; SHOW.prepared = false; SHOW.preparing = true; SHOW.error = ''; SHOW.status = ''; SHOW.blocked = false; SHOW.lastDur = 0;
     SHOW.lastSeekAt = 0; SHOW.lead = 0; SHOW.seekPending = false;
     showVideoEl();
+
+    // Reproducción nativa en la app Android para la pantalla del cine
+    if (window.AndroidBridge && window.AndroidBridge.startCineScreenStream) {
+        SHOW.status = 'Cargando película en la app…'; showRender();
+        try {
+            const searchTitle = mv.search_title || mv.title;
+            const yearStr = mv.year ? String(mv.year) : '';
+            const res = await callNativeCineStream(searchTitle, yearStr);
+            if (SHOW.key !== key) return;
+            SHOW.nativeVideoInfo = res;
+            showVideo.src = res.streamUrl;
+            showVideo.load();
+            SHOW.prepared = true;
+            SHOW.preparing = false;
+            SHOW.status = '✅ Película lista';
+            showReportDuration(res.duration);
+        } catch (e) {
+            if (SHOW.key !== key) return;
+            SHOW.preparing = false; SHOW.prepared = false;
+            const msg = (e && e.message) || String(e);
+            if (/AUTH_REQUIRED/.test(msg)) SHOW.error = SHOW_ERRORS.NO_LOGIN;
+            else if (/NOT_FOUND/.test(msg)) SHOW.error = SHOW_ERRORS.NOT_FOUND;
+            else SHOW.error = '⚠️ Error al cargar vídeo: ' + msg;
+        }
+        showRender();
+        return;
+    }
+
     if (SHOW_NATIVE && !window.__cineStreamMock) { SHOW.preparing = false; SHOW.error = SHOW_ERRORS.NATIVE; showRender(); return; }
     SHOW.status = 'Cargando el reproductor…'; showRender();
     try {
@@ -112,6 +175,10 @@ function showReportDuration(sec) {
 function showStopPlayback() {
     const had = SHOW.key !== '';
     SHOW.key = ''; SHOW.prepared = false; SHOW.preparing = false; SHOW.error = ''; SHOW.status = ''; SHOW.blocked = false;
+    SHOW.nativeVideoInfo = null;
+    if (window.AndroidBridge && window.AndroidBridge.stopCineScreenStream) {
+        try { window.AndroidBridge.stopCineScreenStream(); } catch (e) {}
+    }
     if (had) {
         try {
             const eng = window.__cineStreamMock || SHOW.engine;
@@ -128,19 +195,34 @@ function showResetLocal() {
     showRender();
 }
 
-/* ── Vídeo (en un contenedor mínimo; ampliable) ── */
 function showVideoEl() {
     if (showVideo) return showVideo;
     showVideo = showEl('show-video');
-    showVideo.muted = true; showVideo.playsInline = true; showVideo.setAttribute('playsinline', '');
+    showVideo.muted = !SHOW.soundOn;
+    if (SHOW.soundOn) showVideo.volume = 1;
+    showVideo.playsInline = true;
+    showVideo.setAttribute('playsinline', '');
     showVideo.addEventListener('error', () => { if (SHOW.prepared) { SHOW.error = SHOW_ERRORS.FAILED; showRender(); } });
     showVideo.addEventListener('seeked', () => { if (SHOW.seekPending) { SHOW.seekPending = false; SHOW.lead = Math.min(8, Math.max(0, (Date.now() - SHOW.lastSeekAt) / 1000)); } });
     return showVideo;
 }
 function showPlay() {
     const v = showVideoEl();
+    v.muted = !SHOW.soundOn;
+    if (SHOW.soundOn) v.volume = 1;
     const p = v.play();
-    if (p && p.catch) p.then(() => { if (SHOW.blocked) { SHOW.blocked = false; showRender(); } }).catch(() => { if (!SHOW.blocked) { SHOW.blocked = true; showRender(); } });
+    if (p && p.catch) {
+        p.then(() => {
+            if (SHOW.blocked) { SHOW.blocked = false; showRender(); }
+        }).catch((err) => {
+            console.warn('[Show] Play unmuted blocked by policy, trying muted fallback if needed:', err);
+            if (v.muted === false) {
+                v.muted = true;
+                v.play().catch(() => {});
+            }
+            if (!SHOW.blocked) { SHOW.blocked = true; showRender(); }
+        });
+    }
 }
 function showSyncTick() {
     if (!SHOW.prepared || !showVideo || !SHOW.startAt || (SHOW.phase !== 'loading' && SHOW.phase !== 'playing')) return;
@@ -207,19 +289,29 @@ function showRender() {
             }, SHOW.myVote === i ? 'on' : '');
             rowBtns.appendChild(b);
         });
+        const rerollIdx = SHOW.candidates.length;
+        const nReroll = SHOW.votes[rerollIdx] || 0;
+        const bReroll = showBtn((SHOW.myVote === rerollIdx ? '✔ ' : '') + '🔄 Pedir 4 distintas · ' + nReroll + (nReroll === 1 ? ' voto' : ' votos'), 'vote-reroll', () => {
+            if (!seated) return toast('Siéntate para votar 🪑');
+            SHOW.myVote = rerollIdx; netSend({ type: 'show_vote', i: rerollIdx }); showRender();
+        }, SHOW.myVote === rerollIdx ? 'on' : '');
+        rowBtns.appendChild(bReroll);
     } else if (SHOW.phase === 'loading') {
         msg.textContent = '🍿 «' + showTitle(SHOW.movie) + '» empieza en ';
         showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
         st.textContent = SHOW.error || SHOW.status || '';
     } else if (SHOW.phase === 'playing') {
+        const rIdx = (typeof ROOMS !== 'undefined' && typeof net !== 'undefined' && net.wantRoom)
+            ? ROOMS.findIndex(r => r.id === net.wantRoom) : -1;
+        const rNum = rIdx >= 0 ? (rIdx + 1) : 1;
         msg.textContent = '🎬 En pantalla: «' + showTitle(SHOW.movie) + '»';
         const ok = SHOW.prepared && !SHOW.error;
         if (ok) {
             rowBtns.appendChild(showBtn(SHOW.soundOn ? '🔊 Sonido: ON' : '🔇 Activar sonido', 'mute', showToggleSound, SHOW.soundOn ? 'on' : ''));
-            rowBtns.appendChild(showBtn('🔍 Ampliar', 'expand', () => showSetExpanded(true)));
+            rowBtns.appendChild(showBtn('📺 Pantalla completa', 'fullscreen', showOpenFullscreen, 'on'));
             if (SHOW.blocked) rowBtns.appendChild(showBtn('▶ Toca para reproducir', 'play', () => { SHOW.blocked = false; showPlay(); showRender(); }, 'on'));
         }
-        st.textContent = SHOW.error || (ok ? '' : (SHOW.status || 'Preparando…'));
+        st.textContent = SHOW.error || (ok ? `📱 Chat y mando desde el móvil: Código de sala: ${rNum}` : (SHOW.status || 'Preparando…'));
     }
     head.append(msg, rowBtns);
     panel.append(head, st);
@@ -228,6 +320,106 @@ function showRender() {
     if (focusKey) { const f = panel.querySelector('[data-k="' + focusKey + '"]'); if (f) { try { f.focus({ preventScroll: true }); } catch (e) { f.focus(); } } }
     document.documentElement.style.setProperty('--show-h', (panel.offsetHeight + 10) + 'px');
     showUpdateOverlayBtns();
+}
+
+function showOpenFullscreen() {
+    if (!SHOW.prepared || !showVideo) return;
+    showSetExpanded(true);
+}
+
+function getCinemaScreenRect() {
+    const canvas = showEl('room-canvas');
+    if (!canvas) return null;
+    const r = canvas.getBoundingClientRect();
+    const sx = r.width / 960, sy = r.height / 540;
+    return {
+        x: r.left + 170 * sx,
+        y: r.top + 20 * sy,
+        w: 620 * sx,
+        h: 210 * sy
+    };
+}
+
+let expandAnimTimer = null;
+function showSetExpanded(on) {
+    const ov = showEl('screen-overlay');
+    if (!ov) return;
+    const box = ov.querySelector('.screen-box');
+    if (expandAnimTimer) { clearTimeout(expandAnimTimer); expandAnimTimer = null; }
+
+    if (on) {
+        SHOW.expanded = true;
+        // Activar sonido si estaba muteado para escuchar la película en pantalla completa
+        if (showVideo && showVideo.muted) {
+            showVideo.muted = false;
+            showVideo.volume = 1;
+            SHOW.soundOn = true;
+            showRender();
+        }
+
+        const startRect = getCinemaScreenRect();
+        ov.classList.remove('mini');
+        ov.classList.add('full');
+        showUpdateOverlayBtns();
+        showRenderCaps();
+
+        if (box && startRect && startRect.w > 20) {
+            const targetRect = box.getBoundingClientRect();
+            if (targetRect.w > 40 && targetRect.h > 40) {
+                const scaleX = startRect.w / targetRect.w;
+                const scaleY = startRect.h / targetRect.h;
+                const dx = (startRect.x + startRect.w / 2) - (targetRect.left + targetRect.w / 2);
+                const dy = (startRect.y + startRect.h / 2) - (targetRect.top + targetRect.h / 2);
+
+                // Empezar exactamente sobre la pantalla del cine
+                box.style.transition = 'none';
+                box.style.transform = `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`;
+                ov.style.transition = 'none';
+                ov.style.backgroundColor = 'rgba(0, 0, 0, 0)';
+
+                // Animar crecimiento hacia pantalla completa
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        box.style.transition = 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1)';
+                        box.style.transform = 'translate(0px, 0px) scale(1, 1)';
+                        ov.style.transition = 'background-color 0.45s ease';
+                        ov.style.backgroundColor = 'rgba(4, 6, 12, 0.96)';
+                    });
+                });
+            }
+        }
+        const c = showEl('so-close'); if (c) { try { c.focus({ preventScroll: true }); } catch (e) {} }
+    } else {
+        SHOW.expanded = false;
+        const targetRect = getCinemaScreenRect();
+        if (box && targetRect && targetRect.w > 20) {
+            const curRect = box.getBoundingClientRect();
+            const scaleX = targetRect.w / curRect.w;
+            const scaleY = targetRect.h / curRect.h;
+            const dx = (targetRect.x + targetRect.w / 2) - (curRect.left + curRect.w / 2);
+            const dy = (targetRect.y + targetRect.h / 2) - (curRect.top + curRect.h / 2);
+
+            box.style.transition = 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease';
+            box.style.transform = `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`;
+            box.style.opacity = '0.3';
+            ov.style.transition = 'background-color 0.35s ease';
+            ov.style.backgroundColor = 'rgba(0, 0, 0, 0)';
+
+            expandAnimTimer = setTimeout(() => {
+                ov.classList.remove('full');
+                ov.classList.add('mini');
+                box.style.transform = '';
+                box.style.transition = '';
+                box.style.opacity = '';
+                ov.style.backgroundColor = '';
+                ov.style.transition = '';
+            }, 350);
+        } else {
+            ov.classList.remove('full');
+            ov.classList.add('mini');
+            if (box) { box.style.transform = ''; box.style.transition = ''; }
+        }
+    }
 }
 function showTick() {
     if (!showCountEl) return;
@@ -246,22 +438,26 @@ function showToggleSound() {
     if (showVideo) { showVideo.muted = !SHOW.soundOn; if (SHOW.soundOn) showVideo.volume = 1; }
     showRender();
 }
-function showSetExpanded(on) {
-    const ov = showEl('screen-overlay');
-    if (!ov) return;
-    SHOW.expanded = !!on;
-    ov.classList.toggle('full', SHOW.expanded);
-    ov.classList.toggle('mini', !SHOW.expanded);
-    if (SHOW.expanded) {
-        showRenderCaps();
-        const c = showEl('so-close'); if (c) { try { c.focus({ preventScroll: true }); } catch (e) { c.focus(); } }
-    }
-    showUpdateOverlayBtns();
-}
 function showUpdateOverlayBtns() {
     const m = showEl('so-mute');
-    if (m) m.textContent = SHOW.soundOn ? '🔊 Sonido: ON' : '🔇 Activar sonido';
+    if (m) m.textContent = SHOW.soundOn ? '🔊 Sonido: ON' : '🔇 Silenciar';
+    const b = showEl('so-room-badge');
+    if (b) {
+        const rIdx = (typeof ROOMS !== 'undefined' && typeof net !== 'undefined' && net.wantRoom)
+            ? ROOMS.findIndex(r => r.id === net.wantRoom) : -1;
+        const rNum = rIdx >= 0 ? (rIdx + 1) : 1;
+        b.textContent = `📱 Chat móvil: Código ${rNum}`;
+    }
 }
+
+function unlockShowAudio() {
+    if (showVideo && SHOW.soundOn && showVideo.muted) {
+        showVideo.muted = false;
+        showVideo.volume = 1;
+    }
+}
+document.addEventListener('click', unlockShowAudio, { passive: true });
+document.addEventListener('keydown', unlockShowAudio, { passive: true });
 function showHandleBack() {
     if (SHOW.expanded) { showSetExpanded(false); return true; }
     return false;
@@ -326,14 +522,18 @@ function drawShowScreen(ctx, now, SCR) {
     ctx.fillStyle = 'rgba(4,6,12,0.86)'; ctx.fillRect(SCR.x, SCR.y, SCR.w, SCR.h);
     const gold = '#f1c40f';
     if (SHOW.phase === 'voting') {
-        ctx.fillStyle = gold; ctx.font = '12px ' + SHOW_FONT;
-        ctx.fillText('¿QUÉ VEMOS?  ' + showFmt(SHOW.endsAt - srvNow()), cx, SCR.y + 28);
-        ctx.font = '9px ' + SHOW_FONT;
+        ctx.fillStyle = gold; ctx.font = '11px ' + SHOW_FONT;
+        ctx.fillText('¿QUÉ VEMOS?  ' + showFmt(SHOW.endsAt - srvNow()), cx, SCR.y + 24);
+        ctx.font = '8px ' + SHOW_FONT;
         SHOW.candidates.forEach((c, i) => {
             const n = SHOW.votes[i] || 0;
             ctx.fillStyle = SHOW.myVote === i ? '#2ecc71' : '#fff';
-            ctx.fillText(showFit(ctx, (i + 1) + '. ' + showTitle(c) + '  [' + n + ']', SCR.w - 40), cx, SCR.y + 62 + i * 28);
+            ctx.fillText(showFit(ctx, (i + 1) + '. ' + showTitle(c) + '  [' + n + ']', SCR.w - 30), cx, SCR.y + 48 + i * 22);
         });
+        const rerollIdx = SHOW.candidates.length;
+        const nReroll = SHOW.votes[rerollIdx] || 0;
+        ctx.fillStyle = SHOW.myVote === rerollIdx ? '#2ecc71' : '#f39c12';
+        ctx.fillText(showFit(ctx, '5. 🔄 Pedir 4 distintas  [' + nReroll + ']', SCR.w - 30), cx, SCR.y + 48 + rerollIdx * 22);
     } else {
         ctx.fillStyle = gold; ctx.font = '11px ' + SHOW_FONT;
         const title = showTitle(SHOW.movie).toUpperCase();
