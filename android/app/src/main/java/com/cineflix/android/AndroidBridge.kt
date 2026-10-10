@@ -558,6 +558,109 @@ class AndroidBridge(
         )
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Cinema Screen Playback (16-bit retro room in WebView)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private var cineScreenServer: com.cineflix.android.ui.player.CineScreenStreamServer? = null
+    @Volatile private var cineCurrentVideoInfo: TelegramEngine.VideoInfo? = null
+    @Volatile private var cineCurrentMovieTitle: String = ""
+
+    @JavascriptInterface
+    fun startCineScreenStream(queryId: String, searchTitle: String, yearStr: String) {
+        scope.launch {
+            try {
+                if (engine.authState.value !is TelegramEngine.AuthState.Ready) {
+                    callback(queryId, false, "AUTH_REQUIRED")
+                    return@launch
+                }
+                var videos = engine.searchMovieByPayload(searchTitle)
+                if (videos.isEmpty() && yearStr.isNotBlank()) {
+                    videos = engine.searchMovieByPayload("$searchTitle $yearStr")
+                }
+                if (videos.isEmpty()) {
+                    callback(queryId, false, "NOT_FOUND")
+                    return@launch
+                }
+                val picked = videos.firstOrNull {
+                    it.mimeType.equals("video/mp4", ignoreCase = true) ||
+                    it.fileName.endsWith(".mp4", ignoreCase = true)
+                } ?: videos.first()
+
+                try {
+                    cineScreenServer?.stop()
+                } catch (_: Exception) {}
+                cineScreenServer = null
+
+                val server = com.cineflix.android.ui.player.CineScreenStreamServer(engine)
+                val streamUrl = server.start(
+                    fileId = picked.fileId,
+                    totalSize = picked.fileSize,
+                    mimeType = picked.mimeType.ifEmpty { "video/mp4" }
+                )
+                cineScreenServer = server
+                cineCurrentVideoInfo = picked
+                cineCurrentMovieTitle = searchTitle
+
+                val result = JSONObject().apply {
+                    put("streamUrl", streamUrl)
+                    put("fileId", picked.fileId)
+                    put("fileSize", picked.fileSize)
+                    put("mimeType", picked.mimeType)
+                    put("chatId", picked.chatId)
+                    put("msgId", picked.msgId)
+                    put("fileName", picked.fileName)
+                    put("title", searchTitle)
+                }
+                callback(queryId, true, result.toString())
+            } catch (e: Exception) {
+                Log.e("AndroidBridge", "startCineScreenStream error", e)
+                callback(queryId, false, e.message ?: "STREAM_FAILED")
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun stopCineScreenStream() {
+        try {
+            cineScreenServer?.stop()
+        } catch (_: Exception) {}
+        cineScreenServer = null
+        cineCurrentVideoInfo = null
+        cineCurrentMovieTitle = ""
+    }
+
+    @JavascriptInterface
+    fun playCineFullscreen(progressSec: String) {
+        val info = cineCurrentVideoInfo
+        val intent = Intent(context, com.cineflix.android.ui.player.PlayerActivity::class.java).apply {
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_CHAT_ID,   info?.chatId ?: 0L)
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_MSG_ID,    info?.msgId ?: 0L)
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_FILE_ID,   info?.fileId ?: 0)
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_FILE_SIZE, info?.fileSize ?: 0L)
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_MIME_TYPE, info?.mimeType?.ifEmpty { "video/mp4" } ?: "video/mp4")
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_TITLE,     cineCurrentMovieTitle.ifEmpty { info?.fileName ?: "Cineflix" })
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_PROGRESS,  progressSec)
+        }
+        launcher?.invoke(intent) ?: context.startActivity(intent)
+    }
+
+    @JavascriptInterface
+    fun playCineFullscreenFull(
+        chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String, progressSec: String
+    ) {
+        val intent = Intent(context, com.cineflix.android.ui.player.PlayerActivity::class.java).apply {
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull() ?: 0L)
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull() ?: 0L)
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_FILE_ID,   fileId.toIntOrNull() ?: 0)
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_TITLE,     title)
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_PROGRESS,  progressSec)
+        }
+        launcher?.invoke(intent) ?: context.startActivity(intent)
+    }
+
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // OTA Update: Download and install new APK
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
