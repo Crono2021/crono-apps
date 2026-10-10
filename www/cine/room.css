@@ -1,0 +1,128 @@
+/* Cartelera, sala compartida y ajustes (carga después de cine.css) */
+
+/* ── Cartelera ── */
+#view-lobby {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    background: radial-gradient(circle at 50% 0%, #1a2233 0%, #07090f 70%);
+    padding: 20px 16px 40px;
+}
+.lobby-inner { max-width: 980px; margin: 0 auto; }
+.lobby-me {
+    display: flex; align-items: center; gap: 14px;
+    background: rgba(18, 24, 35, 0.9); border: 1px solid #2a3447; border-radius: 14px;
+    padding: 12px 16px; margin-bottom: 22px;
+}
+.lobby-me-avatar {
+    width: 64px; height: 84px; background: #070a10; border: 2px solid var(--cinema-gold);
+    border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+#lobby-avatar-canvas { width: 54px; height: 72px; image-rendering: pixelated; }
+.lobby-me-info { flex: 1; min-width: 0; }
+.lobby-me-name { font-family: 'Press Start 2P', monospace; font-size: 12px; color: var(--cinema-gold); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lobby-me-hint { font-size: 12px; color: #94a3b8; line-height: 1.4; }
+.lobby-edit-btn { width: auto; margin-top: 0; flex-shrink: 0; }
+.lobby-title { font-family: 'Press Start 2P', monospace; font-size: 14px; margin: 0 0 14px; color: #ecf0f1; text-shadow: 2px 2px 0 #000; }
+.lobby-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.room-card {
+    background: rgba(18, 24, 35, 0.92); border: 1px solid #2a3447; border-radius: 14px;
+    overflow: hidden; cursor: pointer; transition: transform .15s, border-color .15s, box-shadow .15s;
+    display: flex; flex-direction: column; text-align: left; color: inherit; font-family: inherit; padding: 0;
+}
+.room-card:hover { transform: translateY(-3px); border-color: var(--cinema-gold); box-shadow: 0 10px 30px rgba(243, 156, 18, 0.18); }
+.room-card canvas { display: block; width: 100%; aspect-ratio: 207 / 70; image-rendering: pixelated; image-rendering: crisp-edges; background: #000; border-bottom: 2px solid #0d111a; }
+.room-card-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 6px; }
+.room-card-name { font-family: 'Press Start 2P', monospace; font-size: 11px; line-height: 1.5; color: #fff; }
+.room-card-tag { font-size: 12px; color: #94a3b8; font-style: italic; }
+.room-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; font-size: 12px; font-weight: 600; color: #cbd5e1; }
+.room-card-bar { flex: 1; height: 6px; background: #0b0f17; border-radius: 3px; overflow: hidden; }
+.room-card-bar > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, #2ecc71, #f39c12); transition: width .4s; }
+.room-card-go { margin-top: 6px; background: linear-gradient(180deg, #c0392b 0%, #962d22 100%); border: 1px solid #e74c3c; color: #fff; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; text-align: center; }
+.lobby-foot { margin-top: 22px; text-align: center; color: #5b6b85; font-size: 11px; }
+
+/* ── Barra superior de la sala ── */
+#view-cinema { background: #040508; }
+.room-bar {
+    height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 12px;
+    background: #0b0f17; border-bottom: 1px solid #1a2232;
+}
+.room-back { background: #1e2636; color: #cbd5e1; border: 1px solid #2f3b52; border-radius: 6px; padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; white-space: nowrap; }
+.room-back:hover { background: #283347; color: #fff; }
+.room-title { flex: 1; font-family: 'Press Start 2P', monospace; font-size: 10px; color: var(--cinema-gold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-status, .room-count { font-size: 12px; font-weight: 600; color: #94a3b8; white-space: nowrap; }
+
+/* ── Visor: la sala entera cabe sin zoom ni arrastre ── */
+.cinema-viewport-container {
+    flex-direction: column; justify-content: center; gap: 10px;
+    padding: 8px 10px 10px; overflow-y: auto;
+}
+.cinema-wrapper { width: min(98vw, calc((100vh - 200px) * 16 / 9)); flex-shrink: 0; }
+#cinema-canvas { cursor: default; touch-action: manipulation; }
+#cinema-canvas.hover-seat { cursor: pointer; }
+.cinema-hud { position: static; transform: none; width: min(98vw, 720px); max-width: none; flex-shrink: 0; }
+.room-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; width: min(98vw, 720px); flex-shrink: 0; }
+.tool-btn {
+    background: #1a2230; color: #cbd5e1; border: 1px solid #2d384c; border-radius: 6px;
+    padding: 7px 11px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.tool-btn:hover { background: #253145; color: #fff; }
+.tool-btn.on { background: rgba(46, 204, 113, 0.18); border-color: var(--accent-green); color: var(--accent-green); }
+.tool-seat { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #94a3b8; }
+.tool-seat input { width: 64px; background: #121824; border: 1px solid #283347; border-radius: 6px; padding: 6px 8px; color: #fff; font-size: 12px; font-family: inherit; user-select: text; -webkit-user-select: text; }
+.hud-input { user-select: text; -webkit-user-select: text; }
+.form-input { user-select: text; -webkit-user-select: text; }
+
+.seat-tip {
+    position: absolute; z-index: 60; pointer-events: none; transform: translate(-50%, -100%);
+    background: rgba(8, 11, 18, 0.96); border: 1px solid var(--cinema-gold); color: #fff; border-radius: 6px;
+    padding: 5px 9px; font-size: 12px; font-weight: 600; max-width: 220px; line-height: 1.35;
+}
+.seat-tip small { display: block; color: #94a3b8; font-weight: 500; font-style: italic; }
+
+/* Burbujas: nombre con textContent (sin HTML), versión ambiental más discreta */
+.pixel-bubble::after { left: calc(50% + var(--tx, 0px)); }
+.pixel-bubble::before { left: calc(50% + var(--tx, 0px)); }
+.pixel-bubble.ambient { background: #f1f5f9; opacity: .94; }
+.pixel-bubble.mine .bubble-speaker { color: #b9770e; }
+
+.mini-label { font-size: 12px; font-weight: 600; color: #94a3b8; margin-top: 4px; }
+
+/* ── Avisos ── */
+.toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 300;
+    background: rgba(13, 17, 26, 0.97); border: 1px solid var(--cinema-gold); color: #fff;
+    padding: 9px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; max-width: 92vw; text-align: center;
+}
+.overlay { position: fixed; inset: 0; z-index: 400; background: rgba(0, 0, 0, 0.82); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.overlay-box { background: #121823; border: 1px solid #2a3447; border-radius: 14px; padding: 24px; max-width: 360px; text-align: center; display: flex; flex-direction: column; gap: 16px; font-size: 14px; line-height: 1.5; }
+
+@media (max-width: 768px) {
+    .lobby-grid { grid-template-columns: 1fr; }
+    .lobby-me { flex-wrap: wrap; }
+    .lobby-edit-btn { width: 100%; }
+    .cinema-wrapper { width: 98vw; }
+    .room-title { font-size: 9px; }
+    .room-status { display: none; }
+    .tool-btn { padding: 8px 10px; }
+    .hud-stats { display: none; }
+}
+
+/* Escenario: lienzo + burbujas + tooltip comparten geometría (permite recortar los laterales en móvil) */
+.room-stage { position: relative; width: 100%; aspect-ratio: 16 / 9; }
+.room-stage #cinema-canvas { position: absolute; inset: 0; }
+
+@media (max-width: 768px) {
+    /* En vertical se recortan las paredes laterales para que las butacas se vean más grandes (sin zoom ni arrastre) */
+    .cinema-wrapper { aspect-ratio: 740 / 540; }
+    .room-stage { width: 129.73%; margin-left: -14.865%; }
+    .pixel-bubble { font-size: 11px; padding: 5px 8px; max-width: 46vw; }
+    .bubble-speaker { font-size: 7px; }
+}
+@media (max-height: 520px) {
+    /* Móvil en horizontal: más sitio para la sala */
+    .retro-header { display: none; }
+    .workspace { height: 100vh; }
+    .cinema-wrapper { width: min(98vw, calc((100vh - 130px) * 16 / 9)); aspect-ratio: 16 / 9; }
+    .room-stage { width: 100%; margin-left: 0; }
+}
