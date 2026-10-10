@@ -2,6 +2,7 @@
   'use strict';
 
   function isDesktopPC() {
+    if (window._cineflixIsTV) return false;
     try {
       if (new URLSearchParams(window.location.search).get('tv') === '1') return false;
     } catch (e) {}
@@ -90,16 +91,31 @@
       const style = document.createElement('style');
       style.innerHTML = `
         body.is-tv .tv-focused, .android-tv .tv-focused {
-          outline: 3px solid #e50914 !important;
-          outline-offset: 2px !important;
-          box-shadow: 0 0 16px rgba(229, 9, 20, 0.75) !important;
-          z-index: 20 !important;
+          position: relative !important;
+          outline: none !important;
+          z-index: 40 !important;
+        }
+        body.is-tv .series-card.tv-focused, .android-tv .series-card.tv-focused {
+          overflow: visible !important;
+        }
+        body.is-tv .tv-focused::before, .android-tv .tv-focused::before {
+          content: '' !important;
+          position: absolute !important;
+          inset: -3px !important;
+          border: 20px solid transparent !important;
+          border-image: url('/elven_focus_border.svg') 36 fill / 20px stretch !important;
+          pointer-events: none !important;
+          z-index: 50 !important;
+          filter: drop-shadow(0 0 12px rgba(255, 215, 75, 0.85)) drop-shadow(0 0 24px rgba(212, 175, 55, 0.45)) !important;
+        }
+        body.is-tv .topbar-actions .btn-icon.tv-focused::before,
+        body.android-tv .topbar-actions .btn-icon.tv-focused::before {
+          display: none !important;
         }
         body.is-tv input.tv-focused, body.is-tv textarea.tv-focused,
         .android-tv input.tv-focused, .android-tv textarea.tv-focused {
-          outline: 4px solid #e50914 !important;
-          outline-offset: 4px !important;
-          box-shadow: 0 0 16px rgba(229, 9, 20, 0.6) !important;
+          outline: none !important;
+          box-shadow: none !important;
         }
         *:focus { outline: none !important; }
       `;
@@ -107,7 +123,7 @@
 
       // Ensure search input does not hold initial focus on TV
       const searchInput = document.getElementById('search-input');
-      if (searchInput && document.activeElement === searchInput) {
+      if (this.isTV() && searchInput && document.activeElement === searchInput) {
         searchInput.blur();
       }
 
@@ -140,7 +156,18 @@
       console.log('[TV-NAV] Initialized (no MutationObserver)');
     }
 
+    preserveNativeTextInput(e) {
+      // Android IMEs may emit legacy key codes while committing Unicode text.
+      // Never interpret composing input as D-pad/Enter, or take over mobile editing.
+      if (e.isComposing || e.keyCode === 229 || e.key === 'Process' || e.key === 'Dead') return true;
+      const target = e.target;
+      const active = document.activeElement;
+      const editable = el => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      return !this.isTV() && (editable(target) || editable(active));
+    }
+
     handleKeyDown(e) {
+      if (this.preserveNativeTextInput(e)) return;
       const key = e.key || e.code;
       const keyCode = e.keyCode || e.which;
       
@@ -294,6 +321,7 @@
     }
 
     handleKeyUp(e) {
+      if (this.preserveNativeTextInput(e)) return;
       const key = e.key || e.code;
       const keyCode = e.keyCode || e.which;
       const isEnter = key === 'Enter' || keyCode === 13 || keyCode === 23 || keyCode === 66;
@@ -553,7 +581,7 @@
         }
       }
 
-      const inModal = this.focused.closest('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card');
+      const inModal = this.focused.closest('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card, #modal-profiles-screen, #modal-profile-editor');
 
       const currentRect = this.focused.getBoundingClientRect();
       const currentCenter = { 
@@ -565,7 +593,7 @@
       // 1.5. STRICT MODAL FOCUS TRAP: Directional nav must NEVER escape modal!
       // ═════════════════════════════════════════════════════════════════════
       if (inModal) {
-        const modalContainer = inModal.closest('#season-picker-modal, #movie-files-modal, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #filter-sort-modal') || inModal;
+        const modalContainer = inModal.closest('#season-picker-modal, #movie-files-modal, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #filter-sort-modal, #modal-profiles-screen, #modal-profile-editor') || inModal;
 
         // ── SPECIALIZED LOGIC FOR ORDENAR Y FILTRAR MODAL (#filter-sort-modal) ──
         const isFilterSortModal = !!modalContainer.closest('#filter-sort-modal, .filter-sort-card') || modalContainer.id === 'filter-sort-modal';
@@ -905,7 +933,7 @@
           }
 
           // Modal scroll support if content overflows:
-          const scrollContainer = this.focused.closest('.season-picker-options, .modal-body, .recap-modal-card, .resume-options, .modal-card, .filter-sort-body');
+          const scrollContainer = this.focused.closest('.avatar-palette-grid, #profile-avatar-palette, .profile-editor-modal, .season-picker-options, .modal-body, .recap-modal-card, .resume-options, .modal-card, .filter-sort-body');
           if (scrollContainer && scrollContainer.scrollHeight > scrollContainer.clientHeight) {
             const scrollAmount = dir === 'DOWN' ? 120 : -120;
             scrollContainer.scrollBy({ top: scrollAmount, behavior: 'smooth' });
@@ -971,6 +999,8 @@
           const platformBackBtn = activeView.querySelector('#btn-back-platforms');
           const isPlatformBackBtn = !!(platformBackBtn && this.focused === platformBackBtn);
           const isViewAllBtn = !!(this.focused && this.focused.classList.contains('btn-view-all'));
+          const brandBtn = document.getElementById('app-brand-title') || document.querySelector('.topbar-brand');
+          const isBrandBtn = !!(this.focused && (this.focused === brandBtn || this.focused.id === 'app-brand-title' || this.focused.closest('.topbar-brand')));
 
           // Helper: get first populated row cards from a catalog rows container
           const getFirstPopulatedRowCards = (container) => {
@@ -1009,9 +1039,35 @@
             return;
           }
 
-          // A. FROM TOPBAR ACTIONS:
+          // A0.1 FROM CINEFLIX BRAND / LOGO BUTTON:
+          if (isBrandBtn) {
+            if (dir === 'RIGHT') {
+              if (searchInput && this.visible(searchInput)) { this.setFocus(searchInput); return; }
+              if (topbarActions) {
+                const actionBtns = Array.from(topbarActions.querySelectorAll('button')).filter(b => this.visible(b));
+                if (actionBtns.length > 0) { this.setFocus(actionBtns[0]); return; }
+              }
+            } else if (dir === 'DOWN') {
+              if (navTabsCont) {
+                const navBtns = Array.from(navTabsCont.querySelectorAll('.main-nav-btn, .nav-link, button')).filter(b => this.visible(b));
+                if (navBtns.length > 0) { this.setFocus(navBtns[0]); return; }
+              }
+            } else if (dir === 'UP') {
+              return; // Top edge
+            }
+            return;
+          }
+
+          // A. FROM TOPBAR ACTIONS (Row 1):
           if (inTopbarActions) {
             if (dir === 'DOWN') {
+              if (navTabsCont && this.visible(navTabsCont)) {
+                const navBtns = Array.from(navTabsCont.querySelectorAll('.main-nav-btn, .nav-link, button')).filter(b => this.visible(b));
+                if (navBtns.length > 0) {
+                  const target = pickClosestX(navBtns) || navBtns[navBtns.length - 1];
+                  if (target) { this.setFocus(target); return; }
+                }
+              }
               if (heroBtn && this.visible(heroBtn)) { this.setFocus(heroBtn); return; }
               if (genreTabsCont && this.visible(genreTabsCont)) {
                 const tabs = Array.from(genreTabsCont.querySelectorAll('.genre-tab, button')).filter(t => this.visible(t));
@@ -1042,9 +1098,9 @@
               } else if (searchInput && this.visible(searchInput)) {
                 this.setFocus(searchInput);
                 return;
-              } else if (navTabsCont) {
-                const navBtns = Array.from(navTabsCont.querySelectorAll('.main-nav-btn, .nav-link, button')).filter(b => this.visible(b));
-                if (navBtns.length > 0) { this.setFocus(navBtns[navBtns.length - 1]); return; }
+              } else if (brandBtn && this.visible(brandBtn)) {
+                this.setFocus(brandBtn);
+                return;
               }
             } else if (dir === 'RIGHT') {
               const actionBtns = Array.from(topbarActions.querySelectorAll('button')).filter(b => this.visible(b));
@@ -1053,12 +1109,21 @@
                 this.setFocus(actionBtns[idx + 1]);
                 return;
               }
+            } else if (dir === 'UP') {
+              return; // Top edge
             }
           }
 
-          // B. FROM SEARCH INPUT:
+          // B. FROM SEARCH INPUT (Row 1):
           if (isSearchInput) {
             if (dir === 'DOWN') {
+              if (navTabsCont && this.visible(navTabsCont)) {
+                const navBtns = Array.from(navTabsCont.querySelectorAll('.main-nav-btn, .nav-link, button')).filter(b => this.visible(b));
+                if (navBtns.length > 0) {
+                  const target = pickClosestX(navBtns) || navBtns.find(b => b.classList.contains('active')) || navBtns[0];
+                  if (target) { this.setFocus(target); return; }
+                }
+              }
               const candidates = [];
               if (genreTabsCont && this.visible(genreTabsCont)) {
                 const tabs = Array.from(genreTabsCont.querySelectorAll('.genre-tab, button')).filter(t => this.visible(t));
@@ -1078,12 +1143,9 @@
               const target = pickClosestX(candidates);
               if (target) { this.setFocus(target); return; }
             } else if (dir === 'LEFT') {
-              if (navTabsCont) {
-                const navBtns = Array.from(navTabsCont.querySelectorAll('.main-nav-btn, .nav-link, button')).filter(b => this.visible(b));
-                if (navBtns.length > 0) {
-                  this.setFocus(navBtns[navBtns.length - 1]);
-                  return;
-                }
+              if (brandBtn && this.visible(brandBtn)) {
+                this.setFocus(brandBtn);
+                return;
               }
             } else if (dir === 'RIGHT') {
               if (searchClearBtn && this.visible(searchClearBtn) && !searchClearBtn.classList.contains('hidden')) {
@@ -1094,6 +1156,8 @@
                 const actionBtns = Array.from(topbarActions.querySelectorAll('button')).filter(b => this.visible(b));
                 if (actionBtns.length > 0) { this.setFocus(actionBtns[0]); return; }
               }
+            } else if (dir === 'UP') {
+              return; // Top edge
             }
           }
 
@@ -1110,6 +1174,13 @@
                 if (actionBtns.length > 0) { this.setFocus(actionBtns[0]); return; }
               }
             } else if (dir === 'DOWN') {
+              if (navTabsCont && this.visible(navTabsCont)) {
+                const navBtns = Array.from(navTabsCont.querySelectorAll('.main-nav-btn, .nav-link, button')).filter(b => this.visible(b));
+                if (navBtns.length > 0) {
+                  const target = pickClosestX(navBtns) || navBtns[0];
+                  if (target) { this.setFocus(target); return; }
+                }
+              }
               const candidates = [];
               if (genreTabsCont && this.visible(genreTabsCont)) {
                 const tabs = Array.from(genreTabsCont.querySelectorAll('.genre-tab, button')).filter(t => this.visible(t));
@@ -1128,10 +1199,12 @@
               if (heroBtn && this.visible(heroBtn)) candidates.push(heroBtn);
               const target = pickClosestX(candidates);
               if (target) { this.setFocus(target); return; }
+            } else if (dir === 'UP') {
+              return; // Top edge
             }
           }
 
-          // C. FROM NAV TABS:
+          // C. FROM NAV TABS (Row 2):
           if (inNavTabs) {
             if (dir === 'RIGHT') {
               const navBtns = Array.from(navTabsCont.querySelectorAll('.main-nav-btn, .nav-link, button')).filter(b => this.visible(b));
@@ -1140,10 +1213,7 @@
                 this.setFocus(navBtns[idx + 1]);
                 return;
               } else if (idx === navBtns.length - 1) {
-                if (searchInput && this.visible(searchInput)) {
-                  this.setFocus(searchInput);
-                  return;
-                } else if (topbarActions) {
+                if (topbarActions) {
                   const actionBtns = Array.from(topbarActions.querySelectorAll('button')).filter(b => this.visible(b));
                   if (actionBtns.length > 0) { this.setFocus(actionBtns[0]); return; }
                 }
@@ -1154,9 +1224,19 @@
               if (idx > 0) {
                 this.setFocus(navBtns[idx - 1]);
                 return;
+              } else if (idx === 0 && brandBtn && this.visible(brandBtn)) {
+                this.setFocus(brandBtn);
+                return;
               }
             } else if (dir === 'UP') {
-              return; // Top edge
+              // Move UP to Row 1: Brand, Search, or Action Buttons
+              const actionBtns = topbarActions ? Array.from(topbarActions.querySelectorAll('button')).filter(b => this.visible(b)) : [];
+              const row1 = [];
+              if (brandBtn && this.visible(brandBtn)) row1.push(brandBtn);
+              if (searchInput && this.visible(searchInput)) row1.push(searchInput);
+              row1.push(...actionBtns);
+              const target = pickClosestX(row1) || searchInput || (row1.length > 0 ? row1[0] : null);
+              if (target) { this.setFocus(target); return; }
             } else if (dir === 'DOWN') {
               // 0. Platform subnav if inside platforms view with content visible
               if (platformSubnav && this.visible(platformSubnav) && !platformSubnav.classList.contains('hidden')) {
@@ -1164,16 +1244,16 @@
                 const target = subBtns.find(b => b.classList.contains('active')) || pickClosestX(subBtns);
                 if (target) { this.setFocus(target); return; }
               }
-              // 1. Hero button
-              if (heroBtn && this.visible(heroBtn)) {
-                this.setFocus(heroBtn);
-                return;
-              }
-              // 2. Genre tabs
+              // 1. Genre tabs directly under topbar nav
               if (genreTabsCont && this.visible(genreTabsCont)) {
                 const tabs = Array.from(genreTabsCont.querySelectorAll('.genre-tab, button')).filter(t => this.visible(t));
                 const target = tabs.find(t => t.classList.contains('active')) || pickClosestX(tabs);
                 if (target) { this.setFocus(target); return; }
+              }
+              // 2. Hero button
+              if (heroBtn && this.visible(heroBtn)) {
+                this.setFocus(heroBtn);
+                return;
               }
               // 3. Continue watching
               if (continueCont && this.visible(continueCont)) {
@@ -1371,21 +1451,25 @@
                 this.setFocus(platformBackBtn);
                 return;
               }
-              // 1. Hero button if visible and physically on left half of screen
-              if (heroBtn && this.visible(heroBtn) && tabRect.left < (window.innerWidth || 1920) * 0.45) {
-                this.setFocus(heroBtn);
-                return;
-              }
-              // 2. Topbar elements: nav buttons, search input, action buttons
+              // Topbar elements: Row 2 nav buttons first
               const topbarNav = document.querySelector('#main-nav-bar, .main-nav');
               const navBtns = topbarNav ? Array.from(topbarNav.querySelectorAll('.nav-link, .main-nav-btn, button')).filter(b => this.visible(b)) : [];
+              if (navBtns.length > 0) {
+                const target = pickClosestX(navBtns) || navBtns.find(b => b.classList.contains('active')) || navBtns[0];
+                if (target) { this.setFocus(target); return; }
+              }
               const actionBtns = topbarActions ? Array.from(topbarActions.querySelectorAll('button')).filter(b => this.visible(b)) : [];
               const allTopbar = [...navBtns];
               if (searchInput && this.visible(searchInput)) allTopbar.push(searchInput);
               allTopbar.push(...actionBtns);
-              const target = pickClosestX(allTopbar) || navBtns.find(b => b.classList.contains('active')) || navBtns[0];
+              const target = pickClosestX(allTopbar) || (navBtns.length > 0 ? navBtns[0] : null);
               if (target) { this.setFocus(target); return; }
             } else if (dir === 'DOWN') {
+              // 0. Hero button if visible (home mode)
+              if (heroBtn && this.visible(heroBtn)) {
+                this.setFocus(heroBtn);
+                return;
+              }
               // 1. Search / Genre results grid if active
               const searchResults = activeView.querySelector('#search-results, #movies-search-results');
               if (searchResults && this.visible(searchResults) && !searchResults.classList.contains('hidden') && window.getComputedStyle(searchResults).display !== 'none') {
@@ -1423,23 +1507,27 @@
           // E. FROM HERO BUTTONS:
           if (isHeroBtn) {
             if (dir === 'UP') {
-              // Directly up to Topbar: pick closest element among nav buttons, search input, and action buttons
-              const topbarNav = document.querySelector('#main-nav-bar, .main-nav');
-              const navBtns = topbarNav ? Array.from(topbarNav.querySelectorAll('.nav-link, .main-nav-btn, button')).filter(b => this.visible(b)) : [];
-              const actionBtns = topbarActions ? Array.from(topbarActions.querySelectorAll('button')).filter(b => this.visible(b)) : [];
-              const allTopbar = [...navBtns];
-              if (searchInput && this.visible(searchInput)) allTopbar.push(searchInput);
-              allTopbar.push(...actionBtns);
-              const target = pickClosestX(allTopbar) || navBtns.find(b => b.classList.contains('active')) || navBtns[0];
-              if (target) { this.setFocus(target); return; }
-            } else if (dir === 'DOWN') {
-              // 1. Genre tabs below hero
+              // 1. Genre tabs directly above hero!
               if (genreTabsCont && this.visible(genreTabsCont)) {
                 const tabs = Array.from(genreTabsCont.querySelectorAll('.genre-tab, button')).filter(t => this.visible(t));
                 const target = tabs.find(t => t.classList.contains('active')) || pickClosestX(tabs);
                 if (target) { this.setFocus(target); return; }
               }
-              // 2. Continue watching
+              // 2. Directly up to Topbar: Row 2 nav buttons first
+              const topbarNav = document.querySelector('#main-nav-bar, .main-nav');
+              const navBtns = topbarNav ? Array.from(topbarNav.querySelectorAll('.nav-link, .main-nav-btn, button')).filter(b => this.visible(b)) : [];
+              if (navBtns.length > 0) {
+                const target = pickClosestX(navBtns) || navBtns.find(b => b.classList.contains('active')) || navBtns[0];
+                if (target) { this.setFocus(target); return; }
+              }
+              const actionBtns = topbarActions ? Array.from(topbarActions.querySelectorAll('button')).filter(b => this.visible(b)) : [];
+              const allTopbar = [...navBtns];
+              if (searchInput && this.visible(searchInput)) allTopbar.push(searchInput);
+              allTopbar.push(...actionBtns);
+              const target = pickClosestX(allTopbar) || (navBtns.length > 0 ? navBtns[0] : null);
+              if (target) { this.setFocus(target); return; }
+            } else if (dir === 'DOWN') {
+              // 1. Continue watching
               if (continueCont && this.visible(continueCont)) {
                 const continueCards = Array.from(continueCont.querySelectorAll('.series-card, .continue-card, .movie-card')).filter(c => this.visible(c));
                 if (continueCards.length > 0) {
@@ -1447,7 +1535,7 @@
                   if (target) { this.setFocus(target); return; }
                 }
               }
-              // 3. Content rows
+              // 2. Content rows
               const firstCards = getFirstPopulatedRowCards(rowsCont);
               if (firstCards.length > 0) {
                 const target = pickClosestX(firstCards);
@@ -1470,16 +1558,16 @@
           // F. FROM CONTINUE WATCHING ROW:
           if (inContinueRow) {
             if (dir === 'UP') {
-              // 1. Genre tabs (Genre tabs are right above continue watching!)
+              // 1. Hero button
+              if (heroBtn && this.visible(heroBtn)) {
+                this.setFocus(heroBtn);
+                return;
+              }
+              // 2. Genre tabs
               if (genreTabsCont && this.visible(genreTabsCont)) {
                 const tabs = Array.from(genreTabsCont.querySelectorAll('.genre-tab, button')).filter(t => this.visible(t));
                 const target = tabs.find(t => t.classList.contains('active')) || pickClosestX(tabs);
                 if (target) { this.setFocus(target); return; }
-              }
-              // 2. Hero button
-              if (heroBtn && this.visible(heroBtn)) {
-                this.setFocus(heroBtn);
-                return;
               }
               // 3. Nav tabs
               if (navTabsCont && this.visible(navTabsCont)) {
@@ -1531,7 +1619,11 @@
                   if (target) { this.setFocus(target); return; }
                 }
               }
-              // 2. If at top-most row: move UP to genre tabs or platform subnav
+              // 2. If at top-most row: move UP to hero, genre tabs, or platform subnav
+              if (heroBtn && this.visible(heroBtn)) {
+                this.setFocus(heroBtn);
+                return;
+              }
               if (genreTabsCont && this.visible(genreTabsCont)) {
                 const tabs = Array.from(genreTabsCont.querySelectorAll('.genre-tab, button')).filter(t => this.visible(t));
                 const target = pickClosestX(tabs) || tabs[tabs.length - 1];
@@ -1603,7 +1695,12 @@
                   if (target) { this.setFocus(target); return; }
                 }
               }
-              // 2. Genre tabs:
+              // 2. Hero button:
+              if (heroBtn && this.visible(heroBtn)) {
+                this.setFocus(heroBtn);
+                return;
+              }
+              // 3. Genre tabs:
               if (genreTabsCont && this.visible(genreTabsCont)) {
                 const tabs = Array.from(genreTabsCont.querySelectorAll('.genre-tab, button')).filter(t => this.visible(t));
                 const target = tabs.find(t => t.classList.contains('active')) || pickClosestX(tabs);
@@ -1798,7 +1895,7 @@
     getNavigableElements() {
       let root = document.body;
       
-      const openModals = Array.from(document.querySelectorAll('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card')).filter(m => this.visible(m) && !m.classList.contains('hidden'));
+      const openModals = Array.from(document.querySelectorAll('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card, #modal-profiles-screen, #modal-profile-editor')).filter(m => this.visible(m) && !m.classList.contains('hidden'));
       if (openModals.length > 0) {
         root = openModals[openModals.length - 1];
       }
@@ -1971,19 +2068,32 @@
         }
       }
       const isHorizontalNav = (this._lastNavDir === 'LEFT' || this._lastNavDir === 'RIGHT');
-      const prevRow = this._prevFocused && this._prevFocused.closest && this._prevFocused.closest('.content-row, .row-cards, .genre-tabs, .nav-tabs, .nav-links, .series-episodes-carousel, .series-detail-cast, .hero-buttons, .series-hero-actions');
-      const currRow = el.closest && el.closest('.content-row, .row-cards, .genre-tabs, .nav-tabs, .nav-links, .series-episodes-carousel, .series-detail-cast, .hero-buttons, .series-hero-actions');
+      const prevRow = this._prevFocused && this._prevFocused.closest && this._prevFocused.closest('.content-row, .row-cards, .genre-tabs, .nav-tabs, .nav-links, .series-episodes-carousel, .series-detail-cast, .hero-buttons, .series-hero-actions, .avatar-category-tabs');
+      const currRow = el.closest && el.closest('.content-row, .row-cards, .genre-tabs, .nav-tabs, .nav-links, .series-episodes-carousel, .series-detail-cast, .hero-buttons, .series-hero-actions, .avatar-category-tabs');
       if (isHorizontalNav && prevRow && currRow && prevRow === currRow) {
         return;
       }
       
-      // 2. MODAL SCROLL: If inside detail modal (.series-detail-card, .modal-card, .recap-modal-card, .series-cast-card), scroll the modal directly
-      const modal = el.closest('.series-detail-card, .modal-card, .recap-modal-card, .series-cast-card, .filter-sort-card, .filter-sort-body');
+      // 1b. NESTED SCROLL CONTAINERS (Avatar Palette, Season options, etc.)
+      const nestedScroll = el.closest('.avatar-palette-grid, #profile-avatar-palette, .season-picker-options, .resume-options');
+      if (nestedScroll) {
+        const nRect = nestedScroll.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const pad = 15;
+        if (elRect.top < nRect.top + pad) {
+          nestedScroll.scrollTop -= (nRect.top + pad - elRect.top);
+        } else if (elRect.bottom > nRect.bottom - pad) {
+          nestedScroll.scrollTop += (elRect.bottom - (nRect.bottom - pad));
+        }
+      }
+
+      // 2. MODAL SCROLL: If inside detail modal (.profile-editor-modal, .series-detail-card, .modal-card, .recap-modal-card, .series-cast-card, .filter-sort-card, .filter-sort-body), scroll the modal directly
+      const modal = el.closest('.profile-editor-modal, .series-detail-card, .modal-card, .recap-modal-card, .series-cast-card, .filter-sort-card, .filter-sort-body');
       if (modal) {
-        const scrollTarget = el.closest('.filter-sort-body') || modal;
+        const scrollTarget = el.closest('.filter-sort-body, .profile-editor-modal') || modal;
         const mRect = scrollTarget.getBoundingClientRect();
         const elRect = el.getBoundingClientRect();
-        const pad = 40;
+        const pad = 30;
         if (elRect.top < mRect.top + pad) {
           scrollTarget.scrollTop -= (mRect.top + pad - elRect.top);
         } else if (elRect.bottom > mRect.bottom - pad) {
@@ -2393,7 +2503,7 @@
       }
 
       // Never prioritize main-nav-btn if any modal is currently visible!
-      const inAnyModal = Array.from(document.querySelectorAll('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card')).some(m => this.visible(m) && !m.classList.contains('hidden'));
+      const inAnyModal = Array.from(document.querySelectorAll('.series-detail-card, #movie-files-modal, #vk-overlay, #movie-resume-modal, #series-resume-modal, #continue-context-modal, #fullscreen-trailer-modal, #series-cast-modal, #recap-modal, #remote-modal, #admin-edit-modal, #season-picker-modal, .season-picker-card, #filter-sort-modal, .filter-sort-card, #modal-profiles-screen, #modal-profile-editor')).some(m => this.visible(m) && !m.classList.contains('hidden'));
       if (inAnyModal) return false;
 
       // Priority 3: In app shell views, prioritize the active main-nav button!
@@ -2468,6 +2578,7 @@
     }
 
   }
+  window.CineflixTVNav = CineflixTVNav;
 
   function boot() {
     const isTVPlatform = (function() {
@@ -2487,6 +2598,10 @@
       document.documentElement.classList.add('is-tv');
       console.log('[TV-NAV] Activating SPATIAL D-pad navigation for TV');
     }
+
+    // Skip spatial-nav on mobile phones – the pointerdown/blur handlers
+    // break native input focus and soft keyboard text entry (e.g. "ñ").
+    if (!isTVPlatform && !isDesktopPC()) return;
 
     if (window.cineflixTvNav) return;
     window.cineflixTvNav = new CineflixTVNav();
