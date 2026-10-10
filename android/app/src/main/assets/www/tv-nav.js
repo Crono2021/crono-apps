@@ -577,6 +577,16 @@
               return;
             }
           }
+
+          // Escaping rightmost card in content row into "Ver todo" button:
+          if (dir === 'RIGHT' && group.classList.contains('row-cards')) {
+            const contentRow = group.closest('.content-row');
+            const viewAllBtn = contentRow ? contentRow.querySelector('.btn-view-all') : null;
+            if (viewAllBtn && this.visible(viewAllBtn)) {
+              this.setFocus(viewAllBtn);
+              return;
+            }
+          }
           return;
         }
       }
@@ -977,7 +987,8 @@
           const searchInput = document.querySelector('#search-input');
           const searchClearBtn = document.querySelector('#search-clear-btn');
           const topbarActions = document.querySelector('#main-topbar .topbar-actions') || activeView.querySelector('.topbar-actions');
-          const gridCont = activeView.querySelector('#search-results, #movies-search-results, #favorites-grid, #platforms-grid, #platform-all-grid, .catalog-grid');
+          const allGrids = Array.from(activeView.querySelectorAll('#platform-all-grid, #platform-results-container .catalog-grid, .catalog-grid, #search-results, #movies-search-results, #favorites-grid, #platforms-grid'));
+          const gridCont = allGrids.find(el => this.visible(el) && !el.classList.contains('hidden') && el.style.display !== 'none') || allGrids[0];
 
           const isHeroBtn = !!(this.focused && (
             this.focused === heroBtn ||
@@ -987,13 +998,16 @@
           ));
           const inGenreTabs = !!(genreTabsCont && genreTabsCont.contains(this.focused));
           const inContinueRow = !!(continueCont && continueCont.contains(this.focused));
-          const inCatalogRows = !!(rowsCont && rowsCont.contains(this.focused));
+          const inGrid = !!(
+            (gridCont && this.visible(gridCont) && !gridCont.classList.contains('hidden') && gridCont.contains(this.focused)) ||
+            (this.focused && this.focused.closest && this.focused.closest('#platform-all-grid, .catalog-grid, #platforms-grid, #search-results, #movies-search-results, #favorites-grid'))
+          ) && !this.focused.closest('.content-row, #continue-watching-series, #continue-watching-movies');
+          const inCatalogRows = !!(rowsCont && rowsCont.contains(this.focused) && !inGrid);
           const inContentRow = inCatalogRows ? this.focused.closest('.content-row') : null;
           const inNavTabs = !!(navTabsCont && navTabsCont.contains(this.focused));
           const isSearchInput = !!(searchInput && this.focused === searchInput);
           const isSearchClearBtn = !!(searchClearBtn && this.focused === searchClearBtn);
           const inTopbarActions = !!(topbarActions && topbarActions.contains(this.focused));
-          const inGrid = !!(gridCont && gridCont.contains(this.focused) && !inCatalogRows && !inContinueRow);
           const platformSubnav = activeView.querySelector('#platform-subnav');
           const inPlatformSubnav = !!(platformSubnav && platformSubnav.contains(this.focused));
           const platformBackBtn = activeView.querySelector('#btn-back-platforms');
@@ -1495,9 +1509,17 @@
                 const target = pickClosestX(downCandidates);
                 if (target) { this.setFocus(target); return; }
               }
-              // 4. Grid container (e.g. favorites)
-              if (gridCont && this.visible(gridCont)) {
-                const gridCards = Array.from(gridCont.querySelectorAll('.series-card, .movie-card')).filter(c => this.visible(c));
+              // 3b. Direct grid inside rowsCont (e.g. genre-filtered grid in platforms):
+              if (rowsCont) {
+                const directGridCards = Array.from(rowsCont.querySelectorAll('.catalog-grid .series-card, .catalog-grid .movie-card, .series-card, .movie-card')).filter(c => this.visible(c));
+                if (directGridCards.length > 0) {
+                  const target = pickClosestX(directGridCards);
+                  if (target) { this.setFocus(target); return; }
+                }
+              }
+              // 4. Grid container (e.g. favorites, platforms, all-grid)
+              if (gridCont && this.visible(gridCont) && !gridCont.classList.contains('hidden')) {
+                const gridCards = Array.from(gridCont.querySelectorAll('.series-card, .movie-card, .platform-card')).filter(c => this.visible(c));
                 const target = pickClosestX(gridCards);
                 if (target) { this.setFocus(target); return; }
               }
@@ -1635,10 +1657,10 @@
                 if (target) { this.setFocus(target); return; }
               }
             } else if (dir === 'LEFT') {
-              // Move LEFT: focus the cards of this row
+              // Move LEFT: focus the rightmost cards of this row
               const curCards = Array.from(inContentRow.querySelectorAll('.series-card, .movie-card, .continue-card')).filter(c => this.visible(c));
               if (curCards.length > 0) {
-                this.setFocus(curCards[0]);
+                this.setFocus(curCards[curCards.length - 1]);
                 return;
               }
             } else if (dir === 'RIGHT') {
@@ -1657,10 +1679,11 @@
               const cardRect = this.focused.getBoundingClientRect();
               const cardCenterX = cardRect.left + cardRect.width / 2;
 
-              // If this row has a visible "Ver todo" button and the card is towards the right side of the screen
-              // (or if in row 0 and card is not on the far-left edge), go to "Ver todo"!
+              // If this row has a visible "Ver todo" button:
+              // - In row 0: any card except extreme far left (x >= 80) goes to "Ver todo"
+              // - In any other row: if card is in the right half or right-biased (x >= 0.25 * innerWidth), go to "Ver todo"
               if (viewAllBtn && this.visible(viewAllBtn)) {
-                const isRightBiased = cardCenterX >= ((window.innerWidth || 1920) * 0.35) || (rowIdx === 0 && cardCenterX >= 180);
+                const isRightBiased = (rowIdx === 0 && cardCenterX >= 80) || (cardCenterX >= ((window.innerWidth || 1920) * 0.25));
                 if (isRightBiased) {
                   this.setFocus(viewAllBtn);
                   return;
@@ -1670,7 +1693,7 @@
               for (let i = rowIdx - 1; i >= 0; i--) {
                 const prevRow = rows[i];
                 const prevViewAll = prevRow.querySelector('.btn-view-all');
-                if (prevViewAll && this.visible(prevViewAll) && cardCenterX >= ((window.innerWidth || 1920) * 0.5)) {
+                if (prevViewAll && this.visible(prevViewAll) && cardCenterX >= ((window.innerWidth || 1920) * 0.4)) {
                   this.setFocus(prevViewAll);
                   return;
                 }
@@ -1682,7 +1705,7 @@
               }
 
               // Reached top-most content row:
-              if (rowIdx === 0 && viewAllBtn && this.visible(viewAllBtn) && cardCenterX >= 150) {
+              if (rowIdx === 0 && viewAllBtn && this.visible(viewAllBtn)) {
                 this.setFocus(viewAllBtn);
                 return;
               }
@@ -1701,7 +1724,7 @@
                 return;
               }
               // 3. Genre tabs:
-              if (genreTabsCont && this.visible(genreTabsCont)) {
+              if (genreTabsCont && this.visible(genreTabsCont) && !genreTabsCont.classList.contains('hidden')) {
                 const tabs = Array.from(genreTabsCont.querySelectorAll('.genre-tab, button')).filter(t => this.visible(t));
                 const target = tabs.find(t => t.classList.contains('active')) || pickClosestX(tabs);
                 if (target) { this.setFocus(target); return; }
@@ -1731,6 +1754,17 @@
                   if (target) { this.setFocus(target); return; }
                 }
               }
+            } else if (dir === 'RIGHT') {
+              const curCards = Array.from(inContentRow.querySelectorAll('.series-card, .movie-card, .continue-card')).filter(c => this.visible(c));
+              const cardIdx = curCards.indexOf(this.focused);
+              if (cardIdx !== -1 && cardIdx === curCards.length - 1) {
+                // At the last card of the row: jump directly to "Ver todo" if present and visible!
+                const viewAllBtn = inContentRow.querySelector('.btn-view-all');
+                if (viewAllBtn && this.visible(viewAllBtn)) {
+                  this.setFocus(viewAllBtn);
+                  return;
+                }
+              }
             }
           }
 
@@ -1742,9 +1776,19 @@
               return (cr.top + cr.height / 2) < (currentCenter.y - 20);
             });
             if (!hasAbove) {
-              // Top row of grid: move to genre tabs, favorites filter button, platform subnav, back button, or nav tabs
+              // Top row of grid: move to back button, genre tabs, favorites filter button, platform subnav, or nav tabs
               const favFilterBtn = activeView.querySelector('#btn-filter-sort-favorites');
-              if (genreTabsCont && this.visible(genreTabsCont)) {
+              
+              // Special case: inside "Ver todo" (#platform-all-grid), genreTabsCont and platformSubnav are hidden!
+              // Moving UP from top row must focus #btn-back-platforms directly!
+              const isAllGrid = this.focused && this.focused.closest && this.focused.closest('#platform-all-grid');
+              const platformBackBtn = activeView.querySelector('#btn-back-platforms');
+              if (isAllGrid && platformBackBtn && this.visible(platformBackBtn)) {
+                this.setFocus(platformBackBtn);
+                return;
+              }
+
+              if (genreTabsCont && this.visible(genreTabsCont) && !genreTabsCont.classList.contains('hidden')) {
                 const tabs = Array.from(genreTabsCont.querySelectorAll('.genre-tab, button')).filter(t => this.visible(t));
                 const candidates = [...tabs];
                 if (favFilterBtn && this.visible(favFilterBtn)) candidates.push(favFilterBtn);
@@ -1755,12 +1799,11 @@
                 return;
               }
               const platformSubnav = activeView.querySelector('#platform-subnav');
-              if (platformSubnav && this.visible(platformSubnav)) {
+              if (platformSubnav && this.visible(platformSubnav) && !platformSubnav.classList.contains('hidden')) {
                 const subBtns = Array.from(platformSubnav.querySelectorAll('button')).filter(b => this.visible(b));
                 const target = subBtns.find(b => b.classList.contains('active')) || pickClosestX(subBtns);
                 if (target) { this.setFocus(target); return; }
               }
-              const platformBackBtn = activeView.querySelector('#btn-back-platforms');
               if (platformBackBtn && this.visible(platformBackBtn)) {
                 this.setFocus(platformBackBtn);
                 return;
