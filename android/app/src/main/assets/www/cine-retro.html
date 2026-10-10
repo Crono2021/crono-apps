@@ -1,0 +1,1837 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cineflix 16-Bit • La Sala & Creador RPG (Versión Test)</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --pixel-bg: #07090e;
+            --cinema-red: #c0392b;
+            --cinema-darkred: #781d14;
+            --cinema-gold: #f39c12;
+            --cinema-carpet: #4a1515;
+            --ui-bg: rgba(13, 17, 26, 0.95);
+            --ui-border: #2a3447;
+            --accent-green: #2ecc71;
+            --accent-blue: #3498db;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body {
+            background-color: var(--pixel-bg);
+            color: #ecf0f1;
+            font-family: 'Outfit', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Top Bar */
+        .retro-header {
+            height: 54px;
+            background: linear-gradient(180deg, #161c28 0%, #0d111a 100%);
+            border-bottom: 2px solid #232c3d;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            z-index: 100;
+            flex-shrink: 0;
+        }
+
+        .brand-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brand-badge {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 11px;
+            color: #e74c3c;
+            text-shadow: 2px 2px 0 #000;
+            letter-spacing: 1px;
+        }
+
+        .brand-sub {
+            background: rgba(243, 156, 18, 0.15);
+            color: var(--cinema-gold);
+            border: 1px solid rgba(243, 156, 18, 0.4);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .tabs-nav {
+            display: flex;
+            gap: 8px;
+        }
+
+        .tab-btn {
+            background: #1e2636;
+            color: #95a5a6;
+            border: 1px solid #2f3b52;
+            padding: 7px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .tab-btn:hover {
+            background: #283347;
+            color: #fff;
+            border-color: #4a5b7d;
+        }
+
+        .tab-btn.active {
+            background: linear-gradient(180deg, #c0392b 0%, #962d22 100%);
+            color: #fff;
+            border-color: #e74c3c;
+            box-shadow: 0 2px 8px rgba(192, 57, 43, 0.4);
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .icon-btn {
+            background: #1a2230;
+            border: 1px solid #2d384c;
+            color: #bdc3c7;
+            padding: 7px 11px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .icon-btn:hover {
+            background: #253145;
+            color: #fff;
+        }
+
+        .icon-btn.active {
+            background: rgba(46, 204, 113, 0.2);
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+        }
+
+        /* Main Workspace Container */
+        .workspace {
+            position: relative;
+            flex: 1;
+            width: 100%;
+            height: calc(100vh - 54px);
+            overflow: hidden;
+            display: flex;
+        }
+
+        /* VIEW 1: THE VIRTUAL CINEMA ROOM */
+        #view-cinema {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            background: #050608;
+        }
+
+        .cinema-viewport-container {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #020305;
+        }
+
+        #cinema-canvas {
+            display: block;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-crisp-edges;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            box-shadow: 0 0 60px rgba(0, 0, 0, 0.95);
+            width: min(96vw, calc((100vh - 120px) * 16 / 9));
+            height: auto;
+            aspect-ratio: 16 / 9;
+        }
+
+        /* Live Chat / Quote Overlay Bar at Bottom */
+        .cinema-hud {
+            position: absolute;
+            bottom: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(13, 17, 26, 0.88);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 8px 14px;
+            border-radius: 30px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            z-index: 50;
+            width: 90%;
+            max-width: 650px;
+        }
+
+        .hud-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #1e2636;
+            border: 2px solid var(--cinema-gold);
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .hud-input {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid #2d384c;
+            border-radius: 20px;
+            padding: 6px 14px;
+            color: #fff;
+            font-size: 13px;
+            outline: none;
+            font-family: inherit;
+        }
+
+        .hud-input:focus {
+            border-color: var(--cinema-gold);
+            background: rgba(0, 0, 0, 0.6);
+        }
+
+        .hud-btn {
+            background: linear-gradient(180deg, #f39c12 0%, #d68910 100%);
+            border: none;
+            color: #0b0e14;
+            font-weight: 700;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .hud-btn:hover {
+            transform: scale(1.03);
+            filter: brightness(1.1);
+        }
+
+        .hud-stats {
+            color: #7f8c8d;
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        /* VIEW 2: THE 16-BIT CHARACTER STUDIO */
+        #view-creator {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            background: radial-gradient(circle at 30% 50%, #151c28 0%, #080b11 100%);
+            overflow-y: auto;
+            padding: 24px;
+            gap: 28px;
+            z-index: 10;
+        }
+
+        .creator-preview-panel {
+            flex: 0 0 340px;
+            background: rgba(18, 24, 35, 0.85);
+            border: 1px solid #2a3447;
+            border-radius: 14px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+            backdrop-filter: blur(12px);
+        }
+
+        .character-stage {
+            width: 200px;
+            height: 200px;
+            background: #090d15;
+            border: 3px solid #34495e;
+            border-radius: 12px;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8), 0 0 15px rgba(243, 156, 18, 0.2);
+            background-image: 
+                radial-gradient(rgba(243, 156, 18, 0.15) 15%, transparent 16%),
+                radial-gradient(rgba(255, 255, 255, 0.05) 15%, transparent 16%);
+            background-size: 20px 20px;
+            background-position: 0 0, 10px 10px;
+        }
+
+        #preview-canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            width: 144px;
+            height: 144px;
+        }
+
+        .character-card-name {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 13px;
+            color: var(--cinema-gold);
+            text-align: center;
+            margin-bottom: 6px;
+            text-shadow: 2px 2px 0 #000;
+        }
+
+        .character-quote-preview {
+            background: rgba(0,0,0,0.4);
+            border: 1px dashed rgba(243, 156, 18, 0.3);
+            border-radius: 8px;
+            padding: 8px 12px;
+            color: #bdc3c7;
+            font-style: italic;
+            font-size: 12px;
+            text-align: center;
+            width: 100%;
+            margin-bottom: 20px;
+            min-height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .creator-options-panel {
+            flex: 1;
+            background: rgba(18, 24, 35, 0.85);
+            border: 1px solid #2a3447;
+            border-radius: 14px;
+            padding: 24px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+            backdrop-filter: blur(12px);
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #ecf0f1;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #2a3447;
+            padding-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-title span.badge {
+            background: rgba(52, 152, 219, 0.2);
+            color: var(--accent-blue);
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .option-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+            gap: 10px;
+        }
+
+        .palette-grid {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .color-circle {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: transform 0.15s;
+        }
+
+        .color-circle:hover {
+            transform: scale(1.15);
+        }
+
+        .color-circle.selected {
+            border-color: #fff;
+            box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+            transform: scale(1.1);
+        }
+
+        .choice-btn {
+            background: #131924;
+            border: 1px solid #283347;
+            border-radius: 8px;
+            padding: 10px 6px;
+            color: #bdc3c7;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.15s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .choice-btn .choice-icon {
+            font-size: 20px;
+        }
+
+        .choice-btn:hover {
+            background: #1c2637;
+            border-color: #4a5d80;
+            color: #fff;
+        }
+
+        .choice-btn.selected {
+            background: rgba(243, 156, 18, 0.15);
+            border-color: var(--cinema-gold);
+            color: var(--cinema-gold);
+            box-shadow: 0 0 10px rgba(243, 156, 18, 0.2);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 16px;
+        }
+
+        .form-group {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #95a5a6;
+        }
+
+        .form-input {
+            background: #121824;
+            border: 1px solid #283347;
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: #fff;
+            font-size: 13px;
+            font-family: inherit;
+            outline: none;
+        }
+
+        .form-input:focus {
+            border-color: var(--cinema-gold);
+        }
+
+        .btn-primary {
+            background: linear-gradient(180deg, #c0392b 0%, #962d22 100%);
+            border: 1px solid #e74c3c;
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+            transition: all 0.2s;
+            box-shadow: 0 4px 14px rgba(192, 57, 43, 0.4);
+        }
+
+        .btn-primary:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: #1f2838;
+            border: 1px solid #34435e;
+            color: #bdc3c7;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 8px;
+            transition: all 0.2s;
+        }
+
+        .btn-secondary:hover {
+            background: #2a374d;
+            color: #fff;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.2);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #2c3e50;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #34495e;
+        }
+
+        /* Responsive Mobile Adjustments */
+        @media (max-width: 768px) {
+            #view-creator {
+                flex-direction: column;
+                padding: 12px;
+            }
+            .creator-preview-panel {
+                flex: none;
+                width: 100%;
+            }
+            .form-row {
+                flex-direction: column;
+            }
+            .brand-sub {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header class="retro-header">
+        <div class="brand-container">
+            <span class="brand-badge">🍿 CINEFLIX 16-BIT</span>
+            <span class="brand-sub">Beta Test</span>
+        </div>
+
+        <nav class="tabs-nav">
+            <button id="btn-tab-cinema" class="tab-btn active" onclick="switchView('cinema')">
+                <span>🪑</span> La Sala de Cine
+            </button>
+            <button id="btn-tab-creator" class="tab-btn" onclick="switchView('creator')">
+                <span>🎨</span> Creador RPG
+            </button>
+        </nav>
+
+        <div class="header-actions">
+            <button id="btn-sound" class="icon-btn" onclick="toggleSound()">
+                <span id="sound-icon">🔈</span> <span id="sound-text">Mudo</span>
+            </button>
+            <button class="icon-btn" onclick="triggerRandomEvent()">
+                <span>⚡</span> Evento
+            </button>
+            <a href="/" class="icon-btn" style="text-decoration: none; color: #ecf0f1;">
+                <span>⬅️</span> Volver
+            </a>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="workspace">
+
+        <!-- VIEW 1: THE VIRTUAL RETRO CINEMA -->
+        <section id="view-cinema">
+            <div class="cinema-viewport-container">
+                <canvas id="cinema-canvas" width="480" height="270"></canvas>
+
+                <!-- Floating Chat & Interaction HUD -->
+                <div class="cinema-hud">
+                    <div class="hud-avatar" id="hud-user-avatar">
+                        <canvas id="hud-avatar-canvas" width="32" height="32"></canvas>
+                    </div>
+                    <input type="text" id="hud-chat-input" class="hud-input" placeholder="Escribe lo que dice tu personaje en el cine..." maxlength="60">
+                    <button class="hud-btn" onclick="sendCustomQuote()">
+                        <span>💬</span> Soltar frase
+                    </button>
+                    <div class="hud-stats" id="cinema-occupancy">
+                        👥 8 en sala
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- VIEW 2: THE 16-BIT CHARACTER STUDIO -->
+        <section id="view-creator" class="hidden">
+            <!-- Left: Character Live Preview Card -->
+            <div class="creator-preview-panel">
+                <div class="character-stage">
+                    <canvas id="preview-canvas" width="32" height="32"></canvas>
+                </div>
+                <div class="character-card-name" id="preview-name">Crono</div>
+                <div class="character-quote-preview" id="preview-quote">
+                    "Callaos todos que empieza la película 🤫"
+                </div>
+
+                <button class="btn-primary" onclick="saveAndEnterCinema()">
+                    <span>💾</span> Guardar y entrar al Cine
+                </button>
+                <button class="btn-secondary" onclick="exportAvatarPNG()">
+                    <span>📥</span> Descargar Sprite PNG
+                </button>
+                <button class="btn-secondary" onclick="randomizeCharacter()" style="margin-top: 6px;">
+                    <span>🎲</span> Aleatorio
+                </button>
+            </div>
+
+            <!-- Right: Customization Controls -->
+            <div class="creator-options-panel">
+                <!-- Identity -->
+                <div class="section-title">
+                    <span>1. Identidad de Cineasta</span>
+                    <span class="badge">Perfil</span>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="input-char-name">Nombre / Alias en Telegram</label>
+                        <input type="text" id="input-char-name" class="form-input" value="Crono" maxlength="16" oninput="updateProfileMeta()">
+                    </div>
+                    <div class="form-group">
+                        <label for="input-char-quote">Frase Célebre del Grupo</label>
+                        <input type="text" id="input-char-quote" class="form-input" value="Callaos todos que empieza la película 🤫" maxlength="60" oninput="updateProfileMeta()">
+                    </div>
+                </div>
+
+                <!-- Base Archetype & Skin -->
+                <div class="section-title">
+                    <span>2. Arquetipo & Tono de Piel</span>
+                </div>
+                <div class="palette-grid" id="skin-palette">
+                    <!-- Dynamic skin colors -->
+                </div>
+
+                <!-- Hair Style & Color -->
+                <div class="section-title">
+                    <span>3. Peinado</span>
+                </div>
+                <div class="option-grid" id="hair-style-grid">
+                    <!-- Hair styles populated via JS -->
+                </div>
+                <label style="font-size: 11px; color: #7f8c8d; margin-top: 4px;">Color de pelo:</label>
+                <div class="palette-grid" id="hair-palette"></div>
+
+                <!-- Top Clothes -->
+                <div class="section-title">
+                    <span>4. Ropa Superior</span>
+                </div>
+                <div class="option-grid" id="top-style-grid"></div>
+                <label style="font-size: 11px; color: #7f8c8d; margin-top: 4px;">Color de prenda:</label>
+                <div class="palette-grid" id="top-palette"></div>
+
+                <!-- Accessories -->
+                <div class="section-title">
+                    <span>5. Accesorios de Cine</span>
+                </div>
+                <div class="option-grid" id="accessory-grid"></div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        /* =========================================================================
+           16-BIT PIXEL ART ENGINE & LIVING VIRTUAL CINEMA
+           ========================================================================= */
+
+        // User Custom Character State
+        const DEFAULT_AVATAR = {
+            name: 'Crono',
+            quote: 'Callaos todos que empieza la película 🤫',
+            skin: '#ffcc99',
+            hairStyle: 'messy', // 'bald', 'short', 'messy', 'ponytail', 'afro', 'wizard', 'anime', 'elven'
+            hairColor: '#3a2518',
+            topStyle: 'cineflix_tee', // 'cineflix_tee', 'hoodie', 'suit', 'hawaii', 'robe', 'jacket'
+            topColor: '#e74c3c',
+            bottomStyle: 'jeans',
+            bottomColor: '#2980b9',
+            accessory: '3d_glasses', // 'none', '3d_glasses', 'popcorn', 'soda', 'wizard_hat', 'headphones', 'elf_ears'
+            seatIndex: 9 // VIP Center
+        };
+
+        let myCharacter = Object.assign({}, DEFAULT_AVATAR);
+        try {
+            const saved = localStorage.getItem('cineflix_16bit_avatar');
+            if (saved) Object.assign(myCharacter, JSON.parse(saved));
+        } catch(e) {}
+
+        // Pre-defined Community Bots in the Theater
+        const COMMUNITY_CHARACTERS = [
+            {
+                id: 'javi',
+                name: 'Javi Mateos',
+                quote: '¡Crono revisa la pestaña de ver todo en Android TV!',
+                skin: '#f5cba7',
+                hairStyle: 'short',
+                hairColor: '#2c3e50',
+                topStyle: 'hoodie',
+                topColor: '#34495e',
+                accessory: 'popcorn',
+                seatIndex: 8,
+                state: 'sitting', // 'sitting', 'eating', 'walking_to_bath', 'in_bath', 'walking_back'
+                stateTimer: 0,
+                x: 0, y: 0
+            },
+            {
+                id: 'gandalf',
+                name: 'Gandalf',
+                quote: '¡Corred insensatos, que empieza la sesión!',
+                skin: '#fdebd0',
+                hairStyle: 'wizard',
+                hairColor: '#d5dbdb',
+                topStyle: 'robe',
+                topColor: '#7f8c8d',
+                accessory: 'wizard_hat',
+                seatIndex: 2,
+                state: 'sitting',
+                stateTimer: 0,
+                x: 0, y: 0
+            },
+            {
+                id: 'elven',
+                name: 'Galadriel',
+                quote: 'Incluso la persona más pequeña puede cambiar el cine.',
+                skin: '#fdf2e9',
+                hairStyle: 'elven',
+                hairColor: '#f7dc6f',
+                topStyle: 'robe',
+                topColor: '#ecf0f1',
+                accessory: 'elf_ears',
+                seatIndex: 3,
+                state: 'sitting',
+                stateTimer: 0,
+                x: 0, y: 0
+            },
+            {
+                id: 'tester1',
+                name: 'Marcos',
+                quote: '¿Esta peli está en 4K o qué?',
+                skin: '#d7a176',
+                hairStyle: 'messy',
+                hairColor: '#17202a',
+                topStyle: 'jacket',
+                topColor: '#27ae60',
+                accessory: 'soda',
+                seatIndex: 13,
+                state: 'sitting',
+                stateTimer: 0,
+                x: 0, y: 0
+            },
+            {
+                id: 'tester2',
+                name: 'Elena',
+                quote: 'Pasádme las palomitas dulces porfa 🍿',
+                skin: '#fce5cd',
+                hairStyle: 'ponytail',
+                hairColor: '#a04000',
+                topStyle: 'cineflix_tee',
+                topColor: '#9b59b6',
+                accessory: '3d_glasses',
+                seatIndex: 14,
+                state: 'sitting',
+                stateTimer: 0,
+                x: 0, y: 0
+            },
+            {
+                id: 'tester3',
+                name: 'Alex Gamer',
+                quote: '¡La banda sonora de esta escena es épica!',
+                skin: '#edbb99',
+                hairStyle: 'anime',
+                hairColor: '#e74c3c',
+                topStyle: 'hoodie',
+                topColor: '#1abc9c',
+                accessory: 'headphones',
+                seatIndex: 4,
+                state: 'sitting',
+                stateTimer: 0,
+                x: 0, y: 0
+            },
+            {
+                id: 'tester4',
+                name: 'Laura',
+                quote: 'Silencio en la sala, por favor 🤫',
+                skin: '#f8c471',
+                hairStyle: 'afro',
+                hairColor: '#1b2631',
+                topStyle: 'hawaii',
+                topColor: '#f39c12',
+                accessory: 'popcorn',
+                seatIndex: 7,
+                state: 'sitting',
+                stateTimer: 0,
+                x: 0, y: 0
+            }
+        ];
+
+        // 16 Theater Seats in a 3-Row Perspective layout
+        // Rows: Back (seats 0..5), Mid (seats 6..10), Front (seats 11..15)
+        const SEATS = [
+            // Row 1 (Back, y = 142)
+            { id: 0, x: 80,  y: 138, row: 0, occ: null },
+            { id: 1, x: 125, y: 138, row: 0, occ: null },
+            { id: 2, x: 170, y: 138, row: 0, occ: null },
+            { id: 3, x: 270, y: 138, row: 0, occ: null },
+            { id: 4, x: 315, y: 138, row: 0, occ: null },
+            { id: 5, x: 360, y: 138, row: 0, occ: null },
+
+            // Row 2 (Middle, y = 176)
+            { id: 6,  x: 65,  y: 172, row: 1, occ: null },
+            { id: 7,  x: 115, y: 172, row: 1, occ: null },
+            { id: 8,  x: 165, y: 172, row: 1, occ: null },
+            { id: 9,  x: 275, y: 172, row: 1, occ: null }, // VIP Center
+            { id: 10, x: 325, y: 172, row: 1, occ: null },
+            { id: 11, x: 375, y: 172, row: 1, occ: null },
+
+            // Row 3 (Front, y = 214)
+            { id: 12, x: 50,  y: 210, row: 2, occ: null },
+            { id: 13, x: 105, y: 210, row: 2, occ: null },
+            { id: 14, x: 335, y: 210, row: 2, occ: null },
+            { id: 15, x: 390, y: 210, row: 2, occ: null }
+        ];
+
+        // Speech Bubbles active on screen
+        let activeBubbles = [];
+
+        // Audio System (Pure Web Audio API Synthesizer - 0 dependencies)
+        let audioCtx = null;
+        let isSoundEnabled = false;
+
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playBlip(freq = 440, type = 'square', duration = 0.08) {
+            if (!isSoundEnabled) return;
+            try {
+                initAudio();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            } catch(e) {}
+        }
+
+        function playPopcornCrunch() {
+            if (!isSoundEnabled) return;
+            playBlip(320, 'triangle', 0.05);
+            setTimeout(() => playBlip(480, 'sine', 0.04), 40);
+        }
+
+        function toggleSound() {
+            isSoundEnabled = !isSoundEnabled;
+            if (isSoundEnabled) initAudio();
+            const btn = document.getElementById('btn-sound');
+            const icon = document.getElementById('sound-icon');
+            const text = document.getElementById('sound-text');
+            if (isSoundEnabled) {
+                btn.classList.add('active');
+                icon.textContent = '🔊';
+                text.textContent = 'Sonido ON';
+                playBlip(587, 'sine', 0.1);
+            } else {
+                btn.classList.remove('active');
+                icon.textContent = '🔈';
+                text.textContent = 'Mudo';
+            }
+        }
+
+        /* =========================================================================
+           PALETTES & OPTIONS DEFINITION
+           ========================================================================= */
+
+        const SKIN_PALETTE = ['#fdf2e9', '#ffcc99', '#f5cba7', '#edbb99', '#d7a176', '#875129', '#2ecc71', '#5dade2'];
+        const HAIR_PALETTE = ['#17202a', '#3a2518', '#784212', '#a04000', '#f7dc6f', '#e74c3c', '#9b59b6', '#d5dbdb'];
+        const TOP_PALETTE  = ['#c0392b', '#2980b9', '#27ae60', '#8e44ad', '#f39c12', '#2c3e50', '#ecf0f1', '#16a085'];
+
+        const HAIR_STYLES = [
+            { id: 'messy', name: 'Despeinado', icon: '💇‍♂️' },
+            { id: 'short', name: 'Clásico', icon: '✂️' },
+            { id: 'ponytail', name: 'Coleta', icon: '👱‍♀️' },
+            { id: 'afro', name: 'Afro', icon: '🦱' },
+            { id: 'wizard', name: 'Mago/Barba', icon: '🧙‍♂️' },
+            { id: 'anime', name: 'Anime', icon: '⚡' },
+            { id: 'elven', name: 'Élfico', icon: '🧝' },
+            { id: 'bald', name: 'Rapado', icon: '👨‍🦲' }
+        ];
+
+        const TOP_STYLES = [
+            { id: 'cineflix_tee', name: 'Camiseta Cineflix', icon: '👕' },
+            { id: 'hoodie', name: 'Sudadera', icon: '🧥' },
+            { id: 'suit', name: 'Traje de Gala', icon: '👔' },
+            { id: 'hawaii', name: 'Hawaiana', icon: '🌺' },
+            { id: 'robe', name: 'Túnica', icon: '👘' },
+            { id: 'jacket', name: 'Chupa Cuero', icon: '🕶️' }
+        ];
+
+        const ACCESSORIES = [
+            { id: 'none', name: 'Ninguno', icon: '❌' },
+            { id: '3d_glasses', name: 'Gafas 3D Retro', icon: '🕶️' },
+            { id: 'popcorn', name: 'Palomitas', icon: '🍿' },
+            { id: 'soda', name: 'Refresco', icon: '🥤' },
+            { id: 'wizard_hat', name: 'Gorro Mago', icon: '🧙' },
+            { id: 'headphones', name: 'Auriculares', icon: '🎧' },
+            { id: 'elf_ears', name: 'Orejas de Elfo', icon: '🧝' }
+        ];
+
+        /* =========================================================================
+           16-BIT PROCEDURAL SPRITE RENDERER
+           Draws a 16x24 character onto a canvas context with exact pixel coordinates
+           ========================================================================= */
+
+        function draw16BitCharacter(ctx, char, x, y, options = {}) {
+            const scale = options.scale || 1;
+            const isSitting = options.isSitting !== undefined ? options.isSitting : true;
+            const animFrame = options.animFrame || 0; // 0, 1, 2 for walk or idle
+            const isChewing = options.isChewing || false;
+            const blink = options.blink || false;
+
+            ctx.save();
+            ctx.translate(Math.floor(x), Math.floor(y));
+            ctx.scale(scale, scale);
+
+            const skin = char.skin || '#ffcc99';
+            const hair = char.hairColor || '#3a2518';
+            const top = char.topColor || '#e74c3c';
+            const bot = char.bottomColor || '#2980b9';
+
+            // Shadow on floor/seat
+            ctx.fillStyle = 'rgba(0,0,0,0.35)';
+            ctx.fillRect(-6, 19, 12, 3);
+
+            // Legs / Pants
+            ctx.fillStyle = bot;
+            if (isSitting) {
+                // Sitting bent legs
+                ctx.fillRect(-4, 14, 8, 4);
+                // Shoes
+                ctx.fillStyle = '#111';
+                ctx.fillRect(-5, 17, 4, 3);
+                ctx.fillRect(1, 17, 4, 3);
+            } else {
+                // Walking animation
+                const legOffset = animFrame === 1 ? -2 : animFrame === 2 ? 2 : 0;
+                ctx.fillRect(-4, 14, 3, 5 + legOffset);
+                ctx.fillRect(1, 14, 3, 5 - legOffset);
+                // Shoes
+                ctx.fillStyle = '#111';
+                ctx.fillRect(-5, 18 + legOffset, 4, 2);
+                ctx.fillRect(1, 18 - legOffset, 4, 2);
+            }
+
+            // Torso / Shirt
+            ctx.fillStyle = top;
+            ctx.fillRect(-4, 7, 8, 8);
+
+            // Special Top details
+            if (char.topStyle === 'cineflix_tee') {
+                // Golden letter "C" on chest
+                ctx.fillStyle = '#f1c40f';
+                ctx.fillRect(-1, 9, 2, 3);
+                ctx.fillRect(0, 9, 2, 1);
+                ctx.fillRect(0, 11, 2, 1);
+            } else if (char.topStyle === 'suit') {
+                // White shirt collar + black tie
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(-2, 7, 4, 2);
+                ctx.fillStyle = '#000';
+                ctx.fillRect(-1, 8, 2, 4);
+            } else if (char.topStyle === 'hawaii') {
+                // Floral yellow dots
+                ctx.fillStyle = '#f1c40f';
+                ctx.fillRect(-3, 8, 1, 1);
+                ctx.fillRect(1, 10, 1, 1);
+                ctx.fillRect(-2, 12, 1, 1);
+            }
+
+            // Head / Neck Base
+            ctx.fillStyle = skin;
+            ctx.fillRect(-1, 5, 2, 2); // Neck
+            const headBob = (!isSitting && animFrame !== 0) ? -1 : 0;
+            ctx.fillRect(-4, -1 + headBob, 8, 7); // Face box
+
+            // Elf Ears
+            if (char.accessory === 'elf_ears') {
+                ctx.fillStyle = skin;
+                ctx.fillRect(-6, 0 + headBob, 2, 3);
+                ctx.fillRect(-7, -1 + headBob, 1, 2);
+                ctx.fillRect(4, 0 + headBob, 2, 3);
+                ctx.fillRect(6, -1 + headBob, 1, 2);
+            }
+
+            // Eyes / Expression
+            if (!blink) {
+                ctx.fillStyle = '#111';
+                ctx.fillRect(-3, 2 + headBob, 2, 2);
+                ctx.fillRect(1, 2 + headBob, 2, 2);
+                // Eye highlights
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(-3, 2 + headBob, 1, 1);
+                ctx.fillRect(1, 2 + headBob, 1, 1);
+            } else {
+                // Closed eyes (blink)
+                ctx.fillStyle = '#333';
+                ctx.fillRect(-3, 3 + headBob, 2, 1);
+                ctx.fillRect(1, 3 + headBob, 2, 1);
+            }
+
+            // Chewing / Mouth motion
+            if (isChewing) {
+                ctx.fillStyle = '#c0392b';
+                ctx.fillRect(-1, 4 + headBob, 2, 2);
+            }
+
+            // 3D Glasses Accessory
+            if (char.accessory === '3d_glasses') {
+                ctx.fillStyle = '#ecf0f1'; // Frame
+                ctx.fillRect(-4, 1 + headBob, 8, 3);
+                // Left lens: Red
+                ctx.fillStyle = '#e74c3c';
+                ctx.fillRect(-3, 2 + headBob, 2, 2);
+                // Right lens: Cyan
+                ctx.fillStyle = '#00ffff';
+                ctx.fillRect(1, 2 + headBob, 2, 2);
+            }
+
+            // Hair Styles
+            ctx.fillStyle = hair;
+            if (char.hairStyle === 'short') {
+                ctx.fillRect(-5, -3 + headBob, 10, 3);
+                ctx.fillRect(-5, 0 + headBob, 1, 3);
+                ctx.fillRect(4, 0 + headBob, 1, 3);
+            } else if (char.hairStyle === 'messy') {
+                ctx.fillRect(-5, -4 + headBob, 10, 4);
+                ctx.fillRect(-6, -2 + headBob, 2, 3);
+                ctx.fillRect(4, -3 + headBob, 2, 4);
+                ctx.fillRect(-1, -5 + headBob, 3, 2); // Tufts
+            } else if (char.hairStyle === 'ponytail') {
+                ctx.fillRect(-5, -3 + headBob, 10, 3);
+                ctx.fillRect(-5, 0 + headBob, 1, 4);
+                ctx.fillRect(4, 0 + headBob, 1, 4);
+                // Ponytail to the side
+                ctx.fillRect(5, -2 + headBob, 3, 6);
+            } else if (char.hairStyle === 'afro') {
+                ctx.fillRect(-6, -6 + headBob, 12, 7);
+                ctx.fillRect(-7, -4 + headBob, 1, 5);
+                ctx.fillRect(6, -4 + headBob, 1, 5);
+            } else if (char.hairStyle === 'wizard') {
+                // Long hair and big beard
+                ctx.fillRect(-5, -3 + headBob, 10, 3);
+                ctx.fillRect(-5, 0 + headBob, 1, 8);
+                ctx.fillRect(4, 0 + headBob, 1, 8);
+                // Beard
+                ctx.fillRect(-3, 4 + headBob, 6, 6);
+                ctx.fillRect(-2, 10 + headBob, 4, 3);
+            } else if (char.hairStyle === 'anime') {
+                ctx.fillRect(-5, -4 + headBob, 10, 4);
+                ctx.fillRect(-4, -6 + headBob, 3, 3);
+                ctx.fillRect(1, -6 + headBob, 4, 3);
+                ctx.fillRect(5, -2 + headBob, 2, 3);
+            } else if (char.hairStyle === 'elven') {
+                // Smooth long hair
+                ctx.fillRect(-5, -3 + headBob, 10, 3);
+                ctx.fillRect(-5, 0 + headBob, 1, 10);
+                ctx.fillRect(4, 0 + headBob, 1, 10);
+                ctx.fillRect(-4, 7 + headBob, 1, 4);
+                ctx.fillRect(3, 7 + headBob, 1, 4);
+            }
+
+            // Head Accessories
+            if (char.accessory === 'wizard_hat') {
+                ctx.fillStyle = '#2c3e50';
+                ctx.fillRect(-7, -3 + headBob, 14, 2); // Brim
+                ctx.fillRect(-4, -6 + headBob, 8, 3);
+                ctx.fillRect(-2, -9 + headBob, 4, 3);
+                ctx.fillRect(-1, -12 + headBob, 2, 3); // Tip
+                // Buckle
+                ctx.fillStyle = '#f1c40f';
+                ctx.fillRect(-2, -4 + headBob, 4, 1);
+            } else if (char.accessory === 'headphones') {
+                ctx.fillStyle = '#2ecc71';
+                ctx.fillRect(-5, -4 + headBob, 10, 2); // Arch
+                ctx.fillStyle = '#111';
+                ctx.fillRect(-6, 1 + headBob, 2, 4);
+                ctx.fillRect(4, 1 + headBob, 2, 4);
+            }
+
+            // Hand / Item Held Accessories
+            if (char.accessory === 'popcorn') {
+                // Popcorn bucket held in front
+                ctx.fillStyle = '#e74c3c'; // Red-striped bucket
+                ctx.fillRect(2, 9, 5, 6);
+                ctx.fillStyle = '#ecf0f1';
+                ctx.fillRect(3, 10, 1, 4);
+                ctx.fillRect(5, 10, 1, 4);
+                // Popcorn puffs on top
+                ctx.fillStyle = '#f1c40f';
+                ctx.fillRect(1, 7, 7, 3);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(2, 7, 2, 2);
+                ctx.fillRect(5, 6, 2, 2);
+            } else if (char.accessory === 'soda') {
+                // Soda cup with straw
+                ctx.fillStyle = '#3498db';
+                ctx.fillRect(3, 10, 4, 5);
+                ctx.fillStyle = '#ecf0f1';
+                ctx.fillRect(2, 9, 6, 1); // Lid
+                ctx.fillStyle = '#e74c3c';
+                ctx.fillRect(4, 6, 1, 3); // Straw
+            }
+
+            ctx.restore();
+        }
+
+        /* =========================================================================
+           VIRTUAL CINEMA SCENERY RENDERER
+           ========================================================================= */
+
+        const cinemaCanvas = document.getElementById('cinema-canvas');
+        const cinemaCtx = cinemaCanvas.getContext('2d');
+
+        let globalClock = 0;
+        let screenMovieFrame = 0;
+
+        function renderCinema() {
+            globalClock++;
+
+            const W = cinemaCanvas.width;
+            const H = cinemaCanvas.height;
+
+            // 1. Dark Theater Atmosphere & Walls
+            cinemaCtx.fillStyle = '#080a0f';
+            cinemaCtx.fillRect(0, 0, W, H);
+
+            // Acoustic wall panelling
+            cinemaCtx.fillStyle = '#0d131c';
+            for (let i = 0; i < W; i += 32) {
+                cinemaCtx.fillRect(i, 0, 2, 130);
+            }
+
+            // Glowing Green EXIT Signs
+            cinemaCtx.fillStyle = '#27ae60';
+            cinemaCtx.fillRect(16, 36, 24, 10);
+            cinemaCtx.fillRect(W - 40, 36, 24, 10);
+            cinemaCtx.fillStyle = '#000';
+            cinemaCtx.font = '6px monospace';
+            cinemaCtx.fillText('EXIT', 19, 44);
+            cinemaCtx.fillText('EXIT', W - 37, 44);
+            // Green glow
+            cinemaCtx.fillStyle = 'rgba(46, 204, 113, 0.12)';
+            cinemaCtx.fillRect(8, 28, 40, 26);
+            cinemaCtx.fillRect(W - 48, 28, 40, 26);
+
+            // 2. THE GIANT MOVIE SCREEN
+            const screenX = 70;
+            const screenY = 16;
+            const screenW = W - 140;
+            const screenH = 88;
+
+            // Screen Frame / Bezel
+            cinemaCtx.fillStyle = '#1c2430';
+            cinemaCtx.fillRect(screenX - 4, screenY - 4, screenW + 8, screenH + 8);
+            cinemaCtx.fillStyle = '#000';
+            cinemaCtx.fillRect(screenX - 2, screenY - 2, screenW + 4, screenH + 4);
+
+            // Screen Content: Simulated 16-Bit Sci-Fi / Fantasy Movie Loop!
+            renderSimulatedScreenMovie(cinemaCtx, screenX, screenY, screenW, screenH);
+
+            // Screen Ambient Light Projector Cone Beam
+            const beamFlicker = 0.08 + Math.sin(globalClock * 0.15) * 0.02;
+            const grad = cinemaCtx.createLinearGradient(W / 2, 0, W / 2, H);
+            grad.addColorStop(0, `rgba(180, 210, 255, ${beamFlicker * 1.5})`);
+            grad.addColorStop(0.5, `rgba(120, 160, 255, ${beamFlicker})`);
+            grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+            cinemaCtx.save();
+            cinemaCtx.fillStyle = grad;
+            cinemaCtx.beginPath();
+            cinemaCtx.moveTo(W / 2 - 30, 0);
+            cinemaCtx.lineTo(W / 2 + 30, 0);
+            cinemaCtx.lineTo(W, H);
+            cinemaCtx.lineTo(0, H);
+            cinemaCtx.closePath();
+            cinemaCtx.fill();
+            cinemaCtx.restore();
+
+            // 3. Central Carpet Aisle
+            cinemaCtx.fillStyle = '#4a1515'; // Dark velvet red carpet
+            cinemaCtx.beginPath();
+            cinemaCtx.moveTo(215, 120);
+            cinemaCtx.lineTo(265, 120);
+            cinemaCtx.lineTo(290, H);
+            cinemaCtx.lineTo(190, H);
+            cinemaCtx.closePath();
+            cinemaCtx.fill();
+
+            // Carpet golden side trims
+            cinemaCtx.strokeStyle = '#d4ac0d';
+            cinemaCtx.lineWidth = 1;
+            cinemaCtx.beginPath();
+            cinemaCtx.moveTo(215, 120); cinemaCtx.lineTo(190, H);
+            cinemaCtx.moveTo(265, 120); cinemaCtx.lineTo(290, H);
+            cinemaCtx.stroke();
+
+            // 4. SEATS & CHARACTERS LAYERED (Rendered back-to-front by row)
+            // Group seats by row (0, 1, 2)
+            for (let rowIdx = 0; rowIdx < 3; rowIdx++) {
+                const rowSeats = SEATS.filter(s => s.row === rowIdx);
+
+                // Draw Seat Backrests for this row
+                rowSeats.forEach(seat => {
+                    drawSeat(cinemaCtx, seat.x, seat.y, rowIdx);
+                });
+
+                // Draw Characters in this row
+                rowSeats.forEach(seat => {
+                    const occupant = seat.occ;
+                    if (occupant) {
+                        const isChew = (globalClock + occupant.name.length * 5) % 90 < 25 && occupant.accessory === 'popcorn';
+                        const blink = (globalClock + occupant.name.length * 11) % 110 < 6;
+                        draw16BitCharacter(cinemaCtx, occupant, seat.x + 8, seat.y - 4, {
+                            scale: 1,
+                            isSitting: true,
+                            isChewing: isChew,
+                            blink: blink
+                        });
+                    }
+                });
+
+                // Draw Seat Arms / Front cushion so characters look tucked into the seats
+                rowSeats.forEach(seat => {
+                    drawSeatArmrests(cinemaCtx, seat.x, seat.y, rowIdx);
+                });
+            }
+
+            // 5. Walking characters (e.g. going to bathroom / getting popcorn)
+            COMMUNITY_CHARACTERS.forEach(char => {
+                if (char.state && char.state.startsWith('walking')) {
+                    const walkFrame = Math.floor(globalClock / 6) % 3;
+                    draw16BitCharacter(cinemaCtx, char, char.x, char.y, {
+                        scale: 1,
+                        isSitting: false,
+                        animFrame: walkFrame,
+                        blink: false
+                    });
+                }
+            });
+
+            // 6. Draw Speech Bubbles
+            renderSpeechBubbles(cinemaCtx);
+
+            requestAnimationFrame(renderCinema);
+        }
+
+        // Draw a plush cinema seat
+        function drawSeat(ctx, x, y, row) {
+            ctx.fillStyle = '#641e16'; // Deep red frame
+            ctx.fillRect(x - 1, y - 6, 18, 18);
+            ctx.fillStyle = '#922b21'; // Velvet red back cushion
+            ctx.fillRect(x, y - 5, 16, 14);
+            // Cushion highlight
+            ctx.fillStyle = '#c0392b';
+            ctx.fillRect(x + 1, y - 4, 14, 2);
+        }
+
+        function drawSeatArmrests(ctx, x, y, row) {
+            // Front cushion
+            ctx.fillStyle = '#78281f';
+            ctx.fillRect(x, y + 8, 16, 5);
+            // Armrests with cup holders
+            ctx.fillStyle = '#1c2833';
+            ctx.fillRect(x - 3, y + 2, 3, 10);
+            ctx.fillRect(x + 16, y + 2, 3, 10);
+        }
+
+        // Animated Movie on Screen
+        function renderSimulatedScreenMovie(ctx, sx, sy, sw, sh) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(sx, sy, sw, sh);
+            ctx.clip();
+
+            // Space / Galaxy Background with moving stars
+            ctx.fillStyle = '#060a14';
+            ctx.fillRect(sx, sy, sw, sh);
+
+            // Pixel Starfield
+            for (let i = 0; i < 25; i++) {
+                const starX = sx + ((i * 37 + globalClock * (i % 2 === 0 ? 0.3 : 0.6)) % sw);
+                const starY = sy + (i * 19) % sh;
+                ctx.fillStyle = i % 3 === 0 ? '#f39c12' : '#ffffff';
+                ctx.fillRect(Math.floor(starX), Math.floor(starY), 1, 1);
+            }
+
+            // Big Glowing Retro Planet or Sun
+            const sunX = sx + sw * 0.7;
+            const sunY = sy + sh * 0.45;
+            const sunRadius = 16 + Math.sin(globalClock * 0.03) * 1.5;
+            const sunGrad = ctx.createRadialGradient(sunX, sunY, 2, sunX, sunY, sunRadius);
+            sunGrad.addColorStop(0, '#f1c40f');
+            sunGrad.addColorStop(0.7, '#e67e22');
+            sunGrad.addColorStop(1, 'transparent');
+            ctx.fillStyle = sunGrad;
+            ctx.beginPath();
+            ctx.arc(sunX, sunY, sunRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Retro Mountains Silhouette
+            ctx.fillStyle = '#111726';
+            ctx.beginPath();
+            ctx.moveTo(sx, sy + sh);
+            ctx.lineTo(sx + 30, sy + sh - 28);
+            ctx.lineTo(sx + 80, sy + sh - 14);
+            ctx.lineTo(sx + 140, sy + sh - 35);
+            ctx.lineTo(sx + 200, sy + sh - 20);
+            ctx.lineTo(sx + 260, sy + sh - 40);
+            ctx.lineTo(sx + sw, sy + sh - 15);
+            ctx.lineTo(sx + sw, sy + sh);
+            ctx.closePath();
+            ctx.fill();
+
+            // Spaceship / Flying dragon crossing the screen!
+            const shipX = sx + ((globalClock * 1.2) % (sw + 60)) - 30;
+            const shipY = sy + 25 + Math.sin(globalClock * 0.05) * 8;
+            ctx.fillStyle = '#00ffff';
+            ctx.fillRect(Math.floor(shipX), Math.floor(shipY), 7, 2);
+            ctx.fillRect(Math.floor(shipX) + 2, Math.floor(shipY) - 1, 3, 4);
+            // Thruster fire
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillRect(Math.floor(shipX) - 3, Math.floor(shipY), 3, 1);
+
+            // Movie scanlines effect
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            for (let y = sy; y < sy + sh; y += 3) {
+                ctx.fillRect(sx, y, sw, 1);
+            }
+
+            // Cinematic Letterbox black bars
+            ctx.fillStyle = '#000';
+            ctx.fillRect(sx, sy, sw, 6);
+            ctx.fillRect(sx, sy + sh - 6, sw, 6);
+
+            ctx.restore();
+        }
+
+        /* =========================================================================
+           SPEECH BUBBLES SYSTEM
+           ========================================================================= */
+
+        function triggerSpeech(char, text, durationMs = 4500) {
+            // Remove existing bubble for this character
+            activeBubbles = activeBubbles.filter(b => b.charId !== char.name);
+
+            // Find current coordinates of the character
+            let posX = char.x;
+            let posY = char.y;
+            if (char.seatIndex !== undefined) {
+                const seat = SEATS[char.seatIndex];
+                if (seat) {
+                    posX = seat.x + 8;
+                    posY = seat.y - 12;
+                }
+            }
+
+            activeBubbles.push({
+                charId: char.name,
+                name: char.name,
+                text: text,
+                x: posX,
+                y: posY,
+                created: Date.now(),
+                expires: Date.now() + durationMs,
+                charIndex: 0
+            });
+
+            playBlip(520, 'sine', 0.08);
+        }
+
+        function renderSpeechBubbles(ctx) {
+            const now = Date.now();
+            activeBubbles = activeBubbles.filter(b => b.expires > now);
+
+            activeBubbles.forEach(b => {
+                ctx.save();
+
+                // Typewriter effect: increase visible chars
+                const elapsed = now - b.created;
+                const visibleChars = Math.min(b.text.length, Math.floor(elapsed / 30));
+                const displayText = b.text.slice(0, visibleChars);
+
+                ctx.font = '7px "Outfit", sans-serif';
+                const textWidth = ctx.measureText(displayText).width;
+                ctx.font = 'bold 6px "Press Start 2P", monospace';
+                const nameWidth = ctx.measureText(b.name).width;
+                const boxW = Math.max(textWidth, nameWidth) + 14;
+                const boxH = 22;
+
+                let bx = b.x - boxW / 2;
+                let by = b.y - 28;
+
+                // Clamp to screen bounds
+                bx = Math.max(8, Math.min(cinemaCanvas.width - boxW - 8, bx));
+                by = Math.max(6, by);
+
+                // Drop shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(bx + 1, by + 1, boxW, boxH);
+
+                // Speech bubble box (Pixelated 16-bit style)
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(bx, by, boxW, boxH);
+
+                // Bubble pointer arrow
+                ctx.beginPath();
+                ctx.moveTo(b.x - 3, by + boxH);
+                ctx.lineTo(b.x + 3, by + boxH);
+                ctx.lineTo(b.x, by + boxH + 4);
+                ctx.closePath();
+                ctx.fill();
+
+                // Bubble border
+                ctx.strokeStyle = '#1e2636';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(bx, by, boxW, boxH);
+
+                // Speaker Name header
+                ctx.font = 'bold 6px "Press Start 2P", monospace';
+                ctx.fillStyle = '#c0392b';
+                ctx.fillText(b.name, bx + 5, by + 8);
+
+                // Bubble text
+                ctx.font = '7px "Outfit", sans-serif';
+                ctx.fillStyle = '#0f172a';
+                ctx.fillText(displayText, bx + 5, by + 18);
+
+                ctx.restore();
+            });
+        }
+
+        /* =========================================================================
+           COMMUNITY AUTONOMOUS BEHAVIOR & AI
+           ========================================================================= */
+
+        function setupCinemaOccupants() {
+            // Clear seats
+            SEATS.forEach(s => s.occ = null);
+
+            // Seat my character
+            const mySeat = SEATS[myCharacter.seatIndex || 9];
+            if (mySeat) mySeat.occ = myCharacter;
+
+            // Seat community characters
+            COMMUNITY_CHARACTERS.forEach(bot => {
+                const s = SEATS[bot.seatIndex];
+                if (s && !s.occ) {
+                    s.occ = bot;
+                    bot.x = s.x + 8;
+                    bot.y = s.y;
+                }
+            });
+        }
+
+        // Autonomous cycle: random phrases, restroom trips, popcorn crunch
+        setInterval(() => {
+            const allChars = [myCharacter, ...COMMUNITY_CHARACTERS];
+            const randomChar = allChars[Math.floor(Math.random() * allChars.length)];
+
+            if (Math.random() < 0.45) {
+                // Speak their quote
+                if (randomChar.quote) {
+                    triggerSpeech(randomChar, randomChar.quote);
+                }
+            } else if (Math.random() < 0.25) {
+                // Popcorn crunch sound
+                playPopcornCrunch();
+            }
+        }, 4000);
+
+        // Rare "Voy al baño" Event
+        function triggerRestroomTrip(char) {
+            if (!char || char.state !== 'sitting') return;
+            triggerSpeech(char, "Voy al baño, guardadme el sitio...", 3000);
+
+            const seat = SEATS[char.seatIndex];
+            seat.occ = null;
+            char.state = 'walking_to_bath';
+            char.x = seat.x + 8;
+            char.y = seat.y;
+
+            // Animate walking to aisle and down to exit door
+            const walkInterval = setInterval(() => {
+                // Move towards center aisle (x = 240)
+                if (Math.abs(char.x - 240) > 4) {
+                    char.x += char.x < 240 ? 3 : -3;
+                } else if (char.y < 250) {
+                    char.y += 3; // Walk down towards the exit
+                } else {
+                    // Out of screen
+                    clearInterval(walkInterval);
+                    char.state = 'in_bath';
+
+                    // Come back after 5 seconds with new popcorn!
+                    setTimeout(() => {
+                        char.state = 'walking_back';
+                        char.accessory = 'popcorn';
+                        char.x = 240;
+                        char.y = 250;
+                        triggerSpeech(char, "¡Ya he vuelto! Traigo más palomitas 🍿", 3500);
+
+                        const returnInterval = setInterval(() => {
+                            if (char.y > seat.y) {
+                                char.y -= 3;
+                            } else if (Math.abs(char.x - (seat.x + 8)) > 4) {
+                                char.x += char.x < (seat.x + 8) ? 3 : -3;
+                            } else {
+                                // Returned to seat!
+                                clearInterval(returnInterval);
+                                char.state = 'sitting';
+                                seat.occ = char;
+                            }
+                        }, 50);
+                    }, 5000);
+                }
+            }, 50);
+        }
+
+        function triggerRandomEvent() {
+            const availableBots = COMMUNITY_CHARACTERS.filter(b => b.state === 'sitting');
+            if (availableBots.length > 0) {
+                const chosen = availableBots[Math.floor(Math.random() * availableBots.length)];
+                triggerRestroomTrip(chosen);
+            }
+        }
+
+        // Custom Quote Sending
+        function sendCustomQuote() {
+            const input = document.getElementById('hud-chat-input');
+            const text = input.value.trim();
+            if (!text) return;
+
+            myCharacter.quote = text;
+            triggerSpeech(myCharacter, text, 6000);
+            input.value = '';
+
+            try {
+                localStorage.setItem('cineflix_16bit_avatar', JSON.stringify(myCharacter));
+            } catch(e) {}
+        }
+
+        document.getElementById('hud-chat-input')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendCustomQuote();
+        });
+
+        // Click on Seats in Cinema to inspect or sit down!
+        cinemaCanvas.addEventListener('click', (e) => {
+            const rect = cinemaCanvas.getBoundingClientRect();
+            const scaleX = cinemaCanvas.width / rect.width;
+            const scaleY = cinemaCanvas.height / rect.height;
+            const clickX = (e.clientX - rect.left) * scaleX;
+            const clickY = (e.clientY - rect.top) * scaleY;
+
+            // Check if clicked a seat
+            SEATS.forEach(seat => {
+                if (clickX >= seat.x - 4 && clickX <= seat.x + 20 && clickY >= seat.y - 8 && clickY <= seat.y + 16) {
+                    if (seat.occ) {
+                        // Clicked an occupant: trigger their speech
+                        triggerSpeech(seat.occ, seat.occ.quote || `¡Hola! Soy ${seat.occ.name}.`);
+                    } else {
+                        // Empty seat: move my character here!
+                        const oldSeat = SEATS[myCharacter.seatIndex];
+                        if (oldSeat) oldSeat.occ = null;
+                        seat.occ = myCharacter;
+                        myCharacter.seatIndex = seat.id;
+                        triggerSpeech(myCharacter, "¡Me cambio a este sitio!", 2500);
+                        playBlip(659, 'sine', 0.1);
+                        try {
+                            localStorage.setItem('cineflix_16bit_avatar', JSON.stringify(myCharacter));
+                        } catch(e) {}
+                    }
+                }
+            });
+        });
+
+        /* =========================================================================
+           CHARACTER STUDIO (CREATOR) CONTROLS
+           ========================================================================= */
+
+        const previewCanvas = document.getElementById('preview-canvas');
+        const previewCtx = previewCanvas.getContext('2d');
+        const hudAvatarCanvas = document.getElementById('hud-avatar-canvas');
+        const hudAvatarCtx = hudAvatarCanvas.getContext('2d');
+
+        function renderCreatorPreview() {
+            previewCtx.clearRect(0, 0, 32, 32);
+
+            // Draw character in center of 32x32 canvas, standing
+            draw16BitCharacter(previewCtx, myCharacter, 16, 8, {
+                scale: 1,
+                isSitting: false,
+                animFrame: 0,
+                blink: false
+            });
+
+            // Also update HUD mini avatar
+            hudAvatarCtx.clearRect(0, 0, 32, 32);
+            draw16BitCharacter(hudAvatarCtx, myCharacter, 16, 8, {
+                scale: 1.1,
+                isSitting: false,
+                animFrame: 0
+            });
+
+            document.getElementById('preview-name').textContent = myCharacter.name || 'Crono';
+            document.getElementById('preview-quote').textContent = `"${myCharacter.quote || '...'}"`;
+        }
+
+        function initCreatorOptions() {
+            // 1. Skin Palette
+            const skinCont = document.getElementById('skin-palette');
+            skinCont.innerHTML = '';
+            SKIN_PALETTE.forEach(color => {
+                const el = document.createElement('div');
+                el.className = 'color-circle' + (myCharacter.skin === color ? ' selected' : '');
+                el.style.backgroundColor = color;
+                el.onclick = () => {
+                    myCharacter.skin = color;
+                    skinCont.querySelectorAll('.color-circle').forEach(c => c.classList.remove('selected'));
+                    el.classList.add('selected');
+                    renderCreatorPreview();
+                };
+                skinCont.appendChild(el);
+            });
+
+            // 2. Hair Styles
+            const hairCont = document.getElementById('hair-style-grid');
+            hairCont.innerHTML = '';
+            HAIR_STYLES.forEach(style => {
+                const btn = document.createElement('button');
+                btn.className = 'choice-btn' + (myCharacter.hairStyle === style.id ? ' selected' : '');
+                btn.innerHTML = `<span class="choice-icon">${style.icon}</span><span>${style.name}</span>`;
+                btn.onclick = () => {
+                    myCharacter.hairStyle = style.id;
+                    hairCont.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('selected'));
+                    btn.classList.add('selected');
+                    renderCreatorPreview();
+                };
+                hairCont.appendChild(btn);
+            });
+
+            // 3. Hair Palette
+            const hairPalCont = document.getElementById('hair-palette');
+            hairPalCont.innerHTML = '';
+            HAIR_PALETTE.forEach(color => {
+                const el = document.createElement('div');
+                el.className = 'color-circle' + (myCharacter.hairColor === color ? ' selected' : '');
+                el.style.backgroundColor = color;
+                el.onclick = () => {
+                    myCharacter.hairColor = color;
+                    hairPalCont.querySelectorAll('.color-circle').forEach(c => c.classList.remove('selected'));
+                    el.classList.add('selected');
+                    renderCreatorPreview();
+                };
+                hairPalCont.appendChild(el);
+            });
+
+            // 4. Top Styles
+            const topCont = document.getElementById('top-style-grid');
+            topCont.innerHTML = '';
+            TOP_STYLES.forEach(style => {
+                const btn = document.createElement('button');
+                btn.className = 'choice-btn' + (myCharacter.topStyle === style.id ? ' selected' : '');
+                btn.innerHTML = `<span class="choice-icon">${style.icon}</span><span>${style.name}</span>`;
+                btn.onclick = () => {
+                    myCharacter.topStyle = style.id;
+                    topCont.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('selected'));
+                    btn.classList.add('selected');
+                    renderCreatorPreview();
+                };
+                topCont.appendChild(btn);
+            });
+
+            // 5. Top Palette
+            const topPalCont = document.getElementById('top-palette');
+            topPalCont.innerHTML = '';
+            TOP_PALETTE.forEach(color => {
+                const el = document.createElement('div');
+                el.className = 'color-circle' + (myCharacter.topColor === color ? ' selected' : '');
+                el.style.backgroundColor = color;
+                el.onclick = () => {
+                    myCharacter.topColor = color;
+                    topPalCont.querySelectorAll('.color-circle').forEach(c => c.classList.remove('selected'));
+                    el.classList.add('selected');
+                    renderCreatorPreview();
+                };
+                topPalCont.appendChild(el);
+            });
+
+            // 6. Accessories
+            const accCont = document.getElementById('accessory-grid');
+            accCont.innerHTML = '';
+            ACCESSORIES.forEach(acc => {
+                const btn = document.createElement('button');
+                btn.className = 'choice-btn' + (myCharacter.accessory === acc.id ? ' selected' : '');
+                btn.innerHTML = `<span class="choice-icon">${acc.icon}</span><span>${acc.name}</span>`;
+                btn.onclick = () => {
+                    myCharacter.accessory = acc.id;
+                    accCont.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('selected'));
+                    btn.classList.add('selected');
+                    renderCreatorPreview();
+                };
+                accCont.appendChild(btn);
+            });
+
+            document.getElementById('input-char-name').value = myCharacter.name || 'Crono';
+            document.getElementById('input-char-quote').value = myCharacter.quote || '';
+        }
+
+        function updateProfileMeta() {
+            myCharacter.name = document.getElementById('input-char-name').value.trim() || 'Crono';
+            myCharacter.quote = document.getElementById('input-char-quote').value.trim() || '...';
+            renderCreatorPreview();
+        }
+
+        function randomizeCharacter() {
+            myCharacter.skin = SKIN_PALETTE[Math.floor(Math.random() * SKIN_PALETTE.length)];
+            myCharacter.hairStyle = HAIR_STYLES[Math.floor(Math.random() * HAIR_STYLES.length)].id;
+            myCharacter.hairColor = HAIR_PALETTE[Math.floor(Math.random() * HAIR_PALETTE.length)];
+            myCharacter.topStyle = TOP_STYLES[Math.floor(Math.random() * TOP_STYLES.length)].id;
+            myCharacter.topColor = TOP_PALETTE[Math.floor(Math.random() * TOP_PALETTE.length)];
+            myCharacter.accessory = ACCESSORIES[Math.floor(Math.random() * ACCESSORIES.length)].id;
+
+            initCreatorOptions();
+            renderCreatorPreview();
+            playBlip(784, 'triangle', 0.1);
+        }
+
+        function saveAndEnterCinema() {
+            updateProfileMeta();
+            try {
+                localStorage.setItem('cineflix_16bit_avatar', JSON.stringify(myCharacter));
+            } catch(e) {}
+
+            setupCinemaOccupants();
+            switchView('cinema');
+            triggerSpeech(myCharacter, "¡Ya estoy en mi butaca!", 3500);
+            playBlip(880, 'sine', 0.15);
+        }
+
+        function exportAvatarPNG() {
+            const expCanvas = document.createElement('canvas');
+            expCanvas.width = 128;
+            expCanvas.height = 128;
+            const expCtx = expCanvas.getContext('2d');
+            expCtx.imageSmoothingEnabled = false;
+
+            // Render scaled up to 128x128
+            draw16BitCharacter(expCtx, myCharacter, 64, 32, {
+                scale: 4,
+                isSitting: false
+            });
+
+            const link = document.createElement('a');
+            link.download = `avatar_16bit_${myCharacter.name.toLowerCase().replace(/\s+/g, '_')}.png`;
+            link.href = expCanvas.toDataURL();
+            link.click();
+        }
+
+        // View Switcher
+        function switchView(viewName) {
+            const cinemaView = document.getElementById('view-cinema');
+            const creatorView = document.getElementById('view-creator');
+            const btnCinema = document.getElementById('btn-tab-cinema');
+            const btnCreator = document.getElementById('btn-tab-creator');
+
+            if (viewName === 'cinema') {
+                cinemaView.classList.remove('hidden');
+                creatorView.classList.add('hidden');
+                btnCinema.classList.add('active');
+                btnCreator.classList.remove('active');
+            } else {
+                cinemaView.classList.add('hidden');
+                creatorView.classList.remove('hidden');
+                btnCinema.classList.remove('active');
+                btnCreator.classList.add('active');
+                initCreatorOptions();
+                renderCreatorPreview();
+            }
+        }
+
+        // Initial Boot
+        setupCinemaOccupants();
+        renderCreatorPreview();
+        requestAnimationFrame(renderCinema);
+    </script>
+</body>
+</html>
