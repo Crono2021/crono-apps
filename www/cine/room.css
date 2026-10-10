@@ -126,3 +126,39 @@
     .cinema-wrapper { width: min(98vw, calc((100vh - 130px) * 16 / 9)); aspect-ratio: 16 / 9; }
     .room-stage { width: 100%; margin-left: 0; }
 }
+
+/* ───────────── Foco visible (teclado / mando de TV) ───────────── */
+button:focus-visible, a:focus-visible, input:focus-visible, [tabindex]:focus-visible,
+body.tv-mode button:focus, body.tv-mode a:focus, body.tv-mode input:focus, body.tv-mode [tabindex]:focus {
+    outline: 3px solid #f1c40f !important;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 6px rgba(241, 196, 15, 0.28);
+    z-index: 2;
+}
+.color-circle:focus-visible, body.tv-mode .color-circle:focus { transform: scale(1.25); }
+.room-card:focus-visible, body.tv-mode .room-card:focus { transform: translateY(-3px) scale(1.02); }
+#cinema-canvas:focus { outline: none; }
+#cinema-canvas:focus-visible, body.tv-mode #cinema-canvas:focus { outline: 3px solid #f1c40f !important; outline-offset: -3px; box-shadow: none; }
+body.tv-mode input[readonly] { cursor: pointer; }
+
+/* ───────────── Teclado en pantalla (TV) ───────────── */
+.tvkb { position: fixed; inset: 0; z-index: 10000; background: rgba(5, 8, 14, 0.82); display: flex; align-items: flex-end; justify-content: center; }
+.tvkb.hidden { display: none; }
+.tvkb-box { width: min(960px, 96vw); margin-bottom: 2vh; background: #0f1623; border: 2px solid #f1c40f; border-radius: 14px; padding: 14px 16px 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.7); }
+.tvkb-title { font-family: 'Press Start 2P', monospace; font-size: 11px; color: #f1c40f; margin-bottom: 8px; }
+.tvkb-display { min-height: 46px; background: #05080e; border: 1px solid #283347; border-radius: 8px; padding: 10px 14px; font-size: 24px; color: #fff; font-family: Outfit, sans-serif; margin-bottom: 12px; word-break: break-all; }
+.tvkb-display .tvkb-ph { color: #64748b; }
+.tvkb-display .tvkb-caret { color: #f1c40f; animation: tvkb-blink 1s steps(2) infinite; }
+@keyframes tvkb-blink { 50% { opacity: 0; } }
+.tvkb-row { display: flex; gap: 6px; justify-content: center; margin-bottom: 6px; }
+.tvkb-key { flex: 1 1 0; min-width: 0; height: 52px; border: 1px solid #334155; border-radius: 8px; background: #1b2638; color: #fff; font-size: 22px; font-weight: 700; font-family: Outfit, sans-serif; cursor: pointer; padding: 0 4px; }
+.tvkb-key.wide { flex: 3 1 0; }
+.tvkb-key.mid { flex: 1.6 1 0; font-size: 16px; }
+.tvkb-key.ok { background: #166534; border-color: #22c55e; font-size: 16px; flex: 2 1 0; }
+.tvkb-key.cancel { background: #7f1d1d; border-color: #ef4444; font-size: 16px; flex: 2 1 0; }
+.tvkb-key.on { background: #854d0e; }
+.tvkb-numeric .tvkb-box { width: min(520px, 96vw); }
+@media (max-height: 520px) { .tvkb-key { height: 40px; font-size: 18px; } .tvkb-display { font-size: 18px; min-height: 36px; } }
+
+#creator-sections .section-title { margin-top: 22px; }
+#creator-sections > .section-title:first-child { margin-top: 14px; }

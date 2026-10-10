@@ -21,7 +21,9 @@ const ROOMS = [
 const DEFAULT_AVATAR = {
     name: '', quote: '',
     skin: '#ffcc99', hairStyle: 'messy', hairColor: '#3a2518',
-    topStyle: 'cineflix_tee', topColor: '#c0392b', bottomColor: '#1e293b', accessory: '3d_glasses'
+    topStyle: 'cineflix_tee', topColor: '#c0392b', bottomColor: '#1e293b', accessory: '3d_glasses',
+    eyeColor: '#0f172a', hat: 'none', hatColor: '#c0392b', facial: 'none', glasses: 'none',
+    bottomStyle: 'pants', shoeColor: '#111827', mouth: 'neutral'
 };
 let myCharacter = Object.assign({}, DEFAULT_AVATAR);
 let hasSavedAvatar = false;
@@ -54,7 +56,11 @@ const CLIENT_KEY = getClientKey();
 
 function charPayload() {
     const c = myCharacter;
-    return { skin: c.skin, hairStyle: c.hairStyle, hairColor: c.hairColor, topStyle: c.topStyle, topColor: c.topColor, bottomColor: c.bottomColor, accessory: c.accessory };
+    return {
+        skin: c.skin, hairStyle: c.hairStyle, hairColor: c.hairColor, topStyle: c.topStyle, topColor: c.topColor,
+        bottomColor: c.bottomColor, accessory: c.accessory, eyeColor: c.eyeColor, hat: c.hat, hatColor: c.hatColor,
+        facial: c.facial, glasses: c.glasses, bottomStyle: c.bottomStyle, shoeColor: c.shoeColor, mouth: c.mouth
+    };
 }
 
 /* ───────────────────────── Estado de la sala ───────────────────────── */
@@ -66,6 +72,7 @@ const net = {
 const trips = {};          // seat -> { start, duration }
 const popcornUntil = {};   // seat -> timestamp
 let showNames = false, bubblesOn = true, hoverSeat = -1, view = 'lobby';
+let kbSeat = -1, kbCursorOn = false;   // butaca seleccionada con teclado / mando
 let roomStats = {};
 
 function mySeat() {
@@ -134,9 +141,12 @@ function onNetMessage(m) {
             break;
         }
         case 'seat': {
+            const prev = net.seats[m.seat];
             net.seats[m.seat] = m.user; net.seated = m.seated;
             if (!m.user) { delete trips[m.seat]; removeBubble(m.seat); }
             else if (!m.user.away) delete trips[m.seat];
+            if (m.user && m.user.id === net.youId && !(prev && prev.id === net.youId)) playSfx('sit');
+            else if (!m.user && prev && prev.id === net.youId) playSfx('stand');
             updateRoomUI();
             break;
         }
@@ -151,10 +161,12 @@ function onNetMessage(m) {
                 if (net.seats[m.seat]) net.seats[m.seat].away = true;
                 trips[m.seat] = { start: now, duration: m.duration || 16000 };
                 removeBubble(m.seat);
+                playSfx('door');
             } else if (m.kind === 'back') {
                 if (net.seats[m.seat]) net.seats[m.seat].away = false;
                 delete trips[m.seat];
                 popcornUntil[m.seat] = now + 9000;
+                playSfx('crunch');
             }
             break;
         }
@@ -523,6 +535,25 @@ function drawRoom(now) {
         });
     }
     ctx.textAlign = 'left';
+
+    // Cursor de butaca (mando de TV / teclado): visible cuando la sala tiene el foco
+    if (kbCursorOn && document.activeElement === cinemaCanvas && kbSeat >= 0) {
+        const p = seatPos(kbSeat), u = net.seats[kbSeat];
+        ctx.save();
+        ctx.lineWidth = 3; ctx.strokeStyle = '#f1c40f'; ctx.setLineDash([6, 4]);
+        ctx.lineDashOffset = -(now / 60) % 10;
+        ctx.strokeRect(p.x - 8, p.y - 20, SEAT_W + 16, 80);
+        ctx.restore();
+        const label = u ? (u.id === net.youId ? 'Tu butaca ' + (kbSeat + 1) + ' · OK para levantarte' : u.name + ' · butaca ' + (kbSeat + 1))
+                        : 'Butaca ' + (kbSeat + 1) + ' libre · OK para sentarte';
+        ctx.font = '700 13px Outfit, sans-serif'; ctx.textAlign = 'center';
+        const tw = ctx.measureText(label).width + 16;
+        const lx = Math.min(Math.max(p.x + SEAT_W / 2, tw / 2 + 4), 960 - tw / 2 - 4), ly = p.y - 34;
+        ctx.fillStyle = 'rgba(0,0,0,0.85)'; ctx.fillRect(Math.round(lx - tw / 2), ly - 14, tw, 20);
+        ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 1; ctx.strokeRect(Math.round(lx - tw / 2) + 0.5, ly - 13.5, tw - 1, 19);
+        ctx.fillStyle = '#f1c40f'; ctx.fillText(label, lx, ly);
+        ctx.textAlign = 'left';
+    }
 }
 
 /* ───────────────────────── Ratón / tacto sobre la sala ───────────────────────── */
@@ -585,23 +616,27 @@ function renderCreatorPreview() {
     document.getElementById('preview-quote').textContent = myCharacter.quote ? `"${myCharacter.quote}"` : 'Sin frase propia: dirá frases aleatorias del cine 🍿';
 }
 
-function buildPalette(contId, colors, key) {
-    const cont = document.getElementById(contId);
+function buildPalette(cont, colors, key) {
     cont.textContent = '';
     colors.forEach(color => {
         const el = document.createElement('div');
         el.className = 'color-circle' + (myCharacter[key] === color ? ' selected' : '');
         el.style.backgroundColor = color;
-        el.onclick = () => {
+        el.tabIndex = 0;
+        el.setAttribute('role', 'button');
+        el.setAttribute('aria-label', 'Color ' + color);
+        const pickIt = () => {
             myCharacter[key] = color;
             cont.querySelectorAll('.color-circle').forEach(c => c.classList.remove('selected'));
             el.classList.add('selected'); renderCreatorPreview();
+            playBlip(660, 'square', 0.04);
         };
+        el.onclick = pickIt;
+        el.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pickIt(); } };
         cont.appendChild(el);
     });
 }
-function buildChoices(contId, options, key) {
-    const cont = document.getElementById(contId);
+function buildChoices(cont, options, key) {
     cont.textContent = '';
     options.forEach(o => {
         const btn = document.createElement('button');
@@ -614,17 +649,54 @@ function buildChoices(contId, options, key) {
             myCharacter[key] = o.id;
             cont.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('selected'));
             btn.classList.add('selected'); renderCreatorPreview();
+            playBlip(660, 'square', 0.04);
         };
         cont.appendChild(btn);
     });
 }
+
+// Secciones del creador: [título, [ {type:'choices'|'palette', label?, key, list} ... ]]
+const CREATOR_SECTIONS = [
+    ['Tono de piel', [{ type: 'palette', key: 'skin', list: SKIN_PALETTE }]],
+    ['Ojos y boca', [
+        { type: 'palette', label: 'Color de ojos:', key: 'eyeColor', list: EYE_PALETTE },
+        { type: 'choices', label: 'Boca:', key: 'mouth', list: MOUTH_STYLES }]],
+    ['Peinado', [
+        { type: 'choices', key: 'hairStyle', list: HAIR_STYLES },
+        { type: 'palette', label: 'Color de pelo:', key: 'hairColor', list: HAIR_PALETTE }]],
+    ['Barba y bigote', [{ type: 'choices', key: 'facial', list: FACIAL_STYLES }]],
+    ['Gafas', [{ type: 'choices', key: 'glasses', list: GLASSES_STYLES }]],
+    ['Sombrero', [
+        { type: 'choices', key: 'hat', list: HAT_STYLES },
+        { type: 'palette', label: 'Color del sombrero:', key: 'hatColor', list: HAT_PALETTE }]],
+    ['Ropa superior', [
+        { type: 'choices', key: 'topStyle', list: TOP_STYLES },
+        { type: 'palette', label: 'Color del atuendo:', key: 'topColor', list: TOP_PALETTE }]],
+    ['Pantalón, falda y calzado', [
+        { type: 'choices', key: 'bottomStyle', list: BOTTOM_STYLES },
+        { type: 'palette', label: 'Color de la parte de abajo:', key: 'bottomColor', list: BOTTOM_PALETTE },
+        { type: 'palette', label: 'Color de zapatillas:', key: 'shoeColor', list: SHOE_PALETTE }]],
+    ['Accesorio de cine & rol', [{ type: 'choices', key: 'accessory', list: ACCESSORIES }]]
+];
 function initCreatorOptions() {
-    buildPalette('skin-palette', SKIN_PALETTE, 'skin');
-    buildChoices('hair-style-grid', HAIR_STYLES, 'hairStyle');
-    buildPalette('hair-palette', HAIR_PALETTE, 'hairColor');
-    buildChoices('top-style-grid', TOP_STYLES, 'topStyle');
-    buildPalette('top-palette', TOP_PALETTE, 'topColor');
-    buildChoices('accessory-grid', ACCESSORIES, 'accessory');
+    const root = document.getElementById('creator-sections');
+    root.textContent = '';
+    CREATOR_SECTIONS.forEach(([title, blocks], i) => {
+        const t = document.createElement('div'); t.className = 'section-title';
+        const ts = document.createElement('span'); ts.textContent = (i + 2) + '. ' + title;
+        t.appendChild(ts); root.appendChild(t);
+        blocks.forEach(b => {
+            if (b.label) {
+                const l = document.createElement('label'); l.className = 'mini-label'; l.textContent = b.label;
+                root.appendChild(l);
+            }
+            const grid = document.createElement('div');
+            grid.className = b.type === 'palette' ? 'palette-grid' : 'option-grid';
+            root.appendChild(grid);
+            if (b.type === 'palette') buildPalette(grid, b.list, b.key);
+            else buildChoices(grid, b.list, b.key);
+        });
+    });
     document.getElementById('input-char-name').value = myCharacter.name || '';
     document.getElementById('input-char-quote').value = myCharacter.quote || '';
     document.getElementById('btn-save-char').lastChild.textContent = net.wantRoom ? ' Guardar y volver a la sala' : ' Guardar personaje';
@@ -636,11 +708,21 @@ function updateProfileMeta() {
 }
 function randomizeCharacter() {
     const pick = a => a[Math.floor(Math.random() * a.length)];
+    const chance = p => Math.random() < p;
     myCharacter.skin = pick(SKIN_PALETTE);
+    myCharacter.eyeColor = pick(EYE_PALETTE);
     myCharacter.hairStyle = pick(HAIR_STYLES).id;
     myCharacter.hairColor = pick(HAIR_PALETTE);
+    myCharacter.facial = chance(0.35) ? pick(FACIAL_STYLES).id : 'none';
+    myCharacter.glasses = chance(0.35) ? pick(GLASSES_STYLES).id : 'none';
+    myCharacter.hat = chance(0.3) ? pick(HAT_STYLES).id : 'none';
+    myCharacter.hatColor = pick(HAT_PALETTE);
     myCharacter.topStyle = pick(TOP_STYLES).id;
     myCharacter.topColor = pick(TOP_PALETTE);
+    myCharacter.bottomStyle = pick(BOTTOM_STYLES).id;
+    myCharacter.bottomColor = pick(BOTTOM_PALETTE);
+    myCharacter.shoeColor = pick(SHOE_PALETTE);
+    myCharacter.mouth = pick(MOUTH_STYLES).id;
     myCharacter.accessory = pick(ACCESSORIES).id;
     initCreatorOptions(); renderCreatorPreview();
     playBlip(784, 'triangle', 0.1);

@@ -6,8 +6,8 @@
     <title>Cineflix 16-Bit • Salas de cine en directo (Versión Test)</title>
     <link rel="icon" type="image/png" href="/favicon.png">
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/cine/cine.css?v=20261010a">
-    <link rel="stylesheet" href="/cine/room.css?v=20261010a">
+    <link rel="stylesheet" href="/cine/cine.css?v=20261010b">
+    <link rel="stylesheet" href="/cine/room.css?v=20261010b">
 </head>
 <body>
 
@@ -28,8 +28,8 @@
         </nav>
 
         <div class="header-actions">
-            <button id="btn-sound" class="icon-btn" onclick="toggleSound()" title="Activar/Desactivar sonido">
-                <span id="sound-icon">🔈</span> <span id="sound-text" class="btn-text">Mudo</span>
+            <button id="btn-sound" class="icon-btn" onclick="toggleSound()" title="Efectos de sonido (no hay audio de las películas)">
+                <span id="sound-icon">🔈</span> <span id="sound-text" class="btn-text">Efectos OFF</span>
             </button>
             <a href="/" class="icon-btn" style="text-decoration: none; color: #ecf0f1;" title="Volver a Cineflix">
                 <span>⬅️</span> <span class="btn-text">Volver</span>
@@ -53,9 +53,6 @@
 
                 <h2 class="lobby-title">🎞️ Cartelera</h2>
                 <div class="lobby-grid" id="lobby-grid"></div>
-                <div class="lobby-foot">
-                    Pantallas dibujadas en pixel-art como homenaje · Versión de pruebas · Cada sala tiene 32 butacas
-                </div>
             </div>
         </section>
 
@@ -133,21 +130,7 @@
                     </div>
                 </div>
 
-                <div class="section-title"><span>2. Tono de piel</span></div>
-                <div class="palette-grid" id="skin-palette"></div>
-
-                <div class="section-title"><span>3. Peinado</span></div>
-                <div class="option-grid" id="hair-style-grid"></div>
-                <label class="mini-label">Color de pelo:</label>
-                <div class="palette-grid" id="hair-palette"></div>
-
-                <div class="section-title"><span>4. Ropa superior</span></div>
-                <div class="option-grid" id="top-style-grid"></div>
-                <label class="mini-label">Color del atuendo:</label>
-                <div class="palette-grid" id="top-palette"></div>
-
-                <div class="section-title"><span>5. Accesorio de cine &amp; rol</span></div>
-                <div class="option-grid" id="accessory-grid"></div>
+                <div id="creator-sections"></div>
             </div>
         </section>
 
@@ -161,9 +144,10 @@
         </div>
     </div>
 
-    <script src="/cine/sprite.js?v=20261010a"></script>
-    <script src="/cine/audio.js?v=20261010a"></script>
-    <script src="/cine/scenes.js?v=20261010a"></script>
-    <script src="/cine/app.js?v=20261010a"></script>
+    <script src="/cine/sprite.js?v=20261010b"></script>
+    <script src="/cine/audio.js?v=20261010b"></script>
+    <script src="/cine/scenes.js?v=20261010b"></script>
+    <script src="/cine/app.js?v=20261010b"></script>
+    <script src="/cine/tv.js?v=20261010b"></script>
 </body>
 </html>
