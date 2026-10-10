@@ -39,8 +39,25 @@ if (!myCharacter.name) {
     } catch (e) {}
     if (!myCharacter.name) myCharacter.name = 'Cinéfilo';
 }
+syncTgName();   // si se conoce el nombre de Telegram, es el del personaje
 
+// Hash simple (cyrb53) para derivar la clave del personaje del teléfono de Telegram sin enviarlo en claro.
+function cyrb53(str, seed) {
+    let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+    for (let i = 0; i < str.length; i++) {
+        const ch = str.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
+}
 function getClientKey() {
+    // Con sesión de Telegram conocida, la clave sale de la cuenta: el mismo personaje en móvil, TV y web
+    try {
+        const ph = String(localStorage.getItem('cineflix_current_phone') || localStorage.getItem('user_phone') || '').replace(/[^0-9]/g, '');
+        if (ph.length >= 6) return 'tg' + cyrb53('cf:' + ph, 1) + cyrb53('cf:' + ph, 2) + cyrb53('cf:' + ph, 3);
+    } catch (e) {}
     let k = null;
     try { k = localStorage.getItem(STORAGE_KEY); } catch (e) {}
     if (!k || k.length < 12) {
@@ -133,7 +150,7 @@ function onNetMessage(m) {
     switch (m.type) {
         case 'joined': {
             net.meta = m.room; net.seats = m.seats; net.youId = m.you.id;
-            net.viewers = m.viewers; net.seated = m.seated;
+            net.viewers = m.viewers; net.seated = m.seated; net.standby = m.standby || 0;
             for (const k in trips) delete trips[k];
             net.seats.forEach((u, i) => { if (u && u.away) trips[i] = { start: now - 8000, duration: 16000 }; });
             clearBubbles();
@@ -142,7 +159,7 @@ function onNetMessage(m) {
         }
         case 'seat': {
             const prev = net.seats[m.seat];
-            net.seats[m.seat] = m.user; net.seated = m.seated;
+            net.seats[m.seat] = m.user; net.seated = m.seated; net.standby = m.standby || 0;
             if (!m.user) { delete trips[m.seat]; removeBubble(m.seat); }
             else if (!m.user.away) delete trips[m.seat];
             if (m.user && m.user.id === net.youId && !(prev && prev.id === net.youId)) playSfx('sit');
@@ -150,7 +167,7 @@ function onNetMessage(m) {
             updateRoomUI();
             break;
         }
-        case 'count': net.viewers = m.viewers; net.seated = m.seated; updateRoomUI(); break;
+        case 'count': net.viewers = m.viewers; net.seated = m.seated; net.standby = m.standby || 0; updateRoomUI(); break;
         case 'say': {
             // Solo las frases aleatorias se descartan mientras el personaje está fuera; el chat siempre se muestra
             if (m.kind !== 'chat' && trips[m.seat] && now - trips[m.seat].start < trips[m.seat].duration) break;
@@ -191,8 +208,17 @@ function onNetMessage(m) {
 }
 
 /* ───────────────────────── Acciones de usuario ───────────────────────── */
-/* Nombre genérico ("Cinéfilo", "Cinéfilo 2"…): hay que ponerle un nombre real al personaje antes de entrar */
+/* Nombre del personaje: el de la cuenta de Telegram (lo guarda la app principal). Si no se conoce,
+   se pide uno propio; un nombre genérico ("Cinéfilo", "Cinéfilo 2"…) no vale para entrar. */
 const GENERIC_NAME = /^cin[eé]filo( \d+)?$/i;
+function tgName() {
+    try { return (localStorage.getItem('cineflix_tg_name') || '').trim().slice(0, 16); } catch (e) { return ''; }
+}
+function syncTgName() {
+    const t = tgName();
+    if (t) myCharacter.name = t;
+    return t;
+}
 function askName() {
     switchView('creator');
     toast('✏️ Ponle un nombre a tu personaje para que te reconozcan');
@@ -202,7 +228,7 @@ function askName() {
 
 function enterRoom(id) {
     if (!ROOMS.some(r => r.id === id)) return;
-    if (!myCharacter.name || GENERIC_NAME.test(myCharacter.name)) { askName(); return; }
+    if (!syncTgName() && (!myCharacter.name || GENERIC_NAME.test(myCharacter.name))) { askName(); return; }
     net.wantRoom = id; net.wantSeated = true; net.replaced = false; net.retry = 0;
     net.seats = new Array(SEAT_COUNT).fill(null); net.youId = null; net.meta = ROOMS.find(r => r.id === id);
     for (const k in trips) delete trips[k];
@@ -227,7 +253,9 @@ function toggleSit() {
     else {
         net.wantSeated = true;
         const free = net.seats.findIndex((u, i) => !u && [1, 2].includes(seatPos(i).r));
-        const any = free >= 0 ? free : net.seats.findIndex(u => !u);
+        let any = free >= 0 ? free : net.seats.findIndex(u => !u);
+        // Sala llena: se puede relevar a un personaje en stand by (el servidor lo desconecta)
+        if (any < 0) any = net.seats.findIndex(u => u && u.offline);
         if (any < 0) return toast('La sala está llena 😢');
         netSend({ type: 'sit', seat: any });
     }
@@ -240,7 +268,10 @@ function sitAtNumber() {
 function trySit(idx) {
     const u = net.seats[idx];
     if (u && u.id === net.youId) return;
-    if (u) return toast('Esa butaca ya la ocupa ' + u.name);
+    if (u) {
+        const roomFull = net.seats.every(Boolean);
+        if (!(u.offline && roomFull)) return toast('Esa butaca ya la ocupa ' + u.name + (u.offline ? ' (en stand by 💤)' : ''));
+    }
     net.wantSeated = true;
     netSend({ type: 'sit', seat: idx });
 }
@@ -281,7 +312,9 @@ function updateRoomUI() {
     const sit = document.getElementById('tool-sit');
     sit.textContent = seated ? '🚶 Levantarme' : '🪑 Sentarme';
     sit.classList.toggle('on', seated);
-    document.getElementById('room-count').textContent = `👥 ${net.viewers} · 🪑 ${net.seated}/${SEAT_COUNT}`;
+    const rc = document.getElementById('room-count');
+    rc.textContent = `🟢 ${net.viewers} conectados` + (net.standby ? ` · 💤 ${net.standby}` : '');
+    rc.title = 'Conectados ahora mismo · personajes en stand by (su dueño no está conectado)';
     const inp = document.getElementById('hud-chat-input');
     inp.placeholder = seated ? 'Escribe algo y tu personaje lo dirá en voz alta…' : 'Siéntate para poder hablar…';
 }
@@ -317,7 +350,7 @@ function buildLobby() {
         const name = document.createElement('div'); name.className = 'room-card-name'; name.textContent = r.name;
         const tag = document.createElement('div'); tag.className = 'room-card-tag'; tag.textContent = '“' + r.tagline + '”';
         const meta = document.createElement('div'); meta.className = 'room-card-meta';
-        const cnt = document.createElement('span'); cnt.id = 'cnt-' + r.id; cnt.textContent = '🪑 0/' + SEAT_COUNT;
+        const cnt = document.createElement('span'); cnt.id = 'cnt-' + r.id; cnt.textContent = '🟢 0 conectados';
         const bar = document.createElement('div'); bar.className = 'room-card-bar';
         const fill = document.createElement('i'); fill.id = 'bar-' + r.id; bar.appendChild(fill);
         meta.append(cnt, bar);
@@ -337,8 +370,10 @@ async function fetchRoomStats() {
         list.forEach(s => {
             roomStats[s.id] = s;
             const cnt = document.getElementById('cnt-' + s.id), bar = document.getElementById('bar-' + s.id);
-            if (cnt) cnt.textContent = `🪑 ${s.seated}/${s.capacity}` + (s.viewers > s.seated ? ` · 👀 ${s.viewers - s.seated}` : '');
-            if (bar) bar.style.width = Math.round(100 * s.seated / s.capacity) + '%';
+            if (cnt) cnt.textContent = `🟢 ${s.viewers} conectados` + (s.standby ? ` · 💤 ${s.standby}` : '');
+            if (cnt) cnt.title = 'Conectados ahora mismo · personajes en stand by (su dueño no está conectado)';
+            const taken = s.taken != null ? s.taken : s.seated;
+            if (bar) bar.style.width = Math.round(100 * taken / s.capacity) + '%';
         });
     } catch (e) {}
 }
@@ -763,7 +798,12 @@ function initCreatorOptions() {
         });
     });
     refreshIcons();
-    document.getElementById('input-char-name').value = myCharacter.name || '';
+    const nameInp = document.getElementById('input-char-name');
+    const nameLbl = document.querySelector('label[for="input-char-name"]');
+    const tg = syncTgName();
+    nameInp.value = myCharacter.name || '';
+    nameInp.disabled = !!tg;     // con nombre de Telegram, no se edita: así se reconoce a la gente
+    if (nameLbl) nameLbl.textContent = tg ? 'Tu nombre de Telegram (así te verá el grupo)' : 'Nombre de tu personaje';
     document.getElementById('input-char-quote').value = myCharacter.quote || '';
     document.getElementById('btn-save-char').lastChild.textContent = net.wantRoom ? ' Guardar y volver a la sala' : ' Guardar personaje';
 }
@@ -795,7 +835,7 @@ function randomizeCharacter() {
 }
 function saveCharacter() {
     const typed = document.getElementById('input-char-name').value.trim();
-    if (!typed || GENERIC_NAME.test(typed)) { askName(); return; }
+    if (!tgName() && (!typed || GENERIC_NAME.test(typed))) { askName(); return; }
     updateProfileMeta();
     try { localStorage.setItem(STORAGE_AVATAR, JSON.stringify(myCharacter)); hasSavedAvatar = true; } catch (e) {}
     playBlip(880, 'sine', 0.15);

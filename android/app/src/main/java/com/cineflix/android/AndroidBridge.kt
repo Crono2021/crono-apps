@@ -168,6 +168,8 @@ class AndroidBridge(
                 val json = JSONObject().apply {
                     put("id", user.id)
                     put("phoneNumber", user.phoneNumber ?: "")
+                    put("firstName", user.firstName ?: "")
+                    put("lastName", user.lastName ?: "")
                 }.toString()
                 callback(queryId, true, json)
             } else {
@@ -623,6 +625,15 @@ class AndroidBridge(
                 if (user != null) {
                     val phone = (user.phoneNumber?.takeIf { it.isNotEmpty() } ?: user.id.toString())
                         .replace("+", "").trim()
+                    val tgName = listOf(user.firstName ?: "", user.lastName ?: "")
+                        .map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" ").take(16).trim()
+                    if (tgName.isNotEmpty()) {
+                        runOnUiThread {
+                            webView.evaluateJavascript(
+                                "localStorage.setItem('cineflix_tg_name', " + JSONObject.quote(tgName) + ");", null
+                            )
+                        }
+                    }
                     runOnUiThread {
                         webView.evaluateJavascript("""
                             (function() {
