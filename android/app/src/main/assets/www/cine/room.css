@@ -216,6 +216,9 @@ body.tv-mode input[readonly] { cursor: pointer; }
     box-shadow: none;
     display: block;
     object-fit: contain;
+    transform: translateZ(0);
+    will-change: transform;
+    backface-visibility: hidden;
 }
 /* Ocultar barra de botones completamente en pantalla completa */
 .screen-overlay.full .screen-ctrl {

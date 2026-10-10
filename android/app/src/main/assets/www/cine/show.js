@@ -235,18 +235,26 @@ function showSyncTick() {
     }
     if (SHOW.duration && target > SHOW.duration + 1) { if (!v.paused) v.pause(); return; }
     if (v.readyState < 1) return;
-    if (v.seeking) return;
     const drift = target - v.currentTime;
     const limit = isFinite(v.duration) ? Math.max(0, v.duration - 0.5) : target;
     const since = Date.now() - (SHOW.lastSeekAt || 0);
-    // Desfase grande: se salta al punto actual (más lo que tardó el salto anterior en completarse). Sin saltos en cadena.
-    if (Math.abs(drift) > 1.5 && (since > 5000 || Math.abs(drift) > 8)) {
+
+    // Solo saltar si el desfase es notable (> 10s) para evitar romper la reproducción continua
+    if (Math.abs(drift) > 10 && since > 6000) {
         SHOW.lastSeekAt = Date.now(); SHOW.seekPending = true;
-        try { v.currentTime = Math.max(0, Math.min(target + (SHOW.lead || 0), limit)); } catch (e) {}
+        try { v.currentTime = Math.max(0, Math.min(target, limit)); } catch (e) {}
+        v.playbackRate = 1;
+        return;
+    }
+
+    // Para desfases pequeños (< 3.5s), velocidad exactamente 1.0x (máxima fluidez y suavidad como en reproductor normal)
+    // Para desfases moderados (3.5s - 10s), micro-ajuste de solo el 3% (imperceptible y sin distorsión de audio)
+    if (Math.abs(drift) > 3.5) {
+        v.playbackRate = drift > 0 ? 1.03 : 0.97;
+    } else if (v.playbackRate !== 1) {
         v.playbackRate = 1;
     }
-    else if (Math.abs(drift) > 0.5) v.playbackRate = drift > 0 ? 1.15 : 0.88;
-    else if (v.playbackRate !== 1) v.playbackRate = 1;
+
     if (v.paused && !v.ended && !SHOW.blocked) showPlay();
 }
 
@@ -501,7 +509,7 @@ function showFit(ctx, text, maxW) {
     return t + '…';
 }
 function drawShowScreen(ctx, now, SCR) {
-    if (SHOW.phase === 'idle') return;
+    if (SHOW.phase === 'idle' || SHOW.expanded) return;
     const cx = SCR.x + SCR.w / 2;
     ctx.save();
     ctx.textAlign = 'center';
@@ -511,8 +519,11 @@ function drawShowScreen(ctx, now, SCR) {
         if (!showPix) { showPix = document.createElement('canvas'); showPix.width = PW; showPix.height = PH; showPixCtx = showPix.getContext('2d'); }
         const vw = showVideo.videoWidth || 16, vh = showVideo.videoHeight || 9;
         const sc = Math.min(PW / vw, PH / vh), dw = Math.round(vw * sc), dh = Math.round(vh * sc);
-        showPixCtx.fillStyle = '#000'; showPixCtx.fillRect(0, 0, PW, PH);
-        try { showPixCtx.drawImage(showVideo, Math.round((PW - dw) / 2), Math.round((PH - dh) / 2), dw, dh); } catch (e) {}
+        if (now - (SHOW._lastPixDraw || 0) >= 40) {
+            SHOW._lastPixDraw = now;
+            showPixCtx.fillStyle = '#000'; showPixCtx.fillRect(0, 0, PW, PH);
+            try { showPixCtx.drawImage(showVideo, Math.round((PW - dw) / 2), Math.round((PH - dh) / 2), dw, dh); } catch (e) {}
+        }
         ctx.fillStyle = '#000'; ctx.fillRect(SCR.x, SCR.y, SCR.w, SCR.h);
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(showPix, 0, 0, PW, PH, Math.round(cx - PW), SCR.y, PW * 2, PH * 2);

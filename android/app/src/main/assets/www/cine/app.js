@@ -894,7 +894,9 @@ let lastLobbyDraw = 0;
 function animationLoop() {
     const now = Date.now();
     if (view === 'cinema') {
-        drawRoom(now);
+        if (!SHOW || !SHOW.expanded) {
+            drawRoom(now);
+        }
     } else if (view === 'lobby' && now - lastLobbyDraw > 45) {
         lastLobbyDraw = now;
         ROOMS.forEach(r => {
