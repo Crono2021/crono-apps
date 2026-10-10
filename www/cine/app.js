@@ -628,7 +628,7 @@ function buildPalette(cont, colors, key) {
         const pickIt = () => {
             myCharacter[key] = color;
             cont.querySelectorAll('.color-circle').forEach(c => c.classList.remove('selected'));
-            el.classList.add('selected'); renderCreatorPreview(); refreshIcons();
+            el.classList.add('selected'); renderCreatorPreview();
             playBlip(660, 'square', 0.04);
         };
         el.onclick = pickIt;
@@ -666,7 +666,7 @@ function paintIcon(cv) {
     const ctx = cv.getContext('2d');
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, cv.width, cv.height);
-    const ch = Object.assign({}, myCharacter, spec.reset);
+    const ch = Object.assign({}, DEFAULT_AVATAR, spec.reset);
     ch[key] = id;
     draw16BitCharacterCrisp(ctx, ch, -R.x * R.s, -R.y * R.s, R.s, { isSitting: false, animFrame: 0 });
 }

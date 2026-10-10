@@ -135,7 +135,8 @@ function draw16BitCharacterCrisp(ctx, char, originX, originY, scale = 2, options
     }
 
     const skin = char.skin || '#f5cba7';
-    const skinShadow = adjustColor(skin, -45);
+    const skinShadow = adjustColor(skin, -28);   // cuello / nariz
+    const skinChin = adjustColor(skin, -14);     // sombra muy suave bajo la boca
     const hair = char.hairColor || '#3a2518';
     const hairHighlight = adjustColor(hair, 35);
     const hairShadow = adjustColor(hair, -35);
@@ -285,9 +286,7 @@ function draw16BitCharacterCrisp(ctx, char, originX, originY, scale = 2, options
     // 4. NECK & HEAD
     rect(10, 12 + headBob, 4, 3, skinShadow);
     rect(6, 4 + headBob, 12, 9, skin);
-    rect(6, 12 + headBob, 12, 1, skinShadow);
-    rect(6, 11 + headBob, 2, 1, skinShadow);
-    rect(16, 11 + headBob, 2, 1, skinShadow);
+    rect(7, 12 + headBob, 10, 1, skinChin);
 
     // Elf Ears
     if (char.accessory === 'elf_ears') {
@@ -347,68 +346,29 @@ function draw16BitCharacterCrisp(ctx, char, originX, originY, scale = 2, options
         rect(9, 13 + headBob, 6, 1, hairHighlight);
     }
 
-    // Mouth
+    // Mouth (filas 11-13, nunca tapada por gafas)
     const mouth = char.mouth || 'neutral';
     if (!isChewing) {
         if (mouth === 'smile') {
-            rect(11, 11 + headBob, 2, 1, '#991b1b');
-            rect(10, 10 + headBob, 1, 1, '#991b1b');
-            rect(13, 10 + headBob, 1, 1, '#991b1b');
+            // sonrisa en "U": comisuras arriba, curva abajo
+            rect(9, 11 + headBob, 1, 1, '#991b1b');
+            rect(10, 12 + headBob, 4, 1, '#991b1b');
+            rect(14, 11 + headBob, 1, 1, '#991b1b');
         } else if (mouth === 'grin') {
-            rect(10, 10 + headBob, 4, 2, '#7f1d1d');
-            rect(10, 10 + headBob, 4, 1, '#ffffff');
+            rect(9, 11 + headBob, 6, 2, '#7f1d1d');
+            rect(10, 11 + headBob, 4, 1, '#ffffff');
         } else if (mouth === 'tongue') {
-            rect(10, 10 + headBob, 4, 1, '#991b1b');
-            rect(11, 11 + headBob, 2, 2, '#f472b6');
+            rect(10, 11 + headBob, 4, 1, '#991b1b');
+            rect(11, 12 + headBob, 2, 2, '#f472b6');
+            rect(12, 12 + headBob, 1, 1, '#fb9ac8');
         } else {
-            rect(11, 11 + headBob, 2, 1, '#991b1b');
+            rect(10, 11 + headBob, 4, 1, '#991b1b');
         }
     } else {
-        rect(10, 10 + headBob, 4, 3, '#7f1d1d');
+        rect(10, 11 + headBob, 4, 2, '#7f1d1d');
         rect(11, 11 + headBob, 2, 1, '#ffffff');
-        rect(9, 10 + headBob, 1, 1, '#fef08a');
+        rect(9, 11 + headBob, 1, 1, '#fef08a');
         rect(14, 12 + headBob, 1, 1, '#fef08a');
-    }
-
-    // 6. 3D GLASSES
-    if (char.accessory === '3d_glasses') {
-        // Montura blanca con cristales translúcidos: los ojos (y su color) se siguen viendo
-        rect(5, 6 + headBob, 14, 1, '#f8fafc');
-        rect(5, 10 + headBob, 14, 1, '#f8fafc');
-        rect(5, 6 + headBob, 1, 5, '#f8fafc');
-        rect(18, 6 + headBob, 1, 5, '#f8fafc');
-        rect(10, 7 + headBob, 4, 1, '#e2e8f0');
-        rect(6, 7 + headBob, 4, 3, 'rgba(239,68,68,0.3)');
-        rect(14, 7 + headBob, 4, 3, 'rgba(6,182,212,0.3)');
-    }
-
-    // 6b. GLASSES
-    const gl = char.glasses || 'none';
-    if (gl === 'round') {
-        for (const gx of [6, 13]) {
-            rect(gx, 6 + headBob, 5, 1, '#111827'); rect(gx, 10 + headBob, 5, 1, '#111827');
-            rect(gx, 6 + headBob, 1, 5, '#111827'); rect(gx + 4, 6 + headBob, 1, 5, '#111827');
-        }
-        rect(11, 7 + headBob, 2, 1, '#111827');
-    } else if (gl === 'square') {
-        for (const gx of [6, 13]) {
-            rect(gx, 6 + headBob, 5, 4, 'rgba(147,197,253,0.35)');
-            rect(gx, 6 + headBob, 5, 1, '#7c2d12'); rect(gx, 9 + headBob, 5, 1, '#7c2d12');
-            rect(gx, 6 + headBob, 1, 4, '#7c2d12'); rect(gx + 4, 6 + headBob, 1, 4, '#7c2d12');
-        }
-        rect(11, 7 + headBob, 2, 1, '#7c2d12');
-    } else if (gl === 'sunglasses') {
-        rect(6, 6 + headBob, 5, 3, '#0b0b12'); rect(13, 6 + headBob, 5, 3, '#0b0b12');
-        rect(11, 6 + headBob, 2, 1, '#0b0b12'); rect(5, 6 + headBob, 1, 1, '#0b0b12'); rect(18, 6 + headBob, 1, 1, '#0b0b12');
-        rect(7, 6 + headBob, 1, 1, '#6b7280'); rect(14, 6 + headBob, 1, 1, '#6b7280');
-    } else if (gl === 'monocle') {
-        rect(13, 6 + headBob, 5, 1, '#facc15'); rect(13, 10 + headBob, 5, 1, '#facc15');
-        rect(13, 6 + headBob, 1, 5, '#facc15'); rect(17, 6 + headBob, 1, 5, '#facc15');
-        rect(17, 11 + headBob, 1, 6, '#facc15');
-    } else if (gl === 'eyepatch') {
-        rect(6, 6 + headBob, 5, 4, '#111827');
-        rect(5, 5 + headBob, 14, 1, '#111827');
-        rect(7, 7 + headBob, 1, 1, '#374151');
     }
 
     // 7. HAIR STYLES
@@ -525,6 +485,49 @@ function draw16BitCharacterCrisp(ctx, char, originX, originY, scale = 2, options
         rect(6, 3 + headBob, 12, 2, hairShadow);
         rect(5, 4 + headBob, 2, 3, hairShadow);
         rect(17, 4 + headBob, 2, 3, hairShadow);
+    }
+
+    // 7b. GAFAS (encima del pelo; solo filas 6-9 para no tapar la boca)
+    if (char.accessory === '3d_glasses') {
+        // Gafas 3D retro: montura de cartón blanca y cristales rojo / cian
+        const F = '#f8fafc';
+        rect(5, 6 + headBob, 14, 1, F);                       // barra superior
+        rect(5, 7 + headBob, 1, 2, F); rect(18, 7 + headBob, 1, 2, F);   // patillas
+        rect(11, 7 + headBob, 2, 1, F);                       // puente
+        for (const gx of [6, 13]) {
+            rect(gx, 7 + headBob, 1, 3, F); rect(gx + 4, 7 + headBob, 1, 3, F);
+            rect(gx + 1, 9 + headBob, 3, 1, F);
+        }
+        rect(7, 7 + headBob, 3, 2, 'rgba(239,68,68,0.55)');
+        rect(14, 7 + headBob, 3, 2, 'rgba(6,182,212,0.55)');
+        rect(7, 7 + headBob, 1, 1, 'rgba(255,255,255,0.6)'); rect(14, 7 + headBob, 1, 1, 'rgba(255,255,255,0.6)');
+    }
+    const gl = char.glasses || 'none';
+    if (gl === 'round') {
+        for (const gx of [6, 13]) {
+            rect(gx, 6 + headBob, 5, 1, '#111827'); rect(gx, 9 + headBob, 5, 1, '#111827');
+            rect(gx, 6 + headBob, 1, 4, '#111827'); rect(gx + 4, 6 + headBob, 1, 4, '#111827');
+        }
+        rect(11, 7 + headBob, 2, 1, '#111827');
+    } else if (gl === 'square') {
+        for (const gx of [6, 13]) {
+            rect(gx, 6 + headBob, 5, 4, 'rgba(147,197,253,0.35)');
+            rect(gx, 6 + headBob, 5, 1, '#7c2d12'); rect(gx, 9 + headBob, 5, 1, '#7c2d12');
+            rect(gx, 6 + headBob, 1, 4, '#7c2d12'); rect(gx + 4, 6 + headBob, 1, 4, '#7c2d12');
+        }
+        rect(11, 7 + headBob, 2, 1, '#7c2d12');
+    } else if (gl === 'sunglasses') {
+        rect(6, 6 + headBob, 5, 3, '#0b0b12'); rect(13, 6 + headBob, 5, 3, '#0b0b12');
+        rect(11, 6 + headBob, 2, 1, '#0b0b12'); rect(5, 6 + headBob, 1, 1, '#0b0b12'); rect(18, 6 + headBob, 1, 1, '#0b0b12');
+        rect(7, 6 + headBob, 1, 1, '#6b7280'); rect(14, 6 + headBob, 1, 1, '#6b7280');
+    } else if (gl === 'monocle') {
+        rect(13, 6 + headBob, 5, 1, '#facc15'); rect(13, 9 + headBob, 5, 1, '#facc15');
+        rect(13, 6 + headBob, 1, 4, '#facc15'); rect(17, 6 + headBob, 1, 4, '#facc15');
+        rect(17, 10 + headBob, 1, 6, '#facc15');
+    } else if (gl === 'eyepatch') {
+        rect(6, 6 + headBob, 5, 4, '#111827');
+        rect(5, 5 + headBob, 14, 1, '#111827');
+        rect(7, 7 + headBob, 1, 1, '#374151');
     }
 
     // 8. ACCESSORIES
