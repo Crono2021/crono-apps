@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 20" fill="none">
+  <defs>
+    <linearGradient id="divGold" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffd700" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#fff8db" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#e2b755" stop-opacity="0.8"/>
+    </linearGradient>
+    <linearGradient id="lineFade" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffd700" stop-opacity="0.8"/>
+      <stop offset="70%" stop-color="#8ba8cf" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#8ba8cf" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Left Vine Tendril -->
+  <path d="M 60 10 C 75 4 85 16 95 10 C 102 6 108 9 114 10" stroke="url(#divGold)" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+  <!-- Left Leaf -->
+  <path d="M 85 10 C 88 5 95 6 97 9 C 94 13 87 13 85 10 Z" fill="url(#divGold)"/>
+  
+  <!-- Center Star of Earendil -->
+  <path d="M 120 2 L 122.5 8 L 128 10 L 122.5 12 L 120 18 L 117.5 12 L 112 10 L 117.5 8 Z" fill="#ffffff" filter="drop-shadow(0 0 4px #ffd700)"/>
+
+  <!-- Right Vine Tendril -->
+  <path d="M 180 10 C 165 4 155 16 145 10 C 138 6 132 9 126 10" stroke="url(#divGold)" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+  <!-- Right Leaf -->
+  <path d="M 155 10 C 152 5 145 6 143 9 C 146 13 153 13 155 10 Z" fill="url(#divGold)"/>
+
+  <!-- Extending fading trail lines -->
+  <path d="M 185 10 H 240" stroke="url(#lineFade)" stroke-width="1.2" stroke-linecap="round"/>
+</svg>

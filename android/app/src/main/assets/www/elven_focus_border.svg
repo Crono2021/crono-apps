@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" fill="none">
+  <defs>
+    <linearGradient id="goldLight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff8db" />
+      <stop offset="35%" stop-color="#ffd700" />
+      <stop offset="70%" stop-color="#d4af37" />
+      <stop offset="100%" stop-color="#996515" />
+    </linearGradient>
+    <linearGradient id="goldH" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffd700" />
+      <stop offset="50%" stop-color="#fffbe6" />
+      <stop offset="100%" stop-color="#ffd700" />
+    </linearGradient>
+    <linearGradient id="goldV" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffd700" />
+      <stop offset="50%" stop-color="#fffbe6" />
+      <stop offset="100%" stop-color="#ffd700" />
+    </linearGradient>
+    <filter id="goldGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.2" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- ================= TOP-LEFT CORNER (0..36, 0..36) ================= -->
+  <!-- Outer ornate curved arch -->
+  <path d="M 4 36 V 16 C 4 9.4 9.4 4 16 4 H 36" stroke="url(#goldLight)" stroke-width="2.5" stroke-linecap="round" filter="url(#goldGlow)" />
+  <!-- Inner delicate hairline -->
+  <path d="M 9 36 V 18 C 9 13 13 9 18 9 H 36" stroke="url(#goldLight)" stroke-width="1.2" stroke-linecap="round" opacity="0.9" />
+  <!-- Corner Star of Eärendil -->
+  <g transform="translate(13, 13)">
+    <path d="M 0 -5 L 1.2 -1.2 L 5 0 L 1.2 1.2 L 0 5 L -1.2 1.2 L -5 0 L -1.2 -1.2 Z" fill="#ffffff" filter="url(#goldGlow)" />
+    <circle cx="0" cy="0" r="1.2" fill="#ffd700" />
+  </g>
+  <!-- Vine tendril scroll flourish -->
+  <path d="M 7 28 C 7 21 14 17 21 21 C 24 23 25 27 22 29 C 19 31 16 28 18 25 C 20 22 26 21 31 19" stroke="url(#goldLight)" stroke-width="1.2" stroke-linecap="round" fill="none" />
+  <!-- Leaf flourish -->
+  <path d="M 19 9 C 23 5 29 6 30 10 C 26 13 21 12 19 9 Z" fill="url(#goldLight)" />
+  <path d="M 9 19 C 5 23 6 29 10 30 C 13 26 12 21 9 19 Z" fill="url(#goldLight)" />
+
+  <!-- ================= TOP-RIGHT CORNER (84..120, 0..36) ================= -->
+  <!-- Outer ornate curved arch -->
+  <path d="M 84 4 H 104 C 110.6 4 116 9.4 116 16 V 36" stroke="url(#goldLight)" stroke-width="2.5" stroke-linecap="round" filter="url(#goldGlow)" />
+  <!-- Inner delicate hairline -->
+  <path d="M 84 9 H 102 C 107 9 111 13 111 18 V 36" stroke="url(#goldLight)" stroke-width="1.2" stroke-linecap="round" opacity="0.9" />
+  <!-- Corner Star -->
+  <g transform="translate(107, 13)">
+    <path d="M 0 -5 L 1.2 -1.2 L 5 0 L 1.2 1.2 L 0 5 L -1.2 1.2 L -5 0 L -1.2 -1.2 Z" fill="#ffffff" filter="url(#goldGlow)" />
+    <circle cx="0" cy="0" r="1.2" fill="#ffd700" />
+  </g>
+  <!-- Vine tendril scroll flourish -->
+  <path d="M 113 28 C 113 21 106 17 99 21 C 96 23 95 27 98 29 C 101 31 104 28 102 25 C 100 22 94 21 89 19" stroke="url(#goldLight)" stroke-width="1.2" stroke-linecap="round" fill="none" />
+  <!-- Leaf flourish -->
+  <path d="M 101 9 C 97 5 91 6 90 10 C 94 13 99 12 101 9 Z" fill="url(#goldLight)" />
+  <path d="M 111 19 C 115 23 114 29 110 30 C 107 26 108 21 111 19 Z" fill="url(#goldLight)" />
+
+  <!-- ================= BOTTOM-LEFT CORNER (0..36, 84..120) ================= -->
+  <!-- Outer ornate curved arch -->
+  <path d="M 4 84 V 104 C 4 110.6 9.4 116 16 116 H 36" stroke="url(#goldLight)" stroke-width="2.5" stroke-linecap="round" filter="url(#goldGlow)" />
+  <!-- Inner delicate hairline -->
+  <path d="M 9 84 V 102 C 9 107 13 111 18 111 H 36" stroke="url(#goldLight)" stroke-width="1.2" stroke-linecap="round" opacity="0.9" />
+  <!-- Corner Star -->
+  <g transform="translate(13, 107)">
+    <path d="M 0 -5 L 1.2 -1.2 L 5 0 L 1.2 1.2 L 0 5 L -1.2 1.2 L -5 0 L -1.2 -1.2 Z" fill="#ffffff" filter="url(#goldGlow)" />
+    <circle cx="0" cy="0" r="1.2" fill="#ffd700" />
+  </g>
+  <!-- Vine tendril scroll flourish -->
+  <path d="M 7 92 C 7 99 14 103 21 99 C 24 97 25 93 22 91 C 19 89 16 92 18 95 C 20 98 26 99 31 101" stroke="url(#goldLight)" stroke-width="1.2" stroke-linecap="round" fill="none" />
+  <!-- Leaf flourish -->
+  <path d="M 19 111 C 23 115 29 114 30 110 C 26 107 21 108 19 111 Z" fill="url(#goldLight)" />
+  <path d="M 9 101 C 5 97 6 91 10 90 C 13 94 12 99 9 101 Z" fill="url(#goldLight)" />
+
+  <!-- ================= BOTTOM-RIGHT CORNER (84..120, 84..120) ================= -->
+  <!-- Outer ornate curved arch -->
+  <path d="M 84 116 H 104 C 110.6 116 116 110.6 116 104 V 84" stroke="url(#goldLight)" stroke-width="2.5" stroke-linecap="round" filter="url(#goldGlow)" />
+  <!-- Inner delicate hairline -->
+  <path d="M 84 111 H 102 C 107 111 111 107 111 102 V 84" stroke="url(#goldLight)" stroke-width="1.2" stroke-linecap="round" opacity="0.9" />
+  <!-- Corner Star -->
+  <g transform="translate(107, 107)">
+    <path d="M 0 -5 L 1.2 -1.2 L 5 0 L 1.2 1.2 L 0 5 L -1.2 1.2 L -5 0 L -1.2 -1.2 Z" fill="#ffffff" filter="url(#goldGlow)" />
+    <circle cx="0" cy="0" r="1.2" fill="#ffd700" />
+  </g>
+  <!-- Vine tendril scroll flourish -->
+  <path d="M 113 92 C 113 99 106 103 99 99 C 96 97 95 93 98 91 C 101 89 104 92 102 95 C 100 98 94 99 89 101" stroke="url(#goldLight)" stroke-width="1.2" stroke-linecap="round" fill="none" />
+  <!-- Leaf flourish -->
+  <path d="M 101 111 C 97 115 91 114 90 110 C 94 107 99 108 101 111 Z" fill="url(#goldLight)" />
+  <path d="M 111 101 C 115 97 114 91 110 90 C 107 94 108 99 111 101 Z" fill="url(#goldLight)" />
+
+  <!-- ================= TOP EDGE (36..84, 0..36) ================= -->
+  <line x1="36" y1="4" x2="84" y2="4" stroke="url(#goldH)" stroke-width="2.5" />
+  <line x1="36" y1="9" x2="84" y2="9" stroke="url(#goldH)" stroke-width="1.2" opacity="0.85" />
+  <!-- Center ornament (Star & Leaves) -->
+  <g transform="translate(60, 4)">
+    <polygon points="0,-4 1.5,-1 4.5,0 1.5,1 0,4 -1.5,1 -4.5,0 -1.5,-1" fill="#ffffff" filter="url(#goldGlow)" />
+    <circle cx="0" cy="0" r="1" fill="#ffd700" />
+  </g>
+
+  <!-- ================= BOTTOM EDGE (36..84, 84..120) ================= -->
+  <line x1="36" y1="116" x2="84" y2="116" stroke="url(#goldH)" stroke-width="2.5" />
+  <line x1="36" y1="111" x2="84" y2="111" stroke="url(#goldH)" stroke-width="1.2" opacity="0.85" />
+  <!-- Center ornament (Star & Leaves) -->
+  <g transform="translate(60, 116)">
+    <polygon points="0,-4 1.5,-1 4.5,0 1.5,1 0,4 -1.5,1 -4.5,0 -1.5,-1" fill="#ffffff" filter="url(#goldGlow)" />
+    <circle cx="0" cy="0" r="1" fill="#ffd700" />
+  </g>
+
+  <!-- ================= LEFT EDGE (0..36, 36..84) ================= -->
+  <line x1="4" y1="36" x2="4" y2="84" stroke="url(#goldV)" stroke-width="2.5" />
+  <line x1="9" y1="36" x2="9" y2="84" stroke="url(#goldV)" stroke-width="1.2" opacity="0.85" />
+
+  <!-- ================= RIGHT EDGE (84..120, 36..84) ================= -->
+  <line x1="116" y1="36" x2="116" y2="84" stroke="url(#goldV)" stroke-width="2.5" />
+  <line x1="111" y1="36" x2="111" y2="84" stroke="url(#goldV)" stroke-width="1.2" opacity="0.85" />
+</svg>
