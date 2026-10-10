@@ -628,7 +628,7 @@ function buildPalette(cont, colors, key) {
         const pickIt = () => {
             myCharacter[key] = color;
             cont.querySelectorAll('.color-circle').forEach(c => c.classList.remove('selected'));
-            el.classList.add('selected'); renderCreatorPreview();
+            el.classList.add('selected'); renderCreatorPreview(); refreshIcons();
             playBlip(660, 'square', 0.04);
         };
         el.onclick = pickIt;
@@ -636,13 +636,55 @@ function buildPalette(cont, colors, key) {
         cont.appendChild(el);
     });
 }
+// Iconos en miniatura: se dibuja el propio sprite recortado a la zona relevante
+const ICON_REGIONS = {
+    head:  { x: 0, y: -10, w: 24, h: 26, s: 2 },
+    face:  { x: 4, y: 2,   w: 16, h: 13, s: 3 },
+    torso: { x: 0, y: 12,  w: 24, h: 16, s: 2 },
+    legs:  { x: 0, y: 22,  w: 24, h: 13, s: 2 },
+    hand:  { x: 12, y: 13, w: 12, h: 16, s: 3 },
+    right: { x: 14, y: 15, w: 10, h: 11, s: 4 },
+    hair:  { x: 0, y: -6,  w: 24, h: 21, s: 2 },
+    neck:  { x: 5,  y: 11, w: 14, h: 13, s: 3 }
+};
+const HEAD_ACCESSORIES = ['3d_glasses', 'wizard_hat', 'headphones', 'elf_ears'];
+const ICON_SPEC = {
+    hairStyle:   { region: 'hair',  reset: { hat: 'none', accessory: 'none', glasses: 'none', facial: 'none' } },
+    hat:         { region: 'head',  reset: { hairStyle: 'short', accessory: 'none', glasses: 'none', facial: 'none' } },
+    facial:      { region: 'face',  reset: { hairStyle: 'short', hat: 'none', accessory: 'none', glasses: 'none' } },
+    glasses:     { region: 'face',  reset: { hairStyle: 'short', hat: 'none', accessory: 'none', facial: 'none' } },
+    mouth:       { region: 'face',  reset: { hairStyle: 'short', hat: 'none', accessory: 'none', glasses: 'none', facial: 'none' } },
+    topStyle:    { region: 'torso', reset: { accessory: 'none' } },
+    bottomStyle: { region: 'legs',  reset: {} },
+    accessory:   { region: (id) => HEAD_ACCESSORIES.includes(id) ? 'head' : (['popcorn', 'soda'].includes(id) ? 'hand' : (['ticket', 'clapper'].includes(id) ? 'right' : 'neck')), reset: { hat: 'none', glasses: 'none', facial: 'none' } }
+};
+function paintIcon(cv) {
+    const key = cv.dataset.key, id = cv.dataset.id, spec = ICON_SPEC[key];
+    if (!spec) return;
+    const R = ICON_REGIONS[typeof spec.region === 'function' ? spec.region(id) : spec.region];
+    cv.width = R.w * R.s; cv.height = R.h * R.s;
+    const ctx = cv.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    const ch = Object.assign({}, myCharacter, spec.reset);
+    ch[key] = id;
+    draw16BitCharacterCrisp(ctx, ch, -R.x * R.s, -R.y * R.s, R.s, { isSitting: false, animFrame: 0 });
+}
+function refreshIcons() {
+    document.querySelectorAll('#creator-sections canvas.choice-canvas').forEach(paintIcon);
+}
 function buildChoices(cont, options, key) {
     cont.textContent = '';
     options.forEach(o => {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'choice-btn' + (myCharacter[key] === o.id ? ' selected' : '');
-        const ic = document.createElement('span'); ic.className = 'choice-icon'; ic.textContent = o.icon;
+        const ic = document.createElement('span'); ic.className = 'choice-icon';
+        if (ICON_SPEC[key] && o.id !== 'none') {
+            const cv = document.createElement('canvas');
+            cv.className = 'choice-canvas'; cv.dataset.key = key; cv.dataset.id = o.id;
+            ic.appendChild(cv);
+        } else ic.textContent = o.icon;
         const nm = document.createElement('span'); nm.textContent = o.name;
         btn.append(ic, nm);
         btn.onclick = () => {
@@ -697,6 +739,7 @@ function initCreatorOptions() {
             else buildChoices(grid, b.list, b.key);
         });
     });
+    refreshIcons();
     document.getElementById('input-char-name').value = myCharacter.name || '';
     document.getElementById('input-char-quote').value = myCharacter.quote || '';
     document.getElementById('btn-save-char').lastChild.textContent = net.wantRoom ? ' Guardar y volver a la sala' : ' Guardar personaje';

@@ -162,3 +162,6 @@ body.tv-mode input[readonly] { cursor: pointer; }
 
 #creator-sections .section-title { margin-top: 22px; }
 #creator-sections > .section-title:first-child { margin-top: 14px; }
+
+.choice-btn .choice-icon { display: flex; align-items: center; justify-content: center; min-height: 54px; }
+.choice-btn .choice-canvas { image-rendering: pixelated; max-width: 56px; height: auto; }

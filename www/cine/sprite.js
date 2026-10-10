@@ -325,7 +325,12 @@ function draw16BitCharacterCrisp(ctx, char, originX, originY, scale = 2, options
     // Facial hair (se dibuja antes de la boca para que la boca siga visible)
     const facial = char.facial || 'none';
     if (facial === 'stubble') {
-        rect(6, 10 + headBob, 12, 3, 'rgba(0,0,0,0.2)');
+        // Barba de 3 días: puntitos del color del pelo (no depende del tono de piel)
+        for (let yy = 10; yy <= 12; yy++) {
+            for (let xx = 6; xx < 18; xx++) {
+                if ((xx + yy) % 2 === 0 && !(xx >= 10 && xx <= 13 && yy <= 11)) rect(xx, yy + headBob, 1, 1, hair);
+            }
+        }
     } else if (facial === 'mustache') {
         rect(9, 10 + headBob, 6, 1, hairShadow);
         rect(8, 11 + headBob, 1, 1, hairShadow);
@@ -367,12 +372,14 @@ function draw16BitCharacterCrisp(ctx, char, originX, originY, scale = 2, options
 
     // 6. 3D GLASSES
     if (char.accessory === '3d_glasses') {
-        rect(5, 6 + headBob, 14, 4, '#f8fafc');
-        rect(7, 7 + headBob, 3, 2, '#ef4444');
-        rect(14, 7 + headBob, 3, 2, '#06b6d4');
-        rect(7, 7 + headBob, 1, 1, '#ffffff');
-        rect(14, 7 + headBob, 1, 1, '#ffffff');
+        // Montura blanca con cristales translúcidos: los ojos (y su color) se siguen viendo
+        rect(5, 6 + headBob, 14, 1, '#f8fafc');
+        rect(5, 10 + headBob, 14, 1, '#f8fafc');
+        rect(5, 6 + headBob, 1, 5, '#f8fafc');
+        rect(18, 6 + headBob, 1, 5, '#f8fafc');
         rect(10, 7 + headBob, 4, 1, '#e2e8f0');
+        rect(6, 7 + headBob, 4, 3, 'rgba(239,68,68,0.3)');
+        rect(14, 7 + headBob, 4, 3, 'rgba(6,182,212,0.3)');
     }
 
     // 6b. GLASSES
