@@ -70,6 +70,11 @@ function getClientKey() {
     return k;
 }
 const CLIENT_KEY = getClientKey();
+// Clave aleatoria antigua de este dispositivo (anterior a usar la cuenta de Telegram): se envía para que
+// el servidor retire el personaje que dejó sentado con ella y no haya dos "yo".
+const LEGACY_KEY = (() => {
+    try { const k = localStorage.getItem(STORAGE_KEY); return k && k.length >= 12 && k !== CLIENT_KEY ? k : ''; } catch (e) { return ''; }
+})();
 
 function charPayload() {
     const c = myCharacter;
@@ -126,7 +131,7 @@ function connectRoom() {
     net.ws = ws;
     ws.onopen = () => {
         net.retry = 0;
-        netSend({ type: 'join', room: net.wantRoom, clientKey: CLIENT_KEY, name: myCharacter.name, character: charPayload(), quote: myCharacter.quote || '', autoSit: net.wantSeated });
+        netSend({ type: 'join', room: net.wantRoom, clientKey: CLIENT_KEY, legacyKey: LEGACY_KEY, name: myCharacter.name, character: charPayload(), quote: myCharacter.quote || '', autoSit: net.wantSeated });
         net.pingTimer = setInterval(() => netSend({ type: 'ping' }), 25000);
     };
     ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch (e) { return; } onNetMessage(m); };
