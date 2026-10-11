@@ -114,11 +114,13 @@ class OtaUpdateManager(private val activity: ComponentActivity) {
                 @Suppress("DEPRECATION")
                 packageInfo.versionCode.toLong()
             }
+            val localVersionName = packageInfo.versionName ?: ""
 
-            Log.i(TAG, "OTA: local=$localVersionCode, remote=$remoteVersionCode")
+            Log.i(TAG, "OTA: localCode=$localVersionCode ($localVersionName), remoteCode=$remoteVersionCode ($remoteVersionName)")
 
             // ¿Hay actualización?
-            if (remoteVersionCode <= localVersionCode) {
+            // Si el código de versión remoto es <= al local, o si el versionName es exactamente el mismo, la app ya está al día
+            if (remoteVersionCode <= localVersionCode || (remoteVersionName.isNotBlank() && remoteVersionName == localVersionName)) {
                 Log.d(TAG, "App is up to date")
                 return
             }
@@ -305,25 +307,38 @@ class OtaUpdateManager(private val activity: ComponentActivity) {
 
     private fun installApk(apkFile: File) {
         try {
+            apkFile.setReadable(true, false)
             val intent = Intent(Intent.ACTION_VIEW)
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val uri = FileProvider.getUriForFile(
+            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                FileProvider.getUriForFile(
                     activity,
                     "${activity.packageName}.fileprovider",
                     apkFile
                 )
-                intent.setDataAndType(uri, "application/vnd.android.package-archive")
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } else {
                 @Suppress("DEPRECATION")
-                intent.setDataAndType(
-                    Uri.fromFile(apkFile),
-                    "application/vnd.android.package-archive"
+                Uri.fromFile(apkFile)
+            }
+
+            intent.setDataAndType(uri, "application/vnd.android.package-archive")
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            intent.addFlags(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+            // Otorgar permisos de lectura a los paquetes del sistema que manejan la instalación
+            val resInfoList = activity.packageManager.queryIntentActivities(
+                intent,
+                android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
+            )
+            for (resolveInfo in resInfoList) {
+                activity.grantUriPermission(
+                    resolveInfo.activityInfo.packageName,
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             }
 
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             activity.startActivity(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Install failed", e)
