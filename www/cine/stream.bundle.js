@@ -88375,6 +88375,164 @@ function useTDLib() {
   return !!window.AndroidBridge;
 }
 __name(useTDLib, "useTDLib");
+function parseMultipartName(filename) {
+  var _a, _b;
+  const s = String(filename || "").trim();
+  if (!s) return null;
+  const m1 = s.match(/^(.*?\.(?:(?:mkv|mp4|avi|ts|mov|webm)(?:\.7z)?|7z))\.(?:part0*(\d+)|0*(\d+))$/i);
+  if (m1) {
+    const isArchive = /\.7z$/i.test(m1[1]);
+    const cleanBase = isArchive ? m1[1].slice(0, -3) : m1[1];
+    const ext = ((_b = (_a = cleanBase.match(/\.(mkv|mp4|avi|ts|mov|webm)$/i)) == null ? void 0 : _a[1]) == null ? void 0 : _b.toLowerCase()) || (isArchive ? "7z" : "mkv");
+    const part2 = Number(m1[2] || m1[3]);
+    return {
+      baseKey: cleanBase.replace(/\.[^.]+$/, "").toLowerCase().trim(),
+      displayName: cleanBase.replace(/\.[^.]+$/, "").trim(),
+      ext,
+      part: part2,
+      isArchive,
+      isExplicitSplit: true
+    };
+  }
+  const m2 = s.match(/^(.*?)[ ._\-]+[\[{(](?:(?:part|parte|pt|cd|disc|disco)\s*0*(\d+)|0*(\d+)\s*(?:de|of|\/|-)\s*(\d+))[\]})]\.(mkv|mp4|avi|ts|mov|webm)$/i);
+  if (m2) {
+    const part2 = Number(m2[2] || m2[3]);
+    const total = m2[4] ? Number(m2[4]) : null;
+    if (part2 >= 1 && part2 <= 50) {
+      const rawBase = m2[1].trim().replace(/[-._ ]+$/, "");
+      return {
+        baseKey: rawBase.toLowerCase(),
+        displayName: rawBase,
+        ext: m2[5].toLowerCase(),
+        part: part2,
+        totalParts: total,
+        isArchive: false,
+        isExplicitSplit: !!total || !m2[3]
+      };
+    }
+  }
+  const m3 = s.match(/^(.*?)[ ._\-]+(?:part|parte|pt|cd|disc|disco)[ ._\-]*0*(\d+)(?:[ ._\-]*(?:de|of)[ ._\-]*(\d+))?\.(mkv|mp4|avi|ts|mov|webm)$/i);
+  if (m3) {
+    const part2 = Number(m3[2]);
+    const total = m3[3] ? Number(m3[3]) : null;
+    if (part2 >= 1 && part2 <= 50) {
+      const rawBase = m3[1].trim().replace(/[-._ ]+$/, "");
+      const matchedPrefix = s.slice(m3[1].length);
+      const isExplicit = !!total || /[._]part0*\d+/i.test(matchedPrefix) || /[._-]cd0*\d+/i.test(matchedPrefix) || /[._-]pt0*\d+/i.test(matchedPrefix);
+      return {
+        baseKey: rawBase.toLowerCase(),
+        displayName: rawBase,
+        ext: m3[4].toLowerCase(),
+        part: part2,
+        totalParts: total,
+        isArchive: false,
+        isExplicitSplit: isExplicit
+      };
+    }
+  }
+  const m4 = s.match(/^(.*?)[ ._\-]+(00\d|0\d)\.(mkv|mp4|avi|ts|mov|webm)$/i);
+  if (m4) {
+    const part2 = Number(m4[2]);
+    if (part2 >= 1 && part2 <= 50) {
+      const rawBase = m4[1].trim().replace(/[-._ ]+$/, "");
+      return {
+        baseKey: rawBase.toLowerCase(),
+        displayName: rawBase,
+        ext: m4[3].toLowerCase(),
+        part: part2,
+        isArchive: false,
+        isExplicitSplit: true
+      };
+    }
+  }
+  return null;
+}
+__name(parseMultipartName, "parseMultipartName");
+function groupMultipartVideos(videos) {
+  var _a;
+  if (!videos || !videos.length) return [];
+  const groups = /* @__PURE__ */ new Map();
+  const singles = [];
+  for (const video of videos) {
+    const name = String(video.fileName || video.caption || "").trim();
+    const parsed = parseMultipartName(name);
+    if (!parsed) {
+      singles.push(video);
+      continue;
+    }
+    const groupKey = `${(_a = video.chatId) != null ? _a : ""}:${parsed.baseKey}:${parsed.ext}`;
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        meta: parsed,
+        representative: video,
+        parts: []
+      });
+    }
+    groups.get(groupKey).parts.push({
+      video,
+      part: parsed.part,
+      size: Number(video.fileSize || 0),
+      fileId: video.fileId || video.id,
+      msgId: video.msgId
+    });
+  }
+  const result = [...singles];
+  for (const group of groups.values()) {
+    const { meta, representative, parts } = group;
+    parts.sort((a, b) => a.part - b.part);
+    if (parts.length === 1 && !meta.isExplicitSplit) {
+      result.push(representative);
+      continue;
+    }
+    const totalSize = parts.reduce((sum2, p) => sum2 + p.size, 0);
+    const valid = parts.every((p, i2) => p.part === i2 + 1 && p.size > 0);
+    const isArchive = meta.isArchive;
+    const isMp4 = meta.ext === "mp4" || meta.ext === "webm";
+    const isUnder4GB = totalSize <= 4 * 1024 * 1024 * 1024;
+    const mimeMap = {
+      mkv: "video/x-matroska",
+      mp4: "video/mp4",
+      avi: "video/x-msvideo",
+      ts: "video/mp2t",
+      mov: "video/quicktime",
+      webm: "video/webm"
+    };
+    const groupObj = {
+      ...representative,
+      isMultipart: true,
+      partsCount: parts.length,
+      fileName: `${meta.displayName} (Completa)`,
+      fileSize: totalSize,
+      originalExt: meta.ext,
+      archiveFormat: isArchive ? "7z-copy" : null,
+      multipartArray: parts.map((p) => {
+        var _a2;
+        return {
+          fileId: p.fileId,
+          size: p.size,
+          part: p.part,
+          msgId: p.msgId,
+          media: ((_a2 = p.video) == null ? void 0 : _a2.media) || null
+        };
+      }),
+      payload_multipart: parts.map((p) => ({
+        fileId: p.fileId,
+        size: p.size,
+        ...isArchive ? { archive: "7z-copy" } : {}
+      })),
+      multipartError: valid ? null : "Faltan partes, hay partes duplicadas o sus tamaños no son válidos.",
+      mimeType: mimeMap[meta.ext] || representative.mimeType || "application/octet-stream",
+      isMp4,
+      isUnder4GB
+    };
+    if (groupObj.caption) {
+      groupObj.caption = groupObj.caption.replace(/\.(?:part0*\d+|0*\d+)$/i, " (Completa)");
+    }
+    result.push(groupObj);
+  }
+  return result;
+}
+__name(groupMultipartVideos, "groupMultipartVideos");
 const MAX_MKV_BYTES = 4 * 1024 * 1024 * 1024;
 function isMp4OrWebm(v) {
   if (!v) return false;
@@ -88384,14 +88542,17 @@ function isMp4OrWebm(v) {
 }
 __name(isMp4OrWebm, "isMp4OrWebm");
 function pickBestCompatible(videos, preferredMsgId = null, preferredFileName = null) {
-  const list = (videos || []).filter((v) => v && (v.media || v.fileId));
+  const rawList = (videos || []).filter((v) => v && (v.media || v.fileId || v.multipartArray));
+  if (!rawList.length) return null;
+  const list = groupMultipartVideos(rawList);
   if (!list.length) return null;
   if (preferredMsgId) {
-    const found = list.find((v) => Number(v.msgId) === Number(preferredMsgId));
+    const found = list.find((v) => Number(v.msgId) === Number(preferredMsgId) || v.multipartArray && v.multipartArray.some((p) => Number(p.msgId) === Number(preferredMsgId)));
     if (found) return found;
   }
   if (preferredFileName) {
-    const found = list.find((v) => String(v.fileName || "").toLowerCase() === String(preferredFileName).toLowerCase());
+    const target2 = String(preferredFileName).toLowerCase();
+    const found = list.find((v) => String(v.fileName || "").toLowerCase() === target2 || v.fileName && target2.includes(String(v.fileName).toLowerCase()));
     if (found) return found;
   }
   const mp4List = list.filter((v) => isMp4OrWebm(v));
@@ -88438,7 +88599,8 @@ async function searchMovieFiles(title, year) {
     console.warn("[CineStream] searchMovieFiles error:", e);
     return [];
   }
-  return (videos || []).map((v) => {
+  const grouped = groupMultipartVideos(videos || []);
+  return grouped.map((v) => {
     const isMp4 = isMp4OrWebm(v);
     const sz = Number(v.fileSize) || 0;
     return {
@@ -88450,7 +88612,12 @@ async function searchMovieFiles(title, year) {
       height: Number(v.height) || 0,
       duration: Number(v.duration) || 0,
       isMp4,
-      isUnder4GB: sz <= MAX_MKV_BYTES
+      isUnder4GB: sz <= MAX_MKV_BYTES,
+      isMultipart: !!v.isMultipart,
+      partsCount: v.partsCount || 1,
+      payload_multipart: v.payload_multipart || null,
+      multipartArray: v.multipartArray || null,
+      archiveFormat: v.archiveFormat || null
     };
   });
 }
@@ -88518,7 +88685,8 @@ const CineStream = {
     try {
       videoEl.muted = false;
       videoEl.volume = 1;
-      await streamVideo(file2.media, videoEl, () => {
+      const targetMedia = file2.media || (file2.multipartArray && file2.multipartArray[0] ? file2.multipartArray[0].media : null);
+      await streamVideo(targetMedia, videoEl, () => {
       });
     } catch (e) {
       throw fail("FAILED", "No se pudo preparar el vídeo");

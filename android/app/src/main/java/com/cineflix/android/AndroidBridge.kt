@@ -568,17 +568,39 @@ class AndroidBridge(
 
     @JavascriptInterface
     fun startCineScreenStream(queryId: String, searchTitle: String, yearStr: String) {
-        startCineScreenStreamWithFile(queryId, searchTitle, yearStr, "")
+        startCineScreenStreamWithMultipart(queryId, searchTitle, yearStr, "", "")
     }
 
     @JavascriptInterface
     fun startCineScreenStreamWithFile(queryId: String, searchTitle: String, yearStr: String, fileMsgIdStr: String) {
+        startCineScreenStreamWithMultipart(queryId, searchTitle, yearStr, fileMsgIdStr, "")
+    }
+
+    @JavascriptInterface
+    fun startCineScreenStreamWithMultipart(queryId: String, searchTitle: String, yearStr: String, fileMsgIdStr: String, multipartJsonStr: String) {
         scope.launch {
             try {
                 if (engine.authState.value !is TelegramEngine.AuthState.Ready) {
                     callback(queryId, false, "AUTH_REQUIRED")
                     return@launch
                 }
+                var parsedParts: List<com.cineflix.android.ui.player.FilePart>? = null
+                if (multipartJsonStr.isNotBlank()) {
+                    try {
+                        val arr = JSONArray(multipartJsonStr)
+                        val list = mutableListOf<com.cineflix.android.ui.player.FilePart>()
+                        for (i in 0 until arr.length()) {
+                            val o = arr.getJSONObject(i)
+                            val fId = o.optInt("fileId", 0)
+                            val sz = o.optLong("size", 0L)
+                            if (fId > 0 && sz > 0) list.add(com.cineflix.android.ui.player.FilePart(fId, sz))
+                        }
+                        if (list.isNotEmpty()) parsedParts = list
+                    } catch (e: Exception) {
+                        Log.w("AndroidBridge", "Error parsing multipart JSON for cine: ${e.message}")
+                    }
+                }
+
                 var videos = engine.searchMovieByPayload(searchTitle)
                 if (videos.isEmpty() && yearStr.isNotBlank()) {
                     videos = engine.searchMovieByPayload("$searchTitle $yearStr")
@@ -609,11 +631,15 @@ class AndroidBridge(
                 } catch (_: Exception) {}
                 cineScreenServer = null
 
+                val totalSize = parsedParts?.sumOf { it.size }?.takeIf { it > 0 } ?: picked.fileSize
+                val firstFileId = parsedParts?.firstOrNull()?.fileId ?: picked.fileId
+
                 val server = com.cineflix.android.ui.player.CineScreenStreamServer(engine)
                 val streamUrl = server.start(
-                    fileId = picked.fileId,
-                    totalSize = picked.fileSize,
-                    mimeType = picked.mimeType.ifEmpty { "video/mp4" }
+                    fileId = firstFileId,
+                    totalSize = totalSize,
+                    mimeType = picked.mimeType.ifEmpty { "video/mp4" },
+                    multipartParts = parsedParts
                 )
                 cineScreenServer = server
                 cineCurrentVideoInfo = picked
@@ -621,13 +647,15 @@ class AndroidBridge(
 
                 val result = JSONObject().apply {
                     put("streamUrl", streamUrl)
-                    put("fileId", picked.fileId)
-                    put("fileSize", picked.fileSize)
+                    put("fileId", firstFileId)
+                    put("fileSize", totalSize)
                     put("mimeType", picked.mimeType)
                     put("chatId", picked.chatId)
                     put("msgId", picked.msgId)
                     put("fileName", picked.fileName)
                     put("title", searchTitle)
+                    put("isMultipart", parsedParts != null && parsedParts.size > 1)
+                    put("partsCount", parsedParts?.size ?: 1)
                 }
                 callback(queryId, true, result.toString())
             } catch (e: Exception) {

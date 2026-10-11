@@ -34,6 +34,7 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
     @Volatile private var activeFileId: Int = -1
     @Volatile private var activeSize: Long = 0L
     @Volatile private var activeMime: String = "video/mp4"
+    @Volatile private var activeParts: List<FilePart>? = null
     @Volatile private var isRunning: Boolean = false
 
     private val activeRequestId = java.util.concurrent.atomic.AtomicLong(0L)
@@ -45,7 +46,8 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
     fun start(
         fileId: Int,
         totalSize: Long,
-        mimeType: String = "video/mp4"
+        mimeType: String = "video/mp4",
+        multipartParts: List<FilePart>? = null
     ): String {
         isRunning = false
         try {
@@ -53,8 +55,10 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
         } catch (_: Exception) {}
         serverSocket = null
 
+        activeParts = multipartParts
         activeFileId = fileId
-        activeSize = if (totalSize > 0) totalSize else 2_000_000_000L
+        val effectiveSize = multipartParts?.sumOf { it.size }?.takeIf { it > 0 } ?: totalSize
+        activeSize = if (effectiveSize > 0) effectiveSize else 2_000_000_000L
         activeMime = if (mimeType.isNotBlank()) mimeType else "video/mp4"
         isRunning = true
 
@@ -64,7 +68,7 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
 
         val streamUrl = "http://127.0.0.1:$listeningPort/stream"
         activeRequestId.set(0L)
-        Log.i(TAG, "🍿 CineScreenStreamServer iniciado en $streamUrl (fileId=$fileId, size=$activeSize, mime=$activeMime)")
+        Log.i(TAG, "🍿 CineScreenStreamServer iniciado en $streamUrl (fileId=$fileId, size=$activeSize, mime=$activeMime, parts=${multipartParts?.size ?: 1})")
 
         executor.execute {
             while (isRunning && !s.isClosed) {
@@ -99,6 +103,7 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
         listeningPort = 0
         activeFileId = -1
         activeSize = 0L
+        activeParts = null
         Log.i(TAG, "🛑 CineScreenStreamServer detenido")
     }
 
@@ -200,6 +205,20 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
         }
     }
 
+    private fun resolvePart(globalOffset: Long): Pair<Int, Long> {
+        val parts = activeParts
+        if (parts.isNullOrEmpty()) return Pair(activeFileId, globalOffset)
+        var accumulated = 0L
+        for (p in parts) {
+            if (globalOffset < accumulated + p.size) {
+                return Pair(p.fileId, globalOffset - accumulated)
+            }
+            accumulated += p.size
+        }
+        val lastPart = parts.last()
+        return Pair(lastPart.fileId, globalOffset - (accumulated - lastPart.size))
+    }
+
     private fun serveStream(socket: Socket, globalStart: Long, requestedEnd: Long) {
         val totalLength = (requestedEnd - globalStart) + 1
         if (totalLength <= 0) {
@@ -237,8 +256,10 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
         var isFirstChunk = true
 
         while (currentPos <= requestedEnd && isRunning && myRequestId == activeRequestId.get()) {
+            val (partFileId, localOffset) = resolvePart(currentPos)
+            val partSize = activeParts?.find { it.fileId == partFileId }?.size ?: activeSize
+            val availableInPart = maxOf(0L, partSize - localOffset)
             val remainingInRequest = requestedEnd - currentPos + 1
-            val availableInPart = maxOf(0L, activeSize - currentPos)
             val maxCanRead = minOf(remainingInRequest, availableInPart)
             if (maxCanRead <= 0) break
 
@@ -247,18 +268,18 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
             val targetChunkSize = if (isFirstChunk) FIRST_CHUNK_SIZE else STREAM_CHUNK_SIZE
             val bytesToReadThisRound = minOf(targetChunkSize, maxCanRead)
 
-            val alignedOffset = currentPos - (currentPos % ALIGNMENT)
-            val offsetInsideBlock = (currentPos - alignedOffset).toInt()
+            val alignedOffset = localOffset - (localOffset % ALIGNMENT)
+            val offsetInsideBlock = (localOffset - alignedOffset).toInt()
             val neededBytes = offsetInsideBlock + bytesToReadThisRound
             val blocks = (neededBytes + ALIGNMENT - 1) / ALIGNMENT
-            val fetchSize = min(blocks * ALIGNMENT, activeSize - alignedOffset)
+            val fetchSize = min(blocks * ALIGNMENT, partSize - alignedOffset)
 
             var chunk: ByteArray? = null
             if (isRunning && myRequestId == activeRequestId.get()) {
                 var attempts = 0
                 while (attempts < 4 && isRunning && myRequestId == activeRequestId.get()) {
                     attempts++
-                    chunk = engine.readBoundedVideoRange(activeFileId, alignedOffset, fetchSize)
+                    chunk = engine.readBoundedVideoRange(partFileId, alignedOffset, fetchSize)
                     if (chunk != null && chunk.size > offsetInsideBlock) {
                         break
                     }
@@ -275,7 +296,7 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
             if (myRequestId != activeRequestId.get() || !isRunning) break
 
             if (chunk == null || chunk.size <= offsetInsideBlock) {
-                Log.e(TAG, "❌ Error al descargar chunk TDLib para pantalla cine: offset=$alignedOffset fetchSize=$fetchSize")
+                Log.e(TAG, "❌ Error al descargar chunk TDLib para pantalla cine: partId=$partFileId offset=$alignedOffset fetchSize=$fetchSize")
                 break
             }
 

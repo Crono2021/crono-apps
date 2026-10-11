@@ -91,12 +91,14 @@ window.onTelegramCallback = (queryId, success, payload) => {
     if (prevOnTelegramCallback) prevOnTelegramCallback(queryId, success, payload);
 };
 
-function callNativeCineStream(searchTitle, yearStr, fileMsgIdStr = '') {
+function callNativeCineStream(searchTitle, yearStr, fileMsgIdStr = '', multipartJsonStr = '') {
     return new Promise((resolve, reject) => {
         const queryId = 'cine_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
         nativeResolvers.set(queryId, { resolve, reject });
         try {
-            if (window.AndroidBridge && window.AndroidBridge.startCineScreenStreamWithFile) {
+            if (window.AndroidBridge && window.AndroidBridge.startCineScreenStreamWithMultipart) {
+                window.AndroidBridge.startCineScreenStreamWithMultipart(queryId, String(searchTitle || ''), String(yearStr || ''), String(fileMsgIdStr || ''), String(multipartJsonStr || ''));
+            } else if (window.AndroidBridge && window.AndroidBridge.startCineScreenStreamWithFile) {
                 window.AndroidBridge.startCineScreenStreamWithFile(queryId, String(searchTitle || ''), String(yearStr || ''), String(fileMsgIdStr || ''));
             } else if (window.AndroidBridge && window.AndroidBridge.startCineScreenStream) {
                 window.AndroidBridge.startCineScreenStream(queryId, String(searchTitle || ''), String(yearStr || ''));
@@ -157,7 +159,8 @@ async function showStartPrepare() {
             const searchTitle = mv.search_title || mv.title;
             const yearStr = mv.year ? String(mv.year) : '';
             const fileMsgIdStr = mv.file_msg_id ? String(mv.file_msg_id) : '';
-            const res = await callNativeCineStream(searchTitle, yearStr, fileMsgIdStr);
+            const multipartJsonStr = (mv.payload_multipart && Array.isArray(mv.payload_multipart)) ? JSON.stringify(mv.payload_multipart) : '';
+            const res = await callNativeCineStream(searchTitle, yearStr, fileMsgIdStr, multipartJsonStr);
             if (SHOW.key !== key) return;
             SHOW.nativeVideoInfo = res;
             showVideo.src = res.streamUrl;
@@ -882,6 +885,185 @@ function renderProposeResults(items) {
     });
 }
 
+function showParseMultipartName(filename) {
+    const s = String(filename || '').trim();
+    if (!s) return null;
+
+    // Patrón 1: Sufijo .ext.partX o .ext.00X o .7z.00X (ej: Movie.mkv.part1, Movie.mkv.001, Movie.7z.001)
+    const m1 = s.match(/^(.*?\.(?:(?:mkv|mp4|avi|ts|mov|webm)(?:\.7z)?|7z))\.(?:part0*(\d+)|0*(\d+))$/i);
+    if (m1) {
+        const isArchive = /\.7z$/i.test(m1[1]);
+        const cleanBase = isArchive ? m1[1].slice(0, -3) : m1[1];
+        const ext = cleanBase.match(/\.(mkv|mp4|avi|ts|mov|webm)$/i)?.[1]?.toLowerCase() || (isArchive ? '7z' : 'mkv');
+        const part = Number(m1[2] || m1[3]);
+        return {
+            baseKey: cleanBase.replace(/\.[^.]+$/, '').toLowerCase().trim(),
+            displayName: cleanBase.replace(/\.[^.]+$/, '').trim(),
+            ext,
+            part,
+            isArchive,
+            isExplicitSplit: true
+        };
+    }
+
+    // Patrón 2: Paréntesis o corchetes infijos (ej: Movie [Part 1].mkv, Movie (Parte 1).mkv, Movie [1 de 2].mkv, Movie (1/2).mkv)
+    const m2 = s.match(/^(.*?)[ ._\-]+[\[{(](?:(?:part|parte|pt|cd|disc|disco)\s*0*(\d+)|0*(\d+)\s*(?:de|of|\/|-)\s*(\d+))[\]})]\.(mkv|mp4|avi|ts|mov|webm)$/i);
+    if (m2) {
+        const part = Number(m2[2] || m2[3]);
+        const total = m2[4] ? Number(m2[4]) : null;
+        if (part >= 1 && part <= 50) {
+            const rawBase = m2[1].trim().replace(/[-._ ]+$/, '');
+            return {
+                baseKey: rawBase.toLowerCase(),
+                displayName: rawBase,
+                ext: m2[5].toLowerCase(),
+                part,
+                totalParts: total,
+                isArchive: false,
+                isExplicitSplit: !!total || !m2[3]
+            };
+        }
+    }
+
+    // Patrón 3: Palabra clave infija (ej: Movie.part1.mkv, Movie - Parte 02.mkv, Movie.CD1.avi, Movie_pt1.mkv)
+    const m3 = s.match(/^(.*?)[ ._\-]+(?:part|parte|pt|cd|disc|disco)[ ._\-]*0*(\d+)(?:[ ._\-]*(?:de|of)[ ._\-]*(\d+))?\.(mkv|mp4|avi|ts|mov|webm)$/i);
+    if (m3) {
+        const part = Number(m3[2]);
+        const total = m3[3] ? Number(m3[3]) : null;
+        if (part >= 1 && part <= 50) {
+            const rawBase = m3[1].trim().replace(/[-._ ]+$/, '');
+            const matchedPrefix = s.slice(m3[1].length);
+            const isExplicit = !!total || /[._]part0*\d+/i.test(matchedPrefix) || /[._-]cd0*\d+/i.test(matchedPrefix) || /[._-]pt0*\d+/i.test(matchedPrefix);
+            return {
+                baseKey: rawBase.toLowerCase(),
+                displayName: rawBase,
+                ext: m3[4].toLowerCase(),
+                part,
+                totalParts: total,
+                isArchive: false,
+                isExplicitSplit: isExplicit
+            };
+        }
+    }
+
+    // Patrón 4: Fragmento numérico 3 dígitos infijo (ej: Movie.001.mkv, Movie.002.mkv)
+    const m4 = s.match(/^(.*?)[ ._\-]+(00\d|0\d)\.(mkv|mp4|avi|ts|mov|webm)$/i);
+    if (m4) {
+        const part = Number(m4[2]);
+        if (part >= 1 && part <= 50) {
+            const rawBase = m4[1].trim().replace(/[-._ ]+$/, '');
+            return {
+                baseKey: rawBase.toLowerCase(),
+                displayName: rawBase,
+                ext: m4[3].toLowerCase(),
+                part,
+                isArchive: false,
+                isExplicitSplit: true
+            };
+        }
+    }
+
+    return null;
+}
+
+function showGroupMultipartVideos(videos) {
+    if (!videos || !videos.length) return [];
+    const groups = new Map();
+    const singles = [];
+
+    for (const video of videos) {
+        if (video.isMultipart) {
+            singles.push(video);
+            continue;
+        }
+        const name = String(video.fileName || video.caption || '').trim();
+        const parsed = showParseMultipartName(name);
+
+        if (!parsed) {
+            singles.push(video);
+            continue;
+        }
+
+        const groupKey = `${video.chatId ?? ''}:${parsed.baseKey}:${parsed.ext}`;
+        if (!groups.has(groupKey)) {
+            groups.set(groupKey, {
+                meta: parsed,
+                representative: video,
+                parts: []
+            });
+        }
+        groups.get(groupKey).parts.push({
+            video,
+            part: parsed.part,
+            size: Number(video.fileSize || 0),
+            fileId: video.fileId || video.id,
+            msgId: video.msgId
+        });
+    }
+
+    const result = [...singles];
+
+    for (const group of groups.values()) {
+        const { meta, representative, parts } = group;
+        parts.sort((a, b) => a.part - b.part);
+
+        if (parts.length === 1 && !meta.isExplicitSplit) {
+            result.push(representative);
+            continue;
+        }
+
+        const totalSize = parts.reduce((sum, p) => sum + p.size, 0);
+        const valid = parts.every((p, i) => p.part === i + 1 && p.size > 0);
+        const isArchive = meta.isArchive;
+
+        const isMp4 = meta.ext === 'mp4' || meta.ext === 'webm';
+        const isUnder4GB = totalSize <= 4 * 1024 * 1024 * 1024;
+
+        const mimeMap = {
+            mkv: 'video/x-matroska',
+            mp4: 'video/mp4',
+            avi: 'video/x-msvideo',
+            ts: 'video/mp2t',
+            mov: 'video/quicktime',
+            webm: 'video/webm'
+        };
+
+        const groupObj = {
+            ...representative,
+            isMultipart: true,
+            partsCount: parts.length,
+            fileName: `${meta.displayName} (Completa)`,
+            fileSize: totalSize,
+            originalExt: meta.ext,
+            archiveFormat: isArchive ? '7z-copy' : null,
+            multipartArray: parts.map(p => ({
+                fileId: p.fileId,
+                size: p.size,
+                part: p.part,
+                msgId: p.msgId,
+                media: p.video?.media || null
+            })),
+            payload_multipart: parts.map(p => ({
+                fileId: p.fileId,
+                size: p.size,
+                ...(isArchive ? { archive: '7z-copy' } : {})
+            })),
+            multipartError: valid ? null : 'Faltan partes o están desordenadas',
+            mimeType: mimeMap[meta.ext] || representative.mimeType || 'application/octet-stream',
+            isMp4,
+            isUnder4GB
+        };
+
+        if (groupObj.caption) {
+            groupObj.caption = groupObj.caption.replace(/\.(?:part0*\d+|0*\d+)$/i, ' (Completa)');
+        }
+
+        result.push(groupObj);
+    }
+
+    return result;
+}
+
 async function selectMovieForProposal(m) {
     if (mySeat() < 0) return toast('Siéntate para proponer una película 🪑');
 
@@ -917,7 +1099,8 @@ async function selectMovieForProposal(m) {
                 const raw2 = await callNativeSearchMovie(`${queryTitle} ${m.year}`);
                 list = Array.isArray(raw2) ? raw2 : (raw2 && raw2.videos ? raw2.videos : []);
             }
-            files = (list || []).map(v => {
+            const groupedList = showGroupMultipartVideos(list || []);
+            files = groupedList.map(v => {
                 const isMp4 = (v.mimeType && v.mimeType.toLowerCase() === 'video/mp4') || /\.mp4$/i.test(v.fileName || '') || /\.webm$/i.test(v.fileName || '');
                 const sz = Number(v.fileSize) || 0;
                 return {
@@ -927,13 +1110,19 @@ async function selectMovieForProposal(m) {
                     fileSize: sz,
                     mimeType: v.mimeType || (isMp4 ? 'video/mp4' : 'video/x-matroska'),
                     isMp4,
-                    isUnder4GB: sz <= 4 * 1024 * 1024 * 1024
+                    isUnder4GB: sz <= 4 * 1024 * 1024 * 1024,
+                    isMultipart: !!v.isMultipart,
+                    partsCount: v.partsCount || 1,
+                    payload_multipart: v.payload_multipart || null,
+                    multipartArray: v.multipartArray || null,
+                    archiveFormat: v.archiveFormat || null
                 };
             });
         } else {
             const eng = await showLoadEngine();
             if (eng && eng.searchMovieFiles) {
-                files = await eng.searchMovieFiles(queryTitle, m.year);
+                const rawFiles = await eng.searchMovieFiles(queryTitle, m.year);
+                files = showGroupMultipartVideos(rawFiles || []);
             }
         }
     } catch (err) {
@@ -1010,13 +1199,18 @@ function renderMovieFiles(m, files) {
         if (f.isMp4) {
             badgeHtml = '<span class="propose-file-badge badge-mp4">⭐ MP4 (Más compatible)</span>';
         } else if (f.isUnder4GB) {
-            badgeHtml = '<span class="propose-file-badge badge-mkv-light">🎞️ MKV (&lt;4GB)</span>';
+            badgeHtml = f.isMultipart
+                ? `<span class="propose-file-badge badge-mkv-light">🎞️ MKV (&lt;4GB • ${f.partsCount} partes)</span>`
+                : '<span class="propose-file-badge badge-mkv-light">🎞️ MKV (&lt;4GB)</span>';
         } else {
-            badgeHtml = '<span class="propose-file-badge badge-mkv-heavy">⚠️ MKV (&gt;4GB - Pesado)</span>';
+            badgeHtml = f.isMultipart
+                ? `<span class="propose-file-badge badge-mkv-heavy">⚠️ MKV (&gt;4GB • ${f.partsCount} partes)</span>`
+                : '<span class="propose-file-badge badge-mkv-heavy">⚠️ MKV (&gt;4GB - Pesado)</span>';
         }
 
         const sizeStr = showFormatBytes(f.fileSize);
         const nameClean = f.fileName || `Archivo #${idx + 1}`;
+        const partsText = f.isMultipart ? ` • ${f.partsCount} partes` : '';
 
         item.innerHTML = `
             <div class="propose-file-top">
@@ -1024,7 +1218,7 @@ function renderMovieFiles(m, files) {
                 ${badgeHtml}
             </div>
             <div class="propose-file-meta">
-                <span class="propose-file-size">📦 ${sizeStr}</span>
+                <span class="propose-file-size">📦 ${sizeStr}${partsText}</span>
                 <span style="font-size:11px;color:#cbd5e1;margin-left:auto;">🎬 Toca para poner en sala</span>
             </div>
         `;
@@ -1047,6 +1241,13 @@ function proposeMovie(m, chosenFile = null) {
         if (chosenFile.fileName) moviePayload.file_name = chosenFile.fileName;
         if (chosenFile.fileSize) moviePayload.file_size = chosenFile.fileSize;
         if (chosenFile.mimeType) moviePayload.mime_type = chosenFile.mimeType;
+        if (chosenFile.isMultipart) {
+            moviePayload.is_multipart = true;
+            moviePayload.parts_count = chosenFile.partsCount;
+            moviePayload.payload_multipart = chosenFile.payload_multipart;
+            moviePayload.multipart_array = chosenFile.multipartArray;
+            moviePayload.archive_format = chosenFile.archiveFormat;
+        }
     }
     netSend({
         type: 'show_start',
@@ -1060,4 +1261,5 @@ window.backToProposeCatalog = backToProposeCatalog;
 window.selectMovieForProposal = selectMovieForProposal;
 window.onProposeSearchInput = onProposeSearchInput;
 window.proposeMovie = proposeMovie;
+
 
