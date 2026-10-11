@@ -448,6 +448,47 @@
 
         function renderVoting(s) {
             votingCandidatesEl.innerHTML = '';
+            const isSingle = (s.candidates || []).length === 1;
+
+            if (isSingle) {
+                const c = s.candidates[0];
+                const btnYes = document.createElement('button');
+                btnYes.type = 'button';
+                const isProposer = !!s.isProposer;
+                btnYes.className = 'candidate-btn ' + ((s.myVote === 0 || isProposer) ? 'voted' : '');
+                const yesVotes = (s.votes && s.votes[0]) || 0;
+                btnYes.innerHTML = `<span>${isProposer ? '✔ Tu propuesta: ' : '👍 ¡Me apunto! '}${escapeHtml(c.title)}</span><span class="vote-count">${yesVotes}</span>`;
+                if (!isProposer) {
+                    btnYes.onclick = () => {
+                        if (ws && ws.readyState === 1) {
+                            ws.send(JSON.stringify({ type: 'show_vote', i: 0 }));
+                            s.myVote = 0;
+                            renderVoting(s);
+                            if (navigator.vibrate) navigator.vibrate(30);
+                        }
+                    };
+                }
+                votingCandidatesEl.appendChild(btnYes);
+
+                const btnNo = document.createElement('button');
+                btnNo.type = 'button';
+                btnNo.className = 'candidate-btn ' + (s.myVote === 1 ? 'voted' : '');
+                const noVotes = (s.votes && s.votes[1]) || 0;
+                btnNo.innerHTML = `<span>🔄 Rechazar / 4 al azar</span><span class="vote-count">${noVotes}</span>`;
+                if (!isProposer) {
+                    btnNo.onclick = () => {
+                        if (ws && ws.readyState === 1) {
+                            ws.send(JSON.stringify({ type: 'show_vote', i: 1 }));
+                            s.myVote = 1;
+                            renderVoting(s);
+                            if (navigator.vibrate) navigator.vibrate(30);
+                        }
+                    };
+                }
+                votingCandidatesEl.appendChild(btnNo);
+                return;
+            }
+
             (s.candidates || []).forEach((c, idx) => {
                 const btn = document.createElement('button');
                 btn.type = 'button';

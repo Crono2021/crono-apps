@@ -250,8 +250,8 @@ function onNetMessage(m) {
         }
         case 'count': net.viewers = m.viewers; net.seated = m.seated; net.standby = m.standby || 0; updateRoomUI(); break;
         case 'say': {
-            // Solo las frases aleatorias se descartan mientras el personaje está fuera; el chat siempre se muestra
-            if (m.kind !== 'chat' && trips[m.seat] && now - trips[m.seat].start < trips[m.seat].duration) break;
+            if (m.kind === 'ambient') break; // Frases aleatorias desactivadas: solo chat normal
+            if (trips[m.seat] && now - trips[m.seat].start < trips[m.seat].duration) break;
             if (m.kind === 'chat') { if (net.seats[m.seat]) net.seats[m.seat].away = false; delete trips[m.seat]; showCaption(m.name, m.text); }
             showBubble(m.seat, m.name, m.text, m.kind);
             break;
@@ -529,13 +529,12 @@ function clearBubbles() { bubbles.forEach(b => b.remove()); bubbles.clear(); }
 
 function showBubble(seat, name, text, kind) {
     if (!bubblesOn || view !== 'cinema') return;
-    // Una frase aleatoria nunca pisa un bocadillo activo; un mensaje de chat siempre sustituye al anterior al instante
-    if (kind === 'ambient' && bubbles.has(seat)) return;
+    if (kind === 'ambient') return; // Frases aleatorias desactivadas (solo chat explícito)
     removeBubble(seat);
     while (bubbles.size >= 6) { const first = bubbles.keys().next().value; removeBubble(first); }
     const p = seatPos(seat);
     const b = document.createElement('div');
-    b.className = 'pixel-bubble' + (kind === 'ambient' ? ' ambient' : '') + (net.seats[seat] && net.seats[seat].id === net.youId ? ' mine' : '');
+    b.className = 'pixel-bubble' + (net.seats[seat] && net.seats[seat].id === net.youId ? ' mine' : '');
     const sp = document.createElement('div'); sp.className = 'bubble-speaker';
     const ic = document.createElement('span'); ic.textContent = '🎬';
     const nm = document.createElement('span'); nm.textContent = String(name || '');
@@ -543,19 +542,42 @@ function showBubble(seat, name, text, kind) {
     const tx = document.createElement('div'); tx.className = 'bubble-text'; tx.textContent = String(text || '');
     b.append(sp, tx);
     bubbleLayer.appendChild(b);
-    const W = bubbleLayer.clientWidth, H = bubbleLayer.clientHeight;
+
+    const W = bubbleLayer.clientWidth || 960, H = bubbleLayer.clientHeight || 540;
     const cx = (p.x + 28) / 960 * W, cy = (p.y - 24) / 540 * H;
-    const bw = b.offsetWidth;
+    const bw = b.offsetWidth || 220;
+
+    // Ladeado inteligente según la columna de la butaca:
+    // Los personajes en los extremos (a los lados) ladean la burbuja hacia el pasillo central para que no se corte
+    let bias = 0;
+    if (p.c === 0) bias = +74;
+    else if (p.c === 1) bias = +48;
+    else if (p.c === 2) bias = +24;
+    else if (p.c === 5) bias = -24;
+    else if (p.c === 6) bias = -48;
+    else if (p.c === 7) bias = -74;
+    const scaledBias = bias * (W / 960);
+    const targetX = cx + scaledBias;
+
     // Zona visible (en móvil la sala se recorta a los lados): las burbujas no deben salirse de ella
-    const wr = document.getElementById('cinema-wrapper').getBoundingClientRect(), sr = bubbleLayer.getBoundingClientRect();
-    const minX = Math.max(0, wr.left - sr.left), maxX = Math.min(W, wr.right - sr.left);
-    const clamped = Math.min(Math.max(cx, minX + bw / 2 + 4), maxX - bw / 2 - 4);
+    const wrapper = document.getElementById('cinema-wrapper');
+    const wr = wrapper ? wrapper.getBoundingClientRect() : { left: 0, right: W };
+    const sr = bubbleLayer.getBoundingClientRect();
+    const minX = Math.max(12, wr.left - sr.left + 12);
+    const maxX = Math.min(W - 12, wr.right - sr.left - 12);
+    const minCenter = minX + bw / 2;
+    const maxCenter = maxX - bw / 2;
+    const clamped = minCenter <= maxCenter ? Math.min(Math.max(targetX, minCenter), maxCenter) : (minX + maxX) / 2;
+
     b.style.left = clamped + 'px';
-    b.style.top = Math.max(cy, b.offsetHeight + 8) + 'px';
-    b.style.setProperty('--tx', Math.max(-bw / 2 + 14, Math.min(bw / 2 - 14, cx - clamped)) + 'px');
+    b.style.top = Math.max(cy, (b.offsetHeight || 40) + 10) + 'px';
+    const tailOffset = cx - clamped;
+    const maxTail = Math.max(0, bw / 2 - 18);
+    const safeTail = Math.max(-maxTail, Math.min(maxTail, tailOffset));
+    b.style.setProperty('--tx', safeTail + 'px');
     bubbles.set(seat, b);
-    playBlip(kind === 'ambient' ? 440 : 560, 'sine', 0.07);
-    const life = kind === 'ambient' ? 5200 : 6500;
+    playBlip(560, 'sine', 0.07);
+    const life = 6500;
     setTimeout(() => {
         if (bubbles.get(seat) !== b) return;
         b.classList.add('fade-out');

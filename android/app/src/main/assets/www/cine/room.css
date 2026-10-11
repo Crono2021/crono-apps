@@ -124,7 +124,7 @@
     /* En vertical se recortan las paredes laterales para que las butacas se vean más grandes (sin zoom ni arrastre) */
     .cinema-wrapper { aspect-ratio: 740 / 540; }
     .room-stage { width: 129.73%; margin-left: -14.865%; }
-    .pixel-bubble { font-size: 11px; padding: 5px 8px; max-width: 46vw; }
+    .pixel-bubble { font-size: 11px; padding: 5px 8px; max-width: min(240px, 52vw); }
     .bubble-speaker { font-size: 7px; }
 }
 @media (max-height: 520px) {

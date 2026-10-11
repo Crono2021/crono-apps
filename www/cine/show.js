@@ -55,6 +55,8 @@ function showOnState(st, fromJoin) {
     SHOW.startAt = st.startAt || 0;
     SHOW.duration = st.duration || 0;
     SHOW.by = st.by || '';
+    SHOW.isProposer = !!st.isProposer;
+    SHOW.proposerKey = st.proposerKey || '';
     SHOW.cooldownUntil = st.cooldownUntil || 0;
     if (typeof st.myVote === 'number') SHOW.myVote = st.myVote;
     else if (st.phase !== 'voting' || prevPhase !== 'voting') SHOW.myVote = -1;   // nueva votación (o fuera de ella): sin voto
@@ -304,34 +306,60 @@ function showRender() {
     } else if (SHOW.phase === 'voting') {
         if (SHOW.candidates.length === 1) {
             const single = SHOW.candidates[0];
-            msg.textContent = '🍿 ' + (SHOW.by ? SHOW.by + ' propone: ' : 'Propuesta: ') + '«' + showTitle(single) + '» ⏳ ';
-            showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
+            const isMyProposal = SHOW.isProposer || (SHOW.by && myCharacter.name === SHOW.by);
+            if (isMyProposal) {
+                msg.textContent = '🍿 Has propuesto «' + showTitle(single) + '». Esperando votos de la sala… ⏳ ';
+                showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
 
-            const nYes = SHOW.votes[0] || 0;
-            const bYes = showBtn((SHOW.myVote === 0 ? '✔ ' : '') + '👍 ¡Me apunto! · ' + nYes + (nYes === 1 ? ' voto' : ' votos'), 'vote0', () => {
-                if (!seated) return toast('Siéntate para votar 🪑');
-                SHOW.myVote = 0; netSend({ type: 'show_vote', i: 0 }); showRender();
-            }, SHOW.myVote === 0 ? 'on' : '');
-            rowBtns.appendChild(bYes);
+                const nYes = SHOW.votes[0] || 0;
+                const bYes = showBtn('✔ Tu propuesta · ' + nYes + (nYes === 1 ? ' voto' : ' votos'), 'vote0', null, 'on');
+                bYes.disabled = true;
+                bYes.style.cursor = 'default';
+                rowBtns.appendChild(bYes);
 
-            const nNo = SHOW.votes[1] || 0;
-            const bNo = showBtn((SHOW.myVote === 1 ? '✔ ' : '') + '🔄 Rechazar / 4 al azar · ' + nNo + (nNo === 1 ? ' voto' : ' votos'), 'vote1', () => {
-                if (!seated) return toast('Siéntate para votar 🪑');
-                SHOW.myVote = 1; netSend({ type: 'show_vote', i: 1 }); showRender();
-            }, SHOW.myVote === 1 ? 'on' : '');
-            rowBtns.appendChild(bNo);
+                const nNo = SHOW.votes[1] || 0;
+                if (nNo > 0) {
+                    const bNo = showBtn('🔄 Rechazos: ' + nNo, 'vote1', null, '');
+                    bNo.disabled = true;
+                    bNo.style.cursor = 'default';
+                    rowBtns.appendChild(bNo);
+                }
 
-            const bCatalog = showBtn('🔍 Buscar en catálogo', 'vote-catalog', () => {
-                if (!seated) return toast('Siéntate para proponer 🪑');
-                openProposeModal();
-            });
-            rowBtns.appendChild(bCatalog);
+                const bCatalog = showBtn('🔍 Cambiar película', 'vote-catalog', () => {
+                    openProposeModal();
+                });
+                rowBtns.appendChild(bCatalog);
 
-            const bCancel = showBtn('❌ Cancelar', 'vote-cancel', () => {
-                if (!seated) return toast('Siéntate para cancelar 🪑');
-                netSend({ type: 'show_cancel' });
-            });
-            rowBtns.appendChild(bCancel);
+                const bCancel = showBtn('❌ Cancelar propuesta', 'vote-cancel', () => {
+                    netSend({ type: 'show_cancel' });
+                });
+                rowBtns.appendChild(bCancel);
+            } else {
+                msg.textContent = '🍿 ' + (SHOW.by ? SHOW.by + ' propone: ' : 'Propuesta: ') + '«' + showTitle(single) + '» ⏳ ';
+                showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
+
+                const nYes = SHOW.votes[0] || 0;
+                const bYes = showBtn((SHOW.myVote === 0 ? '✔ ' : '') + '👍 ¡Me apunto! · ' + nYes + (nYes === 1 ? ' voto' : ' votos'), 'vote0', () => {
+                    SHOW.myVote = 0; netSend({ type: 'show_vote', i: 0 }); showRender();
+                }, SHOW.myVote === 0 ? 'on' : '');
+                rowBtns.appendChild(bYes);
+
+                const nNo = SHOW.votes[1] || 0;
+                const bNo = showBtn((SHOW.myVote === 1 ? '✔ ' : '') + '🔄 Rechazar / 4 al azar · ' + nNo + (nNo === 1 ? ' voto' : ' votos'), 'vote1', () => {
+                    SHOW.myVote = 1; netSend({ type: 'show_vote', i: 1 }); showRender();
+                }, SHOW.myVote === 1 ? 'on' : '');
+                rowBtns.appendChild(bNo);
+
+                const bCatalog = showBtn('🔍 Buscar en catálogo', 'vote-catalog', () => {
+                    openProposeModal();
+                });
+                rowBtns.appendChild(bCatalog);
+
+                const bCancel = showBtn('❌ Cancelar', 'vote-cancel', () => {
+                    netSend({ type: 'show_cancel' });
+                });
+                rowBtns.appendChild(bCancel);
+            }
         } else {
             msg.textContent = '🗳️ ¿Qué vemos?' + (SHOW.by ? ' (lo propone ' + SHOW.by + ')' : '') + ' ⏳ ';
             showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
