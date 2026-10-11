@@ -69,6 +69,8 @@
         if (vk.open) return vk.el;
         const ov = $('overlay');
         if (ov && !ov.classList.contains('hidden')) return ov;
+        const qrModal = $('qr-modal');
+        if (qrModal && !qrModal.classList.contains('hidden')) return qrModal;
         if (typeof SHOW !== 'undefined' && SHOW.expanded) return $('screen-overlay');
         return document.body;
     }
@@ -145,6 +147,12 @@
     /* ───────────── Atrás ───────────── */
     function handleBack() {
         if (vk.open) { closeVK(false); return true; }
+        const qrModal = $('qr-modal');
+        if (qrModal && !qrModal.classList.contains('hidden')) {
+            if (typeof window.closeQrChatModal === 'function') window.closeQrChatModal();
+            else qrModal.classList.add('hidden');
+            return true;
+        }
         if (window.showHandleBack && showHandleBack()) return true;   // vídeo ampliado de la sesión de cine
         const ov = $('overlay');
         if (ov && !ov.classList.contains('hidden')) return false;
@@ -306,11 +314,14 @@
             if (canvasKey(ki, e)) { e.preventDefault(); e.stopPropagation(); return; }
             // borde de la sala: seguir con la navegación espacial (solo TV)
         }
+        // Escape para volver / cerrar modales / salir de pantalla completa (PC y TV)
+        if (ki.back) {
+            if (handleBack()) { e.preventDefault(); e.stopPropagation(); return; }
+        }
         if (!isTV) return;
 
-        if (ki.back || (ki.bs && !typing)) {
-            if (handleBack()) { e.preventDefault(); e.stopPropagation(); }
-            return;
+        if (ki.bs && !typing) {
+            if (handleBack()) { e.preventDefault(); e.stopPropagation(); return; }
         }
         if (typing) return;
         if (dir) { e.preventDefault(); e.stopPropagation(); moveFocus(dir); return; }
