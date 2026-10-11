@@ -368,7 +368,7 @@
         const chatInput = document.getElementById('chat-input');
         const chatSend = document.getElementById('chat-send');
 
-        roomNameEl.textContent = ROOM_NAMES[roomId] || ('Sala ' + roomId);
+        roomNameEl.textContent = roomId.startsWith('priv_') ? ('🔒 Sala Privada #' + roomId.replace('priv_', '')) : (ROOM_NAMES[roomId] || ('Sala ' + roomId));
         userTagEl.textContent = '👤 ' + userName;
 
         let ws = null;

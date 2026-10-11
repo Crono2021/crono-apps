@@ -52,15 +52,21 @@ function cyrb53(str, seed) {
     h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
     return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
 }
+function getUserPhone() {
+    let ph = '';
+    if (window.AndroidBridge && typeof window.AndroidBridge.getSavedPhone === 'function') {
+        try { ph = window.AndroidBridge.getSavedPhone() || ''; } catch (e) {}
+    }
+    if (!ph) {
+        try { ph = localStorage.getItem('cineflix_current_phone') || localStorage.getItem('user_phone') || ''; } catch (e) {}
+    }
+    return String(ph || '').replace(/[^0-9]/g, '');
+}
+
 function getClientKey() {
     // Con sesión de Telegram conocida, la clave sale de la cuenta: el mismo personaje en móvil, TV y web
     try {
-        let ph = '';
-        if (window.AndroidBridge && typeof window.AndroidBridge.getSavedPhone === 'function') {
-            try { ph = window.AndroidBridge.getSavedPhone() || ''; } catch (e) {}
-        }
-        if (!ph) ph = String(localStorage.getItem('cineflix_current_phone') || localStorage.getItem('user_phone') || '');
-        ph = ph.replace(/[^0-9]/g, '');
+        const ph = getUserPhone();
         if (ph.length >= 6) return 'tg' + cyrb53('cf:' + ph, 1) + cyrb53('cf:' + ph, 2) + cyrb53('cf:' + ph, 3);
     } catch (e) {}
     let k = null;
@@ -80,6 +86,55 @@ const CLIENT_KEY = getClientKey();
 const LEGACY_KEY = (() => {
     try { const k = localStorage.getItem(STORAGE_KEY); return k && k.length >= 12 && k !== CLIENT_KEY ? k : ''; } catch (e) { return ''; }
 })();
+
+async function syncUserAvatarFromServer() {
+    const ph = getUserPhone();
+    if (!ph || ph.length < 6) return;
+    try {
+        const res = await fetch('/api/cine/avatar?phone=' + encodeURIComponent(ph));
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.success && data.character) {
+                Object.assign(myCharacter, data.character);
+                if (data.name) myCharacter.name = data.name;
+                if (data.quote !== undefined) myCharacter.quote = data.quote;
+                hasSavedAvatar = true;
+                try { localStorage.setItem(STORAGE_AVATAR, JSON.stringify(myCharacter)); } catch (e) {}
+                renderLobbyMe();
+                if (typeof renderCreatorPreview === 'function' && view === 'creator') {
+                    renderCreatorPreview();
+                    updateProfileMeta();
+                }
+                if (net.wantRoom && net.ws && net.ws.readyState === 1) {
+                    netSend({ type: 'profile', name: myCharacter.name, character: charPayload(), quote: myCharacter.quote || '' });
+                }
+                return;
+            }
+        }
+    } catch (err) {
+        console.warn('[Cine] syncUserAvatarFromServer error:', err);
+    }
+
+    // Si el servidor no tiene avatar aún pero el usuario ya tenía uno local, guardarlo en el servidor
+    if (hasSavedAvatar && myCharacter) {
+        saveCharacterToServer(ph);
+    }
+}
+
+function saveCharacterToServer(ph) {
+    if (!ph) ph = getUserPhone();
+    if (!ph || ph.length < 6) return;
+    fetch('/api/cine/avatar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-phone': ph },
+        body: JSON.stringify({
+            phone: ph,
+            character: charPayload(),
+            name: myCharacter.name,
+            quote: myCharacter.quote || ''
+        })
+    }).catch(e => console.warn('[Cine] saveCharacterToServer error:', e));
+}
 
 function charPayload() {
     const c = myCharacter;
@@ -217,11 +272,18 @@ function onNetMessage(m) {
         case 'you': updateRoomUI(); break;
         case 'error': {
             toast(m.msg || 'Error');
+            if (m.code === 'no_room') {
+                leaveToLobby();
+            }
             // Mensaje rechazado por antispam: se devuelve al cuadro de texto para no perderlo
             if (m.code === 'slow' && lastSentText) {
                 const inp = document.getElementById('hud-chat-input');
                 if (inp && !inp.value) inp.value = lastSentText;
             }
+            break;
+        }
+        case 'private_room_created': {
+            if (typeof onPrivateRoomCreated === 'function') onPrivateRoomCreated(m);
             break;
         }
         case 'replaced': {
@@ -252,17 +314,33 @@ function askName() {
     if (inp) { try { inp.focus(); inp.select(); } catch (e) {} }
 }
 
-function enterRoom(id) {
-    if (!ROOMS.some(r => r.id === id)) return;
+function enterRoom(id, customMeta = null) {
+    const isPriv = String(id || '').startsWith('priv_');
+    if (!ROOMS.some(r => r.id === id) && !isPriv && !customMeta) return;
     if (!syncTgName() && (!myCharacter.name || GENERIC_NAME.test(myCharacter.name))) { askName(); return; }
     net.wantRoom = id; net.wantSeated = true; net.replaced = false; net.retry = 0;
-    net.seats = new Array(SEAT_COUNT).fill(null); net.youId = null; net.meta = ROOMS.find(r => r.id === id);
+    net.seats = new Array(SEAT_COUNT).fill(null); net.youId = null;
+
+    if (isPriv) {
+        const code = id.replace('priv_', '');
+        net.meta = customMeta || { id, name: 'Sala Privada #' + code, tagline: 'Código de acceso: ' + code, isPrivate: true, code };
+        const titleEl = document.getElementById('room-title');
+        if (titleEl) {
+            titleEl.innerHTML = `🔒 <b>Sala Privada #${code}</b> <span style="font-size:0.85em; opacity:0.85; margin-left:8px; font-weight:normal;">(Código: <b>${code}</b>)</span>`;
+        }
+    } else {
+        net.meta = customMeta || ROOMS.find(r => r.id === id);
+        const rIdx = ROOMS.findIndex(r => r.id === id);
+        const rNum = rIdx >= 0 ? (rIdx + 1) : 1;
+        const titleEl = document.getElementById('room-title');
+        if (titleEl) {
+            titleEl.textContent = `🎬 Sala ${rNum}: ${net.meta ? net.meta.name : ''} (Código: ${rNum})`;
+        }
+    }
+
     for (const k in trips) delete trips[k];
     clearBubbles();
     showResetLocal();
-    const rIdx = ROOMS.findIndex(r => r.id === id);
-    const rNum = rIdx >= 0 ? (rIdx + 1) : 1;
-    document.getElementById('room-title').textContent = `🎬 Sala ${rNum}: ${net.meta.name} (Código: ${rNum})`;
     switchView('cinema');
     updateRoomUI();
     connectRoom();
@@ -906,14 +984,15 @@ function saveCharacter() {
     if (!tgName() && (!typed || GENERIC_NAME.test(typed))) { askName(); return; }
     updateProfileMeta();
     try { localStorage.setItem(STORAGE_AVATAR, JSON.stringify(myCharacter)); hasSavedAvatar = true; } catch (e) {}
+    saveCharacterToServer();
     playBlip(880, 'sine', 0.15);
     if (net.wantRoom) {
         netSend({ type: 'profile', name: myCharacter.name, character: charPayload(), quote: myCharacter.quote || '' });
         switchView('cinema');
-        toast('Personaje actualizado ✅');
+        toast('Personaje actualizado y sincronizado ✅');
     } else {
         switchView('lobby');
-        toast('Personaje guardado ✅ Elige una sala');
+        toast('Personaje guardado y sincronizado ✅ Elige una sala');
     }
 }
 function exportAvatarPNG() {
@@ -1032,6 +1111,164 @@ window.openQrChatModal = openQrChatModal;
 window.closeQrChatModal = closeQrChatModal;
 window.setCompanionActive = setCompanionActive;
 
+/* ───────────────────────── Salas Privadas ───────────────────────── */
+let lastCreatedPrivateCode = null;
+
+function openPrivateRoomModal(initialTab = 'create') {
+    const modal = document.getElementById('priv-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    switchPrivTab(initialTab);
+    const err = document.getElementById('priv-join-error');
+    if (err) err.classList.add('hidden');
+}
+
+function closePrivateRoomModal() {
+    const modal = document.getElementById('priv-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function switchPrivTab(tab) {
+    const btnCreate = document.getElementById('tab-btn-create');
+    const btnJoin = document.getElementById('tab-btn-join');
+    const panelCreate = document.getElementById('priv-panel-create');
+    const panelJoin = document.getElementById('priv-panel-join');
+
+    if (tab === 'create') {
+        if (btnCreate) btnCreate.classList.add('active');
+        if (btnJoin) btnJoin.classList.remove('active');
+        if (panelCreate) panelCreate.classList.remove('hidden');
+        if (panelJoin) panelJoin.classList.add('hidden');
+    } else {
+        if (btnCreate) btnCreate.classList.remove('active');
+        if (btnJoin) btnJoin.classList.add('active');
+        if (panelCreate) panelCreate.classList.add('hidden');
+        if (panelJoin) panelJoin.classList.remove('hidden');
+        const inp = document.getElementById('input-priv-join-code');
+        if (inp) {
+            inp.value = '';
+            setTimeout(() => inp.focus(), 60);
+        }
+    }
+}
+
+async function requestCreatePrivateRoom() {
+    const initialBox = document.getElementById('priv-create-initial');
+    const loadingBox = document.getElementById('priv-create-loading');
+    const createdBox = document.getElementById('priv-created-box');
+    const codeDisplay = document.getElementById('priv-created-code');
+
+    if (initialBox) initialBox.classList.add('hidden');
+    if (loadingBox) loadingBox.classList.remove('hidden');
+    if (createdBox) createdBox.classList.add('hidden');
+
+    try {
+        const res = await fetch('/api/cine/private-room', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        if (!res.ok) throw new Error('Error al crear sala en el servidor');
+        const data = await res.json();
+        if (data && data.success && data.code) {
+            lastCreatedPrivateCode = data.code;
+            if (codeDisplay) codeDisplay.textContent = data.code;
+            if (loadingBox) loadingBox.classList.add('hidden');
+            if (createdBox) createdBox.classList.remove('hidden');
+            return;
+        }
+        throw new Error('Respuesta inválida del servidor');
+    } catch (err) {
+        console.error('[Cine Private] Error:', err);
+        if (loadingBox) loadingBox.classList.add('hidden');
+        if (initialBox) initialBox.classList.remove('hidden');
+        toast('⚠️ ' + (err.message || 'Error al crear sala privada'));
+    }
+}
+
+function enterCreatedPrivateRoom() {
+    if (!lastCreatedPrivateCode) return;
+    const code = lastCreatedPrivateCode;
+    closePrivateRoomModal();
+    enterRoom('priv_' + code);
+}
+
+function copyPrivateCode() {
+    if (!lastCreatedPrivateCode) return;
+    const btn = document.getElementById('btn-copy-code');
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(lastCreatedPrivateCode);
+        }
+    } catch (e) {}
+    toast(`📋 Código ${lastCreatedPrivateCode} copiado`);
+    if (btn) {
+        const orig = btn.textContent;
+        btn.textContent = '✔ ¡Copiado!';
+        setTimeout(() => { btn.textContent = orig; }, 2000);
+    }
+}
+
+async function joinPrivateRoomByCode() {
+    const input = document.getElementById('input-priv-join-code');
+    const errBox = document.getElementById('priv-join-error');
+    const code = input ? input.value.trim() : '';
+
+    if (!code || code.length !== 4 || !/^\d{4}$/.test(code)) {
+        if (errBox) {
+            errBox.textContent = 'Introduce un código numérico válido de 4 dígitos.';
+            errBox.classList.remove('hidden');
+        }
+        return;
+    }
+
+    if (errBox) errBox.classList.add('hidden');
+    const btn = document.getElementById('btn-join-room');
+    if (btn) { btn.disabled = true; btn.textContent = 'Verificando… ⏳'; }
+
+    try {
+        const res = await fetch(`/api/cine/private-room/${encodeURIComponent(code)}`);
+        if (!res.ok) {
+            if (errBox) {
+                errBox.textContent = `⚠️ No existe ninguna sala activa con el código ${code}. Comprueba que tu amigo la haya creado.`;
+                errBox.classList.remove('hidden');
+            }
+            if (btn) { btn.disabled = false; btn.textContent = '🚀 Unirme a la sala'; }
+            return;
+        }
+        const data = await res.json();
+        if (data && data.exists) {
+            closePrivateRoomModal();
+            enterRoom('priv_' + code);
+            return;
+        }
+        throw new Error('Sala no encontrada');
+    } catch (err) {
+        if (errBox) {
+            errBox.textContent = `⚠️ No existe ninguna sala activa con el código ${code}. Comprueba que tu amigo la haya creado.`;
+            errBox.classList.remove('hidden');
+        }
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🚀 Unirme a la sala'; }
+    }
+}
+
+function onPrivateRoomCreated(m) {
+    if (m && m.code) {
+        lastCreatedPrivateCode = m.code;
+        const codeDisplay = document.getElementById('priv-created-code');
+        const loadingBox = document.getElementById('priv-create-loading');
+        const createdBox = document.getElementById('priv-created-box');
+        if (codeDisplay) codeDisplay.textContent = m.code;
+        if (loadingBox) loadingBox.classList.add('hidden');
+        if (createdBox) createdBox.classList.remove('hidden');
+    }
+}
+
+window.openPrivateRoomModal = openPrivateRoomModal;
+window.closePrivateRoomModal = closePrivateRoomModal;
+window.switchPrivTab = switchPrivTab;
+window.requestCreatePrivateRoom = requestCreatePrivateRoom;
+window.enterCreatedPrivateRoom = enterCreatedPrivateRoom;
+window.copyPrivateCode = copyPrivateCode;
+window.joinPrivateRoomByCode = joinPrivateRoomByCode;
+
 /* ───────────────────────── Arranque ───────────────────────── */
 buildLobby();
 initCreatorOptions();
@@ -1039,13 +1276,14 @@ renderCreatorPreview();
 document.getElementById('tool-bubbles').classList.add('on');
 animationLoop();
 
-(function boot() {
+(async function boot() {
     const wanted = new URLSearchParams(location.search).get('room');
+    await syncUserAvatarFromServer();
     if (!hasSavedAvatar) {
         // Primera vez: crear personaje antes de entrar
         switchView('creator');
         toast('🎨 Crea tu personaje para entrar en el cine');
-    } else if (wanted && ROOMS.some(r => r.id === wanted)) {
+    } else if (wanted && (ROOMS.some(r => r.id === wanted) || wanted.startsWith('priv_'))) {
         enterRoom(wanted);
     } else {
         goLobby();

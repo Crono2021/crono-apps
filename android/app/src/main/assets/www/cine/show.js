@@ -320,6 +320,18 @@ function showRender() {
                 SHOW.myVote = 1; netSend({ type: 'show_vote', i: 1 }); showRender();
             }, SHOW.myVote === 1 ? 'on' : '');
             rowBtns.appendChild(bNo);
+
+            const bCatalog = showBtn('🔍 Buscar en catálogo', 'vote-catalog', () => {
+                if (!seated) return toast('Siéntate para proponer 🪑');
+                openProposeModal();
+            });
+            rowBtns.appendChild(bCatalog);
+
+            const bCancel = showBtn('❌ Cancelar', 'vote-cancel', () => {
+                if (!seated) return toast('Siéntate para cancelar 🪑');
+                netSend({ type: 'show_cancel' });
+            });
+            rowBtns.appendChild(bCancel);
         } else {
             msg.textContent = '🗳️ ¿Qué vemos?' + (SHOW.by ? ' (lo propone ' + SHOW.by + ')' : '') + ' ⏳ ';
             showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
@@ -338,15 +350,29 @@ function showRender() {
                 SHOW.myVote = rerollIdx; netSend({ type: 'show_vote', i: rerollIdx }); showRender();
             }, SHOW.myVote === rerollIdx ? 'on' : '');
             rowBtns.appendChild(bReroll);
+
+            const bCatalog = showBtn('🔍 Buscar en catálogo', 'vote-catalog', () => {
+                if (!seated) return toast('Siéntate para proponer 🪑');
+                openProposeModal();
+            }, 'on');
+            rowBtns.appendChild(bCatalog);
+
+            const bCancel = showBtn('❌ Cancelar', 'vote-cancel', () => {
+                if (!seated) return toast('Siéntate para cancelar 🪑');
+                netSend({ type: 'show_cancel' });
+            });
+            rowBtns.appendChild(bCancel);
         }
     } else if (SHOW.phase === 'loading') {
         msg.textContent = '🍿 «' + showTitle(SHOW.movie) + '» empieza en ';
         showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
         st.textContent = SHOW.error || SHOW.status || '';
     } else if (SHOW.phase === 'playing') {
+        const isPriv = (typeof net !== 'undefined' && net.wantRoom && net.wantRoom.startsWith('priv_'));
+        const privCode = isPriv ? net.wantRoom.replace('priv_', '') : '';
         const rIdx = (typeof ROOMS !== 'undefined' && typeof net !== 'undefined' && net.wantRoom)
             ? ROOMS.findIndex(r => r.id === net.wantRoom) : -1;
-        const rNum = rIdx >= 0 ? (rIdx + 1) : 1;
+        const rNum = isPriv ? privCode : (rIdx >= 0 ? (rIdx + 1) : 1);
         msg.textContent = '🎬 En pantalla: «' + showTitle(SHOW.movie) + '»';
         const ok = SHOW.prepared && !SHOW.error;
         if (ok) {
@@ -354,7 +380,7 @@ function showRender() {
             rowBtns.appendChild(showBtn('📺 Pantalla completa', 'fullscreen', showOpenFullscreen, 'on'));
             if (SHOW.blocked) rowBtns.appendChild(showBtn('▶ Toca para reproducir', 'play', () => { SHOW.blocked = false; showPlay(); showRender(); }, 'on'));
         }
-        st.textContent = SHOW.error || (ok ? `📱 Chat y mando desde el móvil: Código de sala: ${rNum}` : (SHOW.status || 'Preparando…'));
+        st.textContent = SHOW.error || (ok ? (isPriv ? `📱 Chat y mando: Código de sala privada: ${rNum}` : `📱 Chat y mando desde el móvil: Código de sala: ${rNum}`) : (SHOW.status || 'Preparando…'));
     }
     head.append(msg, rowBtns);
     panel.append(head, st);
@@ -495,9 +521,11 @@ function showUpdateOverlayBtns() {
     if (m) m.textContent = SHOW.soundOn ? '🔊 Sonido: ON' : '🔇 Silenciar';
     const b = showEl('so-room-badge');
     if (b) {
+        const isPriv = (typeof net !== 'undefined' && net.wantRoom && net.wantRoom.startsWith('priv_'));
+        const privCode = isPriv ? net.wantRoom.replace('priv_', '') : '';
         const rIdx = (typeof ROOMS !== 'undefined' && typeof net !== 'undefined' && net.wantRoom)
             ? ROOMS.findIndex(r => r.id === net.wantRoom) : -1;
-        const rNum = rIdx >= 0 ? (rIdx + 1) : 1;
+        const rNum = isPriv ? privCode : (rIdx >= 0 ? (rIdx + 1) : 1);
         b.textContent = `📱 Chat móvil: Código ${rNum}`;
     }
 }

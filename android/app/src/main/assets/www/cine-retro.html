@@ -7,7 +7,7 @@
     <link rel="icon" type="image/png" href="/favicon.png">
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/cine/cine.css?v=20261011d">
-    <link rel="stylesheet" href="/cine/room.css?v=20261011e">
+    <link rel="stylesheet" href="/cine/room.css?v=20261011f">
 </head>
 <body>
 
@@ -53,6 +53,26 @@
 
                 <h2 class="lobby-title">🎞️ Cartelera</h2>
                 <div class="lobby-grid" id="lobby-grid"></div>
+
+                <!-- Sección Salas Privadas -->
+                <div class="private-room-banner">
+                    <div class="priv-banner-left">
+                        <div class="priv-banner-icon">🔒</div>
+                        <div class="priv-banner-text">
+                            <div class="priv-banner-badge">SALA PRIVADA PARA AMIGOS</div>
+                            <h3 class="priv-banner-title">Crea o únete a una sala privada</h3>
+                            <p class="priv-banner-desc">Genera un código de 4 dígitos para ver películas solo con tus amigos sin nadie más en la sala.</p>
+                        </div>
+                    </div>
+                    <div class="priv-banner-actions">
+                        <button type="button" class="btn-priv-banner create" onclick="openPrivateRoomModal('create')">
+                            <span>➕</span> <b>Crear sala</b>
+                        </button>
+                        <button type="button" class="btn-priv-banner join" onclick="openPrivateRoomModal('join')">
+                            <span>🔑</span> <b>Unirse con código</b>
+                        </button>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -217,12 +237,54 @@
         </div>
     </div>
 
+    <!-- Modal Sala Privada (Crear / Unirse) -->
+    <div class="priv-modal-backdrop hidden" id="priv-modal" onclick="if(event.target===this)closePrivateRoomModal()">
+        <div class="priv-modal-box">
+            <button class="priv-modal-close" onclick="closePrivateRoomModal()" title="Cerrar">✕</button>
+            <div class="priv-modal-header">
+                <span class="priv-badge">🔒 WATCH PARTY PRIVADA</span>
+                <h3 class="priv-modal-title">Sala de Cine Privada</h3>
+                <div class="priv-modal-tabs">
+                    <button type="button" class="priv-tab-btn active" id="tab-btn-create" onclick="switchPrivTab('create')">Crear Sala</button>
+                    <button type="button" class="priv-tab-btn" id="tab-btn-join" onclick="switchPrivTab('join')">Unirse a Sala</button>
+                </div>
+            </div>
+
+            <!-- Pestaña Crear Sala -->
+            <div class="priv-tab-panel" id="priv-panel-create">
+                <p class="priv-instructions">Crea una sala única y aislada. Cineflix te generará un código de 4 dígitos que tus amigos podrán poner en "Unirse".</p>
+                <div id="priv-create-loading" class="priv-state-msg hidden">Generando código de sala… ⏳</div>
+                <div id="priv-created-box" class="priv-code-box hidden">
+                    <div class="priv-code-label">CÓDIGO DE TU SALA:</div>
+                    <div class="priv-code-display" id="priv-created-code">----</div>
+                    <div class="priv-code-actions">
+                        <button type="button" class="btn-secondary" id="btn-copy-code" onclick="copyPrivateCode()">📋 Copiar código</button>
+                    </div>
+                    <button type="button" class="btn-primary priv-enter-btn" id="btn-enter-created" onclick="enterCreatedPrivateRoom()">🎬 Entrar a mi sala ahora</button>
+                </div>
+                <div id="priv-create-initial">
+                    <button type="button" class="btn-primary priv-enter-btn" onclick="requestCreatePrivateRoom()">🎲 Generar código y crear sala</button>
+                </div>
+            </div>
+
+            <!-- Pestaña Unirse a Sala -->
+            <div class="priv-tab-panel hidden" id="priv-panel-join">
+                <p class="priv-instructions">Introduce el código de 4 dígitos que te ha compartido tu amigo para entrar en su sala:</p>
+                <div class="priv-input-wrap">
+                    <input type="text" id="input-priv-join-code" class="priv-code-input" maxlength="4" placeholder="0000" inputmode="numeric" pattern="[0-9]*" autocomplete="off" oninput="this.value = this.value.replace(/[^0-9]/g, '')" onkeydown="if(event.key==='Enter')joinPrivateRoomByCode()">
+                </div>
+                <div id="priv-join-error" class="priv-error-msg hidden"></div>
+                <button type="button" class="btn-primary priv-enter-btn" id="btn-join-room" onclick="joinPrivateRoomByCode()">🚀 Unirme a la sala</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/qrcode.min.js"></script>
     <script src="/cine/sprite.js?v=20261011e"></script>
     <script src="/cine/audio.js?v=20261011e"></script>
     <script src="/cine/scenes.js?v=20261011e"></script>
-    <script src="/cine/show.js?v=20261011e"></script>
-    <script src="/cine/app.js?v=20261011e"></script>
+    <script src="/cine/show.js?v=20261011f"></script>
+    <script src="/cine/app.js?v=20261011f"></script>
     <script src="/cine/tv.js?v=20261011e"></script>
 </body>
 </html>
