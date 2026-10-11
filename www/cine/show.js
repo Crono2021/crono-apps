@@ -793,8 +793,14 @@ function setupDragToScroll(container) {
 
     function onPointerDown(e) {
         if (e.button !== 0 && e.button !== undefined) return;
-        // Dejar que el scroll táctil nativo funcione en móviles táctiles
-        if (e.pointerType === 'touch') return;
+        if (isDown) return;
+
+        // Solo omitir en teléfonos móviles reales con pantalla táctil capacitiva física.
+        // En Smart TVs (LG webOS, Tizen, etc.), el Magic Remote emite 'touch', por lo que NUNCA debemos omitirlo en TV.
+        const isTV = window.cineIsTV || window._cineflixIsTV || /TV|WebOS|Tizen|SmartTV/i.test(navigator.userAgent);
+        if (!isTV && e.pointerType === 'touch' && ('ontouchstart' in window) && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+            return;
+        }
 
         isDown = true;
         isDragging = false;
@@ -814,7 +820,7 @@ function setupDragToScroll(container) {
         if (!isDown) return;
         const dy = e.clientY - startY;
 
-        if (!isDragging && Math.abs(dy) > 6) {
+        if (!isDragging && Math.abs(dy) > 10) {
             isDragging = true;
             container.classList.add('is-dragging');
         }
@@ -881,11 +887,10 @@ function setupDragToScroll(container) {
         window.addEventListener('pointermove', onPointerMove);
         window.addEventListener('pointerup', onPointerUp);
         window.addEventListener('pointercancel', onPointerUp);
-    } else {
-        container.addEventListener('mousedown', onPointerDown);
-        window.addEventListener('mousemove', onPointerMove);
-        window.addEventListener('mouseup', onPointerUp);
     }
+    container.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('mousemove', onPointerMove);
+    window.addEventListener('mouseup', onPointerUp);
 
     container.addEventListener('scroll', () => {
         updateProposeScrollNav();
