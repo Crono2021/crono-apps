@@ -427,8 +427,8 @@
             }
         };
     </script>
-  <script type="module" crossorigin src="./assets/index-CKN2uKS7.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-Bb2zp-1Z.css">
+  <script type="module" crossorigin src="./assets/index-DhqnQwze.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-Zx9Otx1U.css">
 </head>
 <body>
     <!-- Real-time error diagnostic banner (only visible if an error occurs) -->
@@ -665,6 +665,7 @@
                             <button id="nav-series" class="nav-link main-nav-btn focusable" title="Series">Series</button>
                             <button id="nav-platforms" class="nav-link main-nav-btn focusable" title="Plataformas">Plataformas</button>
                             <button id="nav-favorites" class="nav-link main-nav-btn focusable" title="Favoritos">Favoritos</button>
+                            <button id="nav-cine" class="nav-link main-nav-btn focusable" title="Sala de Cine">Sala de Cine</button>
                             <button id="nav-mycontent" class="nav-link main-nav-btn focusable" title="Mi Contenido">Mi Contenido</button>
                         </div>
                     </nav>
@@ -926,6 +927,10 @@
                 <button class="mobile-nav-btn" data-target="nav-favorites" title="Favoritos">
                     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
                     <span>Favoritos</span>
+                </button>
+                <button class="mobile-nav-btn" data-target="nav-cine" title="Sala de Cine">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                    <span>Cine</span>
                 </button>
                 <button class="mobile-nav-btn" data-target="nav-mycontent" title="Mi Contenido">
                     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -1416,6 +1421,36 @@
                     </div>
                     <p id="remote-join-error" class="remote-error hidden"></p>
                     <a href="#" id="remote-switch-to-tv" class="remote-switch-link">¿Quieres mostrar el código aquí?</a>
+
+                    <!-- CINEMA ROOM COMPANION -->
+                    <div id="remote-cinema-companion-section" class="remote-cinema-section">
+                        <div class="remote-cinema-divider">
+                            <span>🍿 SALA DE CINE</span>
+                        </div>
+
+                        <!-- Card direct button if active cinema session found -->
+                        <div id="remote-cinema-direct-card" class="remote-cinema-direct-card hidden">
+                            <div class="remote-cinema-direct-header">
+                                <span id="remote-cinema-direct-badge" class="remote-cinema-live-pill">🔴 EN DIRECTO</span>
+                                <span id="remote-cinema-direct-room" class="remote-cinema-room-pill">Sala 1</span>
+                            </div>
+                            <div id="remote-cinema-direct-title" class="remote-cinema-movie-title">Regreso al Futuro</div>
+                            <div id="remote-cinema-direct-meta" class="remote-cinema-movie-meta">Película en pantalla</div>
+                            <button id="btn-cinema-direct-join" type="button" class="btn-cinema-direct-join">
+                                💬 Chatear en la sala de cine
+                            </button>
+                        </div>
+
+                        <!-- Room code input box -->
+                        <div class="remote-cinema-code-box">
+                            <p class="remote-cinema-code-prompt">O introduce el código de sala:</p>
+                            <div class="remote-cinema-code-row">
+                                <input type="text" id="remote-cinema-code-input" maxlength="8" placeholder="Ej: 1" class="remote-code-input remote-cinema-code-input" autocomplete="off">
+                                <button id="btn-cinema-code-join" type="button" class="remote-join-btn remote-cinema-join-btn">Entrar al chat</button>
+                            </div>
+                            <p id="remote-cinema-code-error" class="remote-error hidden"></p>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Step 2: Controller pad -->
@@ -1431,8 +1466,9 @@
                     <div id="remote-platforms-panel" class="hidden" style="margin-bottom: 12px;">
                         <div id="remote-platforms-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; padding:8px; background:rgba(255,255,255,0.04); border-radius:12px;"></div>
                     </div>
-                    <div style="display: flex; justify-content: center; margin-bottom: 15px;">
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 15px;">
                         <button id="btn-remote-total" class="remote-action-btn" style="background:#8b5cf6; color:white; font-weight:bold; width: 100%; display: none;">🎮 CONTROL TOTAL</button>
+                        <button id="btn-pad-cinema-chat" type="button" class="remote-action-btn" style="background:linear-gradient(135deg,#f59e0b,#d97706); color:white; font-weight:bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;">🍿 Chatear en Sala de Cine</button>
                     </div>
                     <div class="remote-dpad">
                         <button class="remote-dpad-btn remote-dpad-up" data-key="ArrowUp">▲</button>
@@ -1449,6 +1485,47 @@
                     <div id="remote-kb-row" class="remote-kb-row hidden">
                         <input type="text" id="remote-text-input" placeholder="Escribe para buscar..." class="remote-text-input" autocomplete="off">
                         <button id="remote-text-send" class="remote-join-btn">Enviar</button>
+                    </div>
+                </div>
+
+                <!-- Step 3: Cinema Companion Chat -->
+                <div id="remote-cinema-chat-step" class="remote-cinema-chat-step hidden">
+                    <div class="cinema-companion-topbar">
+                        <button id="btn-cinema-back-to-remote" type="button" class="cinema-companion-back-btn">← Mando</button>
+                        <div class="cinema-companion-info">
+                            <div id="cinema-comp-room-name" class="cinema-comp-room-name">🍿 Sala 1: Regreso al Futuro</div>
+                            <div id="cinema-comp-meta" class="cinema-comp-meta">👥 0 en la sala</div>
+                        </div>
+                    </div>
+
+                    <!-- Voting card if phase === 'voting' -->
+                    <div id="cinema-comp-voting" class="cinema-comp-voting hidden">
+                        <div class="cinema-comp-voting-head">
+                            <span>🗳️ Vota la película en tu móvil</span>
+                            <b id="cinema-comp-voting-timer">40s</b>
+                        </div>
+                        <div id="cinema-comp-candidates-list" class="cinema-comp-candidates-list"></div>
+                    </div>
+
+                    <!-- Chat messages container -->
+                    <div id="cinema-comp-messages" class="cinema-comp-messages"></div>
+
+                    <!-- Quick emoji reactions row -->
+                    <div class="cinema-comp-reactions">
+                        <button type="button" class="cinema-reaction-btn" data-emoji="🍿">🍿</button>
+                        <button type="button" class="cinema-reaction-btn" data-emoji="👏">👏</button>
+                        <button type="button" class="cinema-reaction-btn" data-emoji="😂">😂</button>
+                        <button type="button" class="cinema-reaction-btn" data-emoji="🔥">🔥</button>
+                        <button type="button" class="cinema-reaction-btn" data-emoji="❤️">❤️</button>
+                        <button type="button" class="cinema-reaction-btn" data-emoji="😱">😱</button>
+                        <button type="button" class="cinema-reaction-btn" data-emoji="🤫">🤫</button>
+                        <button type="button" class="cinema-reaction-btn" data-emoji="💤">💤</button>
+                    </div>
+
+                    <!-- Chat input row -->
+                    <div class="cinema-comp-input-row">
+                        <input type="text" id="cinema-comp-input" class="cinema-comp-input" placeholder="Comenta la película..." maxlength="60" autocomplete="off">
+                        <button id="btn-cinema-comp-send" type="button" class="remote-join-btn cinema-comp-send-btn">Enviar</button>
                     </div>
                 </div>
             </div>

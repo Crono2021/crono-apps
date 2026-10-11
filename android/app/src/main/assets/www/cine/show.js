@@ -292,7 +292,7 @@ function showRender() {
     const st = document.createElement('div'); st.className = 'show-status';
     const seated = mySeat() >= 0;
     if (SHOW.phase === 'idle') {
-        msg.textContent = '🎟️ Sesión de cine: elige una del catálogo o vota entre 4 al azar';
+        msg.textContent = '🎟️ Sesión de cine: elige del catálogo o 4 al azar (mín. 2 personas para iniciar)';
         rowBtns.appendChild(showBtn('🔍 Buscar en catálogo', 'propose-catalog', () => {
             if (!seated) return toast('Siéntate para proponer una película 🪑');
             openProposeModal();
