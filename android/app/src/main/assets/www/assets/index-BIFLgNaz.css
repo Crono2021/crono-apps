@@ -1118,23 +1118,37 @@ body {
     /* Compact Mobile Topbar */
     .topbar {
         height: 54px !important;
-        padding: 0 12px !important;
+        padding: 0 10px !important;
+        box-sizing: border-box !important;
     }
 
     .topbar-left {
-        gap: 8px !important;
+        gap: 6px !important;
+        flex-shrink: 0 !important;
+    }
+
+    .topbar-brand {
+        display: flex !important;
+        align-items: center !important;
+    }
+
+    .topbar-brand .brand-logo-img {
+        height: 30px !important;
+        width: auto !important;
+        max-width: 100px !important;
+        object-fit: contain !important;
     }
 
     .topbar-brand .brand-logo-text {
-        font-size: 1.45rem !important;
+        font-size: 1.35rem !important;
         letter-spacing: 1px !important;
     }
 
     .topbar-right {
         display: flex !important;
         align-items: center !important;
-        gap: 8px !important;
-        flex: 1 !important;
+        gap: 6px !important;
+        flex: 1 1 auto !important;
         justify-content: flex-end !important;
         min-width: 0 !important;
     }
@@ -1144,14 +1158,40 @@ body {
         align-items: center !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
-        min-width: 0 !important;
-        flex: 0 1 125px !important;
-        max-width: 125px !important;
-        padding: 4px 8px !important;
+        flex: 1 1 auto !important;
+        min-width: 95px !important;
+        max-width: 180px !important;
+        height: 34px !important;
+        border-radius: 9999px !important;
+        background: rgba(14, 20, 36, 0.85) !important;
+        border: 1px solid rgba(210, 230, 255, 0.28) !important;
+        padding: 0 8px 0 10px !important;
+        position: relative !important;
+        transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
     }
 
     .topbar-search .search-icon-btn {
-        display: none !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        order: -1 !important;
+        width: 16px !important;
+        height: 16px !important;
+        margin-right: 6px !important;
+        margin-left: 0 !important;
+        padding: 0 !important;
+        color: #ffd700 !important;
+        opacity: 0.85 !important;
+        flex-shrink: 0 !important;
+        background: transparent !important;
+        border: none !important;
+        cursor: pointer !important;
+    }
+
+    .topbar-search .search-icon-btn svg {
+        width: 14px !important;
+        height: 14px !important;
+        stroke: #ffd700 !important;
     }
 
     .topbar-search input,
@@ -1160,14 +1200,33 @@ body {
         min-width: 0 !important;
         max-width: 100% !important;
         box-sizing: border-box !important;
-        font-size: 0.78rem !important;
+        font-size: 0.8rem !important;
         text-overflow: ellipsis !important;
         padding: 0 !important;
+        background: transparent !important;
+        border: none !important;
+        outline: none !important;
+        color: #f1f5f9 !important;
+        font-family: inherit !important;
     }
 
     .topbar-search:focus-within {
-        flex: 0 1 150px !important;
-        max-width: 150px !important;
+        position: absolute !important;
+        left: 8px !important;
+        right: 8px !important;
+        top: 8px !important;
+        width: calc(100% - 16px) !important;
+        max-width: none !important;
+        height: 38px !important;
+        z-index: 1005 !important;
+        background: rgba(10, 16, 30, 0.98) !important;
+        border: 1.5px solid rgba(255, 215, 75, 0.85) !important;
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.95), 0 0 16px rgba(255, 215, 75, 0.45) !important;
+        padding: 0 12px !important;
+    }
+
+    .topbar-search:focus-within input {
+        font-size: 0.88rem !important;
     }
 
     .topbar-search .search-clear-btn {
@@ -1180,15 +1239,31 @@ body {
     .topbar-actions {
         display: flex !important;
         align-items: center !important;
-        gap: 6px !important;
+        gap: 4px !important;
         flex-shrink: 0 !important;
         z-index: 5 !important;
     }
 
     .topbar-actions .btn-icon {
-        width: 34px !important;
-        height: 34px !important;
+        width: 30px !important;
+        height: 30px !important;
+        min-width: 30px !important;
         flex-shrink: 0 !important;
+        padding: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    .topbar-actions .btn-icon svg {
+        width: 16px !important;
+        height: 16px !important;
+    }
+
+    .topbar-actions .profile-avatar-mini {
+        width: 28px !important;
+        height: 28px !important;
+        font-size: 0.78rem !important;
     }
 
     /* Extra padding at bottom for all views so bottom nav does not obscure content */

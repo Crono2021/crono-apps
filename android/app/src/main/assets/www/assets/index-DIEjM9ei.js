@@ -61,7 +61,7 @@ var __async = (__this, __arguments, generator) => {
 };
 var __forAwait = (obj, it2, method) => (it2 = obj[__knownSymbol("asyncIterator")]) ? it2.call(obj) : (obj = obj[__knownSymbol("iterator")](), it2 = {}, method = (key2, fn) => (fn = obj[key2]) && (it2[key2] = (arg) => new Promise((yes, no, done) => (arg = fn.call(obj, arg), done = arg.done, Promise.resolve(arg.value).then((value) => yes({ value, done }), no)))), method("next"), method("return"), it2);
 var require_index_001 = __commonJS({
-  "assets/index-BZFtbnzf.js"(exports) {
+  "assets/index-DIEjM9ei.js"(exports) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t;
     (/* @__PURE__ */ __name(function polyfill2() {
       const relList = document.createElement("link").relList;
@@ -92482,10 +92482,10 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
           const searchContainer = document.querySelector(".topbar-search");
           if (searchInput) {
             if (viewId === "view-movies") {
-              searchInput.placeholder = "🔍 Buscar películas...";
+              searchInput.placeholder = window.innerWidth <= 768 ? "Buscar..." : "Buscar películas...";
               if (searchContainer) searchContainer.style.display = "";
             } else if (viewId === "view-catalog") {
-              searchInput.placeholder = "🔍 Buscar series...";
+              searchInput.placeholder = window.innerWidth <= 768 ? "Buscar..." : "Buscar series...";
               if (searchContainer) searchContainer.style.display = "";
             } else {
               if (searchContainer) searchContainer.style.display = "none";
@@ -94324,6 +94324,13 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
           searchInput.value = "";
           syncClearBtn();
           handleUnifiedSearch();
+          searchInput.focus();
+        });
+      }
+      const triggerBtn = $("search-trigger-btn");
+      if (triggerBtn) {
+        triggerBtn.addEventListener("click", (e) => {
+          e.preventDefault();
           searchInput.focus();
         });
       }
