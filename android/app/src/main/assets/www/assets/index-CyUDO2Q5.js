@@ -61,8 +61,8 @@ var __async = (__this, __arguments, generator) => {
 };
 var __forAwait = (obj, it2, method) => (it2 = obj[__knownSymbol("asyncIterator")]) ? it2.call(obj) : (obj = obj[__knownSymbol("iterator")](), it2 = {}, method = (key2, fn) => (fn = obj[key2]) && (it2[key2] = (arg) => new Promise((yes, no, done) => (arg = fn.call(obj, arg), done = arg.done, Promise.resolve(arg.value).then((value) => yes({ value, done }), no)))), method("next"), method("return"), it2);
 var require_index_001 = __commonJS({
-  "assets/index-DIEjM9ei.js"(exports) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t;
+  "assets/index-CyUDO2Q5.js"(exports) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     (/* @__PURE__ */ __name(function polyfill2() {
       const relList = document.createElement("link").relList;
       if (relList && relList.supports && relList.supports("modulepreload")) {
@@ -92491,9 +92491,6 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
               if (searchContainer) searchContainer.style.display = "none";
             }
           }
-          const isAdmin = !!localStorage.getItem("admin_token");
-          if ($("btn-admin-create-movie")) $("btn-admin-create-movie").style.display = viewId === "view-movies" && isAdmin ? "inline-block" : "none";
-          if ($("btn-admin-toggle-payload")) $("btn-admin-toggle-payload").style.display = viewId === "view-catalog" && isAdmin ? "inline-block" : "none";
           const nonHeroViews = ["view-platforms", "view-favorites", "view-my-content", "view-continue"];
           if (nonHeroViews.includes(viewId)) {
             (_a2 = $("main-topbar")) == null ? void 0 : _a2.classList.add("solid-bg");
@@ -93477,17 +93474,6 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         location.reload();
       }
     }));
-    (_a = $("btn-admin-toggle-payload")) == null ? void 0 : _a.addEventListener("click", () => {
-      adminShowPayload = !adminShowPayload;
-      localStorage.setItem("admin_show_payload", adminShowPayload ? "1" : "");
-      $("btn-admin-toggle-payload").style.color = adminShowPayload ? "#f87171" : "#22c55e";
-      $("btn-admin-toggle-payload").textContent = adminShowPayload ? "🎬 MP4" : "🎬 MKV";
-      localStorage.removeItem(CATALOG_CACHE_KEY);
-      localStorage.removeItem(MOVIES_CACHE_KEY);
-      catalog = [];
-      moviesCatalog = [];
-      location.reload();
-    });
     const PLATFORMS = [
       { id: 213, providerId: 8, name: "Netflix", logo: "https://image.tmdb.org/t/p/w300/wwemzKWzjKYJFfCeiB57q3r4Bcm.png" },
       { id: 1024, providerId: 119, name: "Prime Video", logo: "https://image.tmdb.org/t/p/w300/w7HfLNm9CWwRmAMU58udl2L7We7.png" },
@@ -93526,7 +93512,7 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       });
     }
     __name(showPlatforms, "showPlatforms");
-    (_b = $("btn-back-platforms")) == null ? void 0 : _b.addEventListener("click", () => {
+    (_a = $("btn-back-platforms")) == null ? void 0 : _a.addEventListener("click", () => {
       var _a2, _b2, _c2, _d2;
       const allGrid = $("platform-all-grid");
       if (allGrid && (!allGrid.classList.contains("hidden") || allGrid.style.display === "grid")) {
@@ -93551,14 +93537,14 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         if (window.cineflixTvNav) window.cineflixTvNav.restoreFocus();
       }
     });
-    (_c = $("platform-nav-series")) == null ? void 0 : _c.addEventListener("click", () => {
+    (_b = $("platform-nav-series")) == null ? void 0 : _b.addEventListener("click", () => {
       $("platform-nav-series").classList.add("active");
       $("platform-nav-movies").classList.remove("active");
       if ($("view-platforms")) $("view-platforms").scrollTop = 0;
       initPlatformGenreTabs();
       renderPlatformCurrentTab();
     });
-    (_d = $("platform-nav-movies")) == null ? void 0 : _d.addEventListener("click", () => {
+    (_c = $("platform-nav-movies")) == null ? void 0 : _c.addEventListener("click", () => {
       $("platform-nav-movies").classList.add("active");
       $("platform-nav-series").classList.remove("active");
       if ($("view-platforms")) $("view-platforms").scrollTop = 0;
@@ -93860,60 +93846,6 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
     if (btnRefreshCatalog) btnRefreshCatalog.addEventListener("click", forceRefreshCache);
     const btnRefreshCatalogTop = document.getElementById("btn-refresh-catalog-top");
     if (btnRefreshCatalogTop) btnRefreshCatalogTop.addEventListener("click", forceRefreshCache);
-    const btnAdminTogglePayload = document.getElementById("btn-admin-toggle-payload");
-    const btnAdminCreateMovie = document.getElementById("btn-admin-create-movie");
-    if (localStorage.getItem("admin_token")) {
-      let updateAdminToggleUi2 = function() {
-        if (window.forceAdminPayloadType === "mkv") {
-          btnAdminTogglePayload.textContent = "🎬 MKV";
-          btnAdminTogglePayload.style.color = "#ef4444";
-          btnAdminTogglePayload.title = "Modo Dios: Fuente MKV";
-        } else {
-          btnAdminTogglePayload.textContent = "🎬 MP4";
-          btnAdminTogglePayload.style.color = "#22c55e";
-          btnAdminTogglePayload.title = "Modo Dios: Fuente MP4";
-        }
-      };
-      var updateAdminToggleUi = updateAdminToggleUi2;
-      __name(updateAdminToggleUi2, "updateAdminToggleUi");
-      if (btnAdminTogglePayload) btnAdminTogglePayload.style.display = "inline-block";
-      if (btnAdminCreateMovie) btnAdminCreateMovie.style.display = "inline-block";
-      if (btnAdminCreateMovie) {
-        btnAdminCreateMovie.addEventListener("click", () => {
-          const modal = document.getElementById("admin-edit-modal");
-          document.getElementById("admin-edit-id").value = "new";
-          document.getElementById("admin-edit-type").value = "movie";
-          const btnAct = document.getElementById("admin-btn-actualizar");
-          if (btnAct) btnAct.style.display = "none";
-          document.getElementById("admin-edit-title").value = "";
-          document.getElementById("admin-edit-search-title").value = "";
-          document.getElementById("admin-edit-year").value = (/* @__PURE__ */ new Date()).getFullYear();
-          document.getElementById("admin-edit-tmdb-id").value = "";
-          const payloadInput = document.getElementById("admin-edit-payload");
-          if (payloadInput) payloadInput.value = "";
-          const g = document.getElementById("admin-edit-payload-group");
-          if (g) g.style.display = "none";
-          modal.classList.remove("hidden");
-          if (window._cineflixIsTV && window.cineflixTvNav) {
-            setTimeout(() => {
-              if (!window.cineflixTvNav.focusPriority()) window.cineflixTvNav.focusFirst();
-            }, 150);
-          }
-        });
-      }
-      window.forceAdminPayloadType = localStorage.getItem("admin_payload_pref") || "mp4";
-      updateAdminToggleUi2();
-      btnAdminTogglePayload.addEventListener("click", () => {
-        window.forceAdminPayloadType = window.forceAdminPayloadType === "mkv" ? "mp4" : "mkv";
-        localStorage.setItem("admin_payload_pref", window.forceAdminPayloadType);
-        updateAdminToggleUi2();
-        if (document.getElementById("view-series").classList.contains("active") && typeof currentSeries !== "undefined") {
-          openSeries(currentSeries);
-        } else if (document.getElementById("view-episodes").classList.contains("active") && typeof currentSeries !== "undefined" && typeof window.currentSeasonBtn !== "undefined") {
-          openSeason(window.currentSeasonBtn, currentSeries);
-        }
-      });
-    }
     let _remoteSearchRequestId = 0;
     let _remoteSearchController = null;
     function handleUnifiedSearch() {
@@ -94833,8 +94765,8 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       }
     }
     __name(closeFullscreenTrailer, "closeFullscreenTrailer");
-    (_e = $("fullscreen-trailer-close")) == null ? void 0 : _e.addEventListener("click", closeFullscreenTrailer);
-    (_f = $("fullscreen-trailer-modal")) == null ? void 0 : _f.addEventListener("click", (e) => {
+    (_d = $("fullscreen-trailer-close")) == null ? void 0 : _d.addEventListener("click", closeFullscreenTrailer);
+    (_e = $("fullscreen-trailer-modal")) == null ? void 0 : _e.addEventListener("click", (e) => {
       if (e.target === $("fullscreen-trailer-modal")) closeFullscreenTrailer();
     });
     function handleDetailTrailerClick(type2, item, customBtn = null) {
@@ -96664,27 +96596,27 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
       }
       if (window.cineflixTvNav) window.cineflixTvNav.restoreFocus();
     });
-    (_g = $("nav-movies")) == null ? void 0 : _g.addEventListener("click", () => {
+    (_f = $("nav-movies")) == null ? void 0 : _f.addEventListener("click", () => {
       if (window.cineflixTvNav) window.cineflixTvNav.clearFocusStack();
       showMovies();
     });
-    (_h = $("nav-series")) == null ? void 0 : _h.addEventListener("click", () => {
+    (_g = $("nav-series")) == null ? void 0 : _g.addEventListener("click", () => {
       if (window.cineflixTvNav) window.cineflixTvNav.clearFocusStack();
       showCatalog();
     });
-    (_i = $("nav-platforms")) == null ? void 0 : _i.addEventListener("click", () => {
+    (_h = $("nav-platforms")) == null ? void 0 : _h.addEventListener("click", () => {
       if (window.cineflixTvNav) window.cineflixTvNav.clearFocusStack();
       showPlatforms();
     });
-    (_j = $("nav-favorites")) == null ? void 0 : _j.addEventListener("click", () => {
+    (_i = $("nav-favorites")) == null ? void 0 : _i.addEventListener("click", () => {
       if (window.cineflixTvNav) window.cineflixTvNav.clearFocusStack();
       showFavorites();
     });
-    (_k = $("nav-cine")) == null ? void 0 : _k.addEventListener("click", () => {
+    (_j = $("nav-cine")) == null ? void 0 : _j.addEventListener("click", () => {
       if (window.cineflixTvNav) window.cineflixTvNav.clearFocusStack();
       window.location.href = "/cine-retro.html";
     });
-    (_l = $("nav-mycontent")) == null ? void 0 : _l.addEventListener("click", () => {
+    (_k = $("nav-mycontent")) == null ? void 0 : _k.addEventListener("click", () => {
       if (window.cineflixTvNav) window.cineflixTvNav.clearFocusStack();
       showMyContent();
     });
@@ -96704,7 +96636,7 @@ destroy_session#e7512126 session_id:long = DestroySessionRes;
         triggerNav();
       });
     });
-    (_m = $("nav-continue")) == null ? void 0 : _m.addEventListener("click", () => {
+    (_l = $("nav-continue")) == null ? void 0 : _l.addEventListener("click", () => {
       if (window.cineflixTvNav) window.cineflixTvNav.clearFocusStack();
       showContinueWatchingView();
     });
@@ -99049,10 +98981,10 @@ ${err.message}`);
         }, 150);
       }
     };
-    (_n = document.getElementById("admin-btn-cancel")) == null ? void 0 : _n.addEventListener("click", () => {
+    (_m = document.getElementById("admin-btn-cancel")) == null ? void 0 : _m.addEventListener("click", () => {
       document.getElementById("admin-edit-modal").classList.add("hidden");
     });
-    (_o = document.getElementById("admin-btn-save")) == null ? void 0 : _o.addEventListener("click", () => __async(null, null, function* () {
+    (_n = document.getElementById("admin-btn-save")) == null ? void 0 : _n.addEventListener("click", () => __async(null, null, function* () {
       const btn = document.getElementById("admin-btn-save");
       btn.disabled = true;
       btn.textContent = "Guardando...";
@@ -99126,7 +99058,7 @@ ${err.message}`);
         btn.textContent = "💾 Guardar";
       }
     }));
-    (_p = document.getElementById("admin-btn-actualizar")) == null ? void 0 : _p.addEventListener("click", () => __async(null, null, function* () {
+    (_o = document.getElementById("admin-btn-actualizar")) == null ? void 0 : _o.addEventListener("click", () => __async(null, null, function* () {
       const btn = document.getElementById("admin-btn-actualizar");
       btn.disabled = true;
       btn.textContent = "Actualizando...";
@@ -99868,7 +99800,7 @@ ${err.message}`);
       });
     }
     __name(updateMovieFavButton, "updateMovieFavButton");
-    (_q = $("fav-tab-series")) == null ? void 0 : _q.addEventListener("click", () => {
+    (_p = $("fav-tab-series")) == null ? void 0 : _p.addEventListener("click", () => {
       favoritesCurrentTab = "series";
       renderFavoritesGrid("series");
       resolveMissingFavorites("series").then((added) => {
@@ -99876,7 +99808,7 @@ ${err.message}`);
       }).catch(() => {
       });
     });
-    (_r = $("fav-tab-movies")) == null ? void 0 : _r.addEventListener("click", () => {
+    (_q = $("fav-tab-movies")) == null ? void 0 : _q.addEventListener("click", () => {
       favoritesCurrentTab = "movie";
       renderFavoritesGrid("movie");
       resolveMissingFavorites("movie").then((added) => {
@@ -99945,10 +99877,10 @@ ${err.message}`);
     window.openRetroCine = function() {
       window.location.href = "/cine-retro.html";
     };
-    (_s = $("btn-actor-back")) == null ? void 0 : _s.addEventListener("click", () => {
+    (_r = $("btn-actor-back")) == null ? void 0 : _r.addEventListener("click", () => {
       if (typeof window.__cineflixBack === "function") window.__cineflixBack();
     });
-    (_t = $("btn-actor-profile-back")) == null ? void 0 : _t.addEventListener("click", () => {
+    (_s = $("btn-actor-profile-back")) == null ? void 0 : _s.addEventListener("click", () => {
       if (typeof window.__cineflixBack === "function") window.__cineflixBack();
     });
     let _dragIsDown = false;
