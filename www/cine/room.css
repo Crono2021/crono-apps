@@ -726,6 +726,114 @@ body.tv-mode input[readonly] { cursor: pointer; }
     to { opacity: 1; transform: scale(1); }
 }
 
+/* ── Selección de Versión / Archivo del Bot en Proponer ── */
+.propose-files {
+    padding: 12px 18px 18px 18px;
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 52vh;
+}
+.propose-files.hidden {
+    display: none !important;
+}
+.propose-file-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 10px 14px;
+    transition: all 0.18s ease;
+    cursor: pointer;
+    text-align: left;
+}
+.propose-file-item:hover {
+    background: rgba(241, 196, 15, 0.1);
+    border-color: rgba(241, 196, 15, 0.5);
+    transform: translateY(-1px);
+}
+.propose-file-item.recommended {
+    background: linear-gradient(135deg, rgba(241, 196, 15, 0.14) 0%, rgba(30, 41, 59, 0.5) 100%);
+    border-color: rgba(241, 196, 15, 0.5);
+}
+.propose-file-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.propose-file-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #f8fafc;
+    word-break: break-all;
+    line-height: 1.35;
+}
+.propose-file-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.propose-file-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.propose-file-badge.badge-mp4 {
+    background: rgba(46, 204, 113, 0.2);
+    border: 1px solid rgba(46, 204, 113, 0.5);
+    color: #2ecc71;
+}
+.propose-file-badge.badge-mkv-light {
+    background: rgba(56, 189, 248, 0.18);
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    color: #38bdf8;
+}
+.propose-file-badge.badge-mkv-heavy {
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171;
+}
+.propose-file-badge.badge-auto {
+    background: rgba(241, 196, 15, 0.2);
+    border: 1px solid rgba(241, 196, 15, 0.5);
+    color: #f1c40f;
+}
+.propose-file-size {
+    font-size: 11px;
+    color: #94a3b8;
+    font-weight: 500;
+}
+.propose-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #cbd5e1;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 6px;
+    transition: all 0.15s ease;
+    align-self: flex-start;
+}
+.propose-back-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
 /* ── Banner de Sala Privada en Lobby ── */
 .private-room-banner {
     margin-top: 24px;

@@ -568,6 +568,11 @@ class AndroidBridge(
 
     @JavascriptInterface
     fun startCineScreenStream(queryId: String, searchTitle: String, yearStr: String) {
+        startCineScreenStreamWithFile(queryId, searchTitle, yearStr, "")
+    }
+
+    @JavascriptInterface
+    fun startCineScreenStreamWithFile(queryId: String, searchTitle: String, yearStr: String, fileMsgIdStr: String) {
         scope.launch {
             try {
                 if (engine.authState.value !is TelegramEngine.AuthState.Ready) {
@@ -582,10 +587,22 @@ class AndroidBridge(
                     callback(queryId, false, "NOT_FOUND")
                     return@launch
                 }
-                val picked = videos.firstOrNull {
-                    it.mimeType.equals("video/mp4", ignoreCase = true) ||
-                    it.fileName.endsWith(".mp4", ignoreCase = true)
-                } ?: videos.first()
+
+                val targetMsgId = fileMsgIdStr.trim().toLongOrNull() ?: 0L
+                val picked = (if (targetMsgId > 0) {
+                    videos.firstOrNull { it.msgId == targetMsgId }
+                } else null) ?: run {
+                    // Compatibilidad Cineflix:
+                    // 1) Si hay MP4, SIEMPRE elegir versión MP4 para máxima compatibilidad
+                    // 2) Si no, MKV que no supere 4GB (evita 4K / Dolby Vision / HDR pesados)
+                    // 3) Primera disponible
+                    videos.firstOrNull {
+                        it.mimeType.equals("video/mp4", ignoreCase = true) ||
+                        it.fileName.endsWith(".mp4", ignoreCase = true)
+                    } ?: videos.firstOrNull {
+                        it.fileSize <= 4294967296L // <= 4GB
+                    } ?: videos.first()
+                }
 
                 try {
                     cineScreenServer?.stop()

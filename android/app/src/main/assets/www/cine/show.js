@@ -91,12 +91,37 @@ window.onTelegramCallback = (queryId, success, payload) => {
     if (prevOnTelegramCallback) prevOnTelegramCallback(queryId, success, payload);
 };
 
-function callNativeCineStream(searchTitle, yearStr) {
+function callNativeCineStream(searchTitle, yearStr, fileMsgIdStr = '') {
     return new Promise((resolve, reject) => {
         const queryId = 'cine_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
         nativeResolvers.set(queryId, { resolve, reject });
         try {
-            window.AndroidBridge.startCineScreenStream(queryId, String(searchTitle || ''), String(yearStr || ''));
+            if (window.AndroidBridge && window.AndroidBridge.startCineScreenStreamWithFile) {
+                window.AndroidBridge.startCineScreenStreamWithFile(queryId, String(searchTitle || ''), String(yearStr || ''), String(fileMsgIdStr || ''));
+            } else if (window.AndroidBridge && window.AndroidBridge.startCineScreenStream) {
+                window.AndroidBridge.startCineScreenStream(queryId, String(searchTitle || ''), String(yearStr || ''));
+            } else {
+                nativeResolvers.delete(queryId);
+                reject(new Error('NO_BRIDGE'));
+            }
+        } catch (e) {
+            nativeResolvers.delete(queryId);
+            reject(e);
+        }
+    });
+}
+
+function callNativeSearchMovie(searchTitle) {
+    return new Promise((resolve, reject) => {
+        const queryId = 'search_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        nativeResolvers.set(queryId, { resolve, reject });
+        try {
+            if (window.AndroidBridge && window.AndroidBridge.searchMovieByPayload) {
+                window.AndroidBridge.searchMovieByPayload(queryId, String(searchTitle || ''));
+            } else {
+                nativeResolvers.delete(queryId);
+                reject(new Error('NO_BRIDGE'));
+            }
         } catch (e) {
             nativeResolvers.delete(queryId);
             reject(e);
@@ -113,7 +138,7 @@ const SHOW_ERRORS = {
     NATIVE: '📺 Tu app aún no puede reproducirla en la sala; sigue el chat y las votaciones. En la web (PC) sí.',
     UNSUPPORTED: 'Este dispositivo no admite la reproducción en la sala.',
     NO_LOGIN: '🔒 Inicia sesión en Cineflix (Telegram) para ver la película.',
-    NO_MP4: '🎞️ Esa película no tiene versión mp4.',
+    NO_MP4: '🎞️ Esa película no tiene versión compatible.',
     NOT_FOUND: '🔎 El bot no ha encontrado la película.',
     FAILED: '⚠️ No se pudo preparar el vídeo.'
 };
@@ -131,7 +156,8 @@ async function showStartPrepare() {
         try {
             const searchTitle = mv.search_title || mv.title;
             const yearStr = mv.year ? String(mv.year) : '';
-            const res = await callNativeCineStream(searchTitle, yearStr);
+            const fileMsgIdStr = mv.file_msg_id ? String(mv.file_msg_id) : '';
+            const res = await callNativeCineStream(searchTitle, yearStr, fileMsgIdStr);
             if (SHOW.key !== key) return;
             SHOW.nativeVideoInfo = res;
             showVideo.src = res.streamUrl;
@@ -734,9 +760,37 @@ function drawShowScreen(ctx, now, SCR) {
 
 /* ── Modal de Búsqueda y Propuesta de Películas del Catálogo ── */
 let proposeSearchDebounce = null;
+
+function showFormatBytes(bytes) {
+    bytes = Number(bytes) || 0;
+    if (bytes <= 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function backToProposeCatalog() {
+    const wrap = showEl('propose-search-wrap');
+    const results = showEl('propose-results');
+    const filesCont = showEl('propose-files');
+    const titleEl = showEl('propose-modal-title');
+    const descEl = showEl('propose-modal-desc');
+    const badgeEl = showEl('propose-modal-badge');
+
+    if (filesCont) filesCont.classList.add('hidden');
+    if (wrap) wrap.classList.remove('hidden');
+    if (results) results.classList.remove('hidden');
+
+    if (badgeEl) badgeEl.textContent = '🎬 CATÁLOGO CINEFLIX';
+    if (titleEl) titleEl.textContent = 'Elegir película para la sala';
+    if (descEl) descEl.textContent = 'Busca cualquier película del catálogo para verla todos juntos en la gran pantalla.';
+}
+
 function openProposeModal() {
     const modal = showEl('propose-modal');
     if (!modal) return;
+    backToProposeCatalog();
     modal.classList.remove('hidden');
     const input = showEl('propose-search-input');
     if (input) {
@@ -749,6 +803,7 @@ function openProposeModal() {
 function closeProposeModal() {
     const modal = showEl('propose-modal');
     if (modal) modal.classList.add('hidden');
+    backToProposeCatalog();
 }
 
 function onProposeSearchInput() {
@@ -789,6 +844,7 @@ function renderProposeResults(items) {
     items.forEach(m => {
         const item = document.createElement('div');
         item.className = 'propose-item';
+        item.style.cursor = 'pointer';
 
         const poster = document.createElement('img');
         poster.className = 'propose-item-poster';
@@ -813,30 +869,195 @@ function renderProposeResults(items) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'propose-item-btn';
-        btn.textContent = '🎬 Poner en sala';
-        btn.onclick = () => proposeMovie(m);
+        btn.textContent = '🎬 Elegir versión';
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            selectMovieForProposal(m);
+        };
+
+        item.onclick = () => selectMovieForProposal(m);
 
         item.append(poster, info, btn);
         container.appendChild(item);
     });
 }
 
-function proposeMovie(m) {
+async function selectMovieForProposal(m) {
+    if (mySeat() < 0) return toast('Siéntate para proponer una película 🪑');
+
+    const wrap = showEl('propose-search-wrap');
+    const results = showEl('propose-results');
+    const filesCont = showEl('propose-files');
+    const titleEl = showEl('propose-modal-title');
+    const descEl = showEl('propose-modal-desc');
+    const badgeEl = showEl('propose-modal-badge');
+
+    if (!filesCont) {
+        proposeMovie(m, null);
+        return;
+    }
+
+    if (wrap) wrap.classList.add('hidden');
+    if (results) results.classList.add('hidden');
+    filesCont.classList.remove('hidden');
+
+    if (badgeEl) badgeEl.textContent = '🤖 ARCHIVOS EN TELEGRAM';
+    if (titleEl) titleEl.textContent = showTitle(m);
+    if (descEl) descEl.textContent = 'Buscando archivos y versiones disponibles en el bot de Telegram... ⏳';
+
+    filesCont.innerHTML = '<div class="propose-state-msg">Buscando versiones del bot de Telegram... 🤖🍿</div>';
+
+    let files = [];
+    try {
+        const queryTitle = m.search_title || m.title;
+        if (window.AndroidBridge && window.AndroidBridge.searchMovieByPayload) {
+            const raw = await callNativeSearchMovie(queryTitle);
+            let list = Array.isArray(raw) ? raw : (raw && raw.videos ? raw.videos : []);
+            if ((!list || !list.length) && m.year) {
+                const raw2 = await callNativeSearchMovie(`${queryTitle} ${m.year}`);
+                list = Array.isArray(raw2) ? raw2 : (raw2 && raw2.videos ? raw2.videos : []);
+            }
+            files = (list || []).map(v => {
+                const isMp4 = (v.mimeType && v.mimeType.toLowerCase() === 'video/mp4') || /\.mp4$/i.test(v.fileName || '') || /\.webm$/i.test(v.fileName || '');
+                const sz = Number(v.fileSize) || 0;
+                return {
+                    msgId: v.msgId,
+                    fileId: v.fileId || v.id,
+                    fileName: v.fileName || '',
+                    fileSize: sz,
+                    mimeType: v.mimeType || (isMp4 ? 'video/mp4' : 'video/x-matroska'),
+                    isMp4,
+                    isUnder4GB: sz <= 4 * 1024 * 1024 * 1024
+                };
+            });
+        } else {
+            const eng = await showLoadEngine();
+            if (eng && eng.searchMovieFiles) {
+                files = await eng.searchMovieFiles(queryTitle, m.year);
+            }
+        }
+    } catch (err) {
+        console.warn('[Cine] error al buscar archivos en bot:', err);
+    }
+
+    renderMovieFiles(m, files);
+}
+
+function renderMovieFiles(m, files) {
+    const filesCont = showEl('propose-files');
+    const descEl = showEl('propose-modal-desc');
+    if (!filesCont) return;
+    filesCont.innerHTML = '';
+
+    if (descEl) {
+        descEl.textContent = 'Elige qué versión reproducir. Los MP4 son los más compatibles con todos los dispositivos:';
+    }
+
+    // Botón para volver atrás
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'propose-back-btn';
+    backBtn.innerHTML = '⬅ Volver al catálogo';
+    backBtn.onclick = () => backToProposeCatalog();
+    filesCont.appendChild(backBtn);
+
+    // Opción Automática inteligente (MP4 preferido o MKV <= 4GB)
+    const autoItem = document.createElement('div');
+    autoItem.className = 'propose-file-item recommended';
+    autoItem.innerHTML = `
+        <div class="propose-file-top">
+            <span class="propose-file-name">⚡ Selección Automática (Recomendada)</span>
+            <span class="propose-file-badge badge-auto">ÓPTIMO</span>
+        </div>
+        <div class="propose-file-meta">
+            <span class="propose-file-size">Elige siempre MP4 si existe, o el MKV más ligero (&lt;4GB) para evitar bloqueos.</span>
+        </div>
+    `;
+    autoItem.onclick = () => proposeMovie(m, null);
+    filesCont.appendChild(autoItem);
+
+    if (!files || !files.length) {
+        const warn = document.createElement('div');
+        warn.className = 'propose-state-msg';
+        warn.innerHTML = `
+            <div style="margin-bottom:8px;">⚠️ El bot no listó archivos directamente para esta película en este momento.</div>
+            <div style="font-size:11px;color:#94a3b8;margin-bottom:12px;">Puedes continuar con selección automática y el reproductor la buscará al empezar.</div>
+        `;
+        const directBtn = document.createElement('button');
+        directBtn.type = 'button';
+        directBtn.className = 'propose-item-btn';
+        directBtn.textContent = '🎬 Poner con selección automática';
+        directBtn.onclick = () => proposeMovie(m, null);
+        warn.appendChild(directBtn);
+        filesCont.appendChild(warn);
+        return;
+    }
+
+    // Ordenar archivos: MP4 primero, luego MKV <= 4GB, luego el resto
+    const sorted = [...files].sort((a, b) => {
+        if (a.isMp4 && !b.isMp4) return -1;
+        if (!a.isMp4 && b.isMp4) return 1;
+        if (a.isUnder4GB && !b.isUnder4GB) return -1;
+        if (!a.isUnder4GB && b.isUnder4GB) return 1;
+        return (a.fileSize || 0) - (b.fileSize || 0);
+    });
+
+    sorted.forEach((f, idx) => {
+        const item = document.createElement('div');
+        item.className = 'propose-file-item';
+
+        let badgeHtml = '';
+        if (f.isMp4) {
+            badgeHtml = '<span class="propose-file-badge badge-mp4">⭐ MP4 (Más compatible)</span>';
+        } else if (f.isUnder4GB) {
+            badgeHtml = '<span class="propose-file-badge badge-mkv-light">🎞️ MKV (&lt;4GB)</span>';
+        } else {
+            badgeHtml = '<span class="propose-file-badge badge-mkv-heavy">⚠️ MKV (&gt;4GB - Pesado)</span>';
+        }
+
+        const sizeStr = showFormatBytes(f.fileSize);
+        const nameClean = f.fileName || `Archivo #${idx + 1}`;
+
+        item.innerHTML = `
+            <div class="propose-file-top">
+                <span class="propose-file-name">${nameClean}</span>
+                ${badgeHtml}
+            </div>
+            <div class="propose-file-meta">
+                <span class="propose-file-size">📦 ${sizeStr}</span>
+                <span style="font-size:11px;color:#cbd5e1;margin-left:auto;">🎬 Toca para poner en sala</span>
+            </div>
+        `;
+        item.onclick = () => proposeMovie(m, f);
+        filesCont.appendChild(item);
+    });
+}
+
+function proposeMovie(m, chosenFile = null) {
     if (mySeat() < 0) return toast('Siéntate para proponer una película 🪑');
     closeProposeModal();
+    const moviePayload = {
+        id: m.id,
+        title: m.title,
+        year: m.year,
+        search_title: m.search_title || m.title
+    };
+    if (chosenFile) {
+        if (chosenFile.msgId) moviePayload.file_msg_id = chosenFile.msgId;
+        if (chosenFile.fileName) moviePayload.file_name = chosenFile.fileName;
+        if (chosenFile.fileSize) moviePayload.file_size = chosenFile.fileSize;
+        if (chosenFile.mimeType) moviePayload.mime_type = chosenFile.mimeType;
+    }
     netSend({
         type: 'show_start',
-        movie: {
-            id: m.id,
-            title: m.title,
-            year: m.year,
-            search_title: m.search_title || m.title
-        }
+        movie: moviePayload
     });
 }
 
 window.openProposeModal = openProposeModal;
 window.closeProposeModal = closeProposeModal;
+window.backToProposeCatalog = backToProposeCatalog;
+window.selectMovieForProposal = selectMovieForProposal;
 window.onProposeSearchInput = onProposeSearchInput;
 window.proposeMovie = proposeMovie;
 

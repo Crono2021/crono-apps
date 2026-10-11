@@ -88375,31 +88375,86 @@ function useTDLib() {
   return !!window.AndroidBridge;
 }
 __name(useTDLib, "useTDLib");
+const MAX_MKV_BYTES = 4 * 1024 * 1024 * 1024;
 function isMp4OrWebm(v) {
+  if (!v) return false;
   const mt = String(v.mimeType || "").toLowerCase();
   const fn = String(v.fileName || "").toLowerCase();
   return mt === "video/mp4" || mt === "video/webm" || /\.mp4$/i.test(fn) || /\.m4v$/i.test(fn) || /\.webm$/i.test(fn);
 }
 __name(isMp4OrWebm, "isMp4OrWebm");
-function pickMp4(videos) {
-  let list = (videos || []).filter((v) => v && v.media && isMp4OrWebm(v));
-  if (!list.length) {
-    list = (videos || []).filter((v) => v && v.media);
-  }
+function pickBestCompatible(videos, preferredMsgId = null, preferredFileName = null) {
+  const list = (videos || []).filter((v) => v && (v.media || v.fileId));
   if (!list.length) return null;
-  const score = /* @__PURE__ */ __name((v) => {
-    const h = Number(v.height) || 720;
-    const over = h > 720 ? 1 : 0;
-    return [over, Math.abs(720 - h), Number(v.fileSize) || 0];
-  }, "score");
-  list.sort((a, b) => {
-    const sa = score(a), sb = score(b);
-    for (let i2 = 0; i2 < 3; i2++) if (sa[i2] !== sb[i2]) return sa[i2] - sb[i2];
-    return 0;
-  });
+  if (preferredMsgId) {
+    const found = list.find((v) => Number(v.msgId) === Number(preferredMsgId));
+    if (found) return found;
+  }
+  if (preferredFileName) {
+    const found = list.find((v) => String(v.fileName || "").toLowerCase() === String(preferredFileName).toLowerCase());
+    if (found) return found;
+  }
+  const mp4List = list.filter((v) => isMp4OrWebm(v));
+  if (mp4List.length > 0) {
+    const score = /* @__PURE__ */ __name((v) => {
+      const h = Number(v.height) || 720;
+      const over = h > 720 ? 1 : 0;
+      return [over, Math.abs(720 - h), Number(v.fileSize) || 0];
+    }, "score");
+    mp4List.sort((a, b) => {
+      const sa = score(a), sb = score(b);
+      for (let i2 = 0; i2 < 3; i2++) if (sa[i2] !== sb[i2]) return sa[i2] - sb[i2];
+      return 0;
+    });
+    return mp4List[0];
+  }
+  const mkvUnder4GB = list.filter((v) => (Number(v.fileSize) || 0) <= MAX_MKV_BYTES);
+  if (mkvUnder4GB.length > 0) {
+    const score = /* @__PURE__ */ __name((v) => {
+      const h = Number(v.height) || 720;
+      return [Math.abs(720 - h), Number(v.fileSize) || 0];
+    }, "score");
+    mkvUnder4GB.sort((a, b) => {
+      const sa = score(a), sb = score(b);
+      for (let i2 = 0; i2 < 2; i2++) if (sa[i2] !== sb[i2]) return sa[i2] - sb[i2];
+      return 0;
+    });
+    return mkvUnder4GB[0];
+  }
+  list.sort((a, b) => (Number(a.fileSize) || 0) - (Number(b.fileSize) || 0));
   return list[0];
 }
-__name(pickMp4, "pickMp4");
+__name(pickBestCompatible, "pickBestCompatible");
+const pickMp4 = pickBestCompatible;
+async function searchMovieFiles(title, year) {
+  if (!title) return [];
+  let videos = [];
+  try {
+    videos = await searchMovieByPayloadGramJS(title);
+    if ((!videos || !videos.length) && year) {
+      videos = await searchMovieByPayloadGramJS(`${title} ${year}`);
+    }
+  } catch (e) {
+    console.warn("[CineStream] searchMovieFiles error:", e);
+    return [];
+  }
+  return (videos || []).map((v) => {
+    const isMp4 = isMp4OrWebm(v);
+    const sz = Number(v.fileSize) || 0;
+    return {
+      msgId: v.msgId,
+      fileId: v.id || v.fileId,
+      fileName: v.fileName || "",
+      fileSize: sz,
+      mimeType: v.mimeType || (isMp4 ? "video/mp4" : "video/x-matroska"),
+      height: Number(v.height) || 0,
+      duration: Number(v.duration) || 0,
+      isMp4,
+      isUnder4GB: sz <= MAX_MKV_BYTES
+    };
+  });
+}
+__name(searchMovieFiles, "searchMovieFiles");
 const fail = /* @__PURE__ */ __name((code2, msg) => {
   const e = new Error(msg);
   e.code = code2;
@@ -88423,6 +88478,8 @@ const CineStream = {
       return false;
     }
   },
+  searchMovieFiles,
+  pickBestCompatible,
   /**
    * Busca y prepara la película en el <video>. Resuelve con { duration } (segundos) cuando el vídeo puede reproducirse.
    * Errores con .code: NATIVE, UNSUPPORTED, NO_LOGIN, NO_MP4, NOT_FOUND, STOPPED, FAILED
@@ -88455,8 +88512,8 @@ const CineStream = {
     }
     if (stale()) throw fail("STOPPED", "cancelado");
     if (!videos || !videos.length) throw fail("NOT_FOUND", "El bot no ha encontrado la película");
-    const file2 = pickMp4(videos);
-    if (!file2) throw fail("NO_MP4", "Esta película no tiene versión mp4");
+    const file2 = pickBestCompatible(videos, movie.file_msg_id, movie.file_name);
+    if (!file2) throw fail("NO_MP4", "No se encontró un archivo compatible para reproducir");
     say("Preparando el vídeo…");
     try {
       videoEl.muted = false;
@@ -88493,5 +88550,8 @@ const CineStream = {
 window.CineStream = CineStream;
 export {
   CineStream as default,
-  pickMp4
+  isMp4OrWebm,
+  pickBestCompatible,
+  pickMp4,
+  searchMovieFiles
 };

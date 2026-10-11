@@ -225,15 +225,18 @@
     <div class="propose-modal-backdrop hidden" id="propose-modal" onclick="if(event.target===this)closeProposeModal()">
         <div class="propose-modal-box">
             <button class="propose-modal-close" onclick="closeProposeModal()" title="Cerrar">✕</button>
-            <div class="propose-modal-header">
-                <span class="propose-badge">🎬 CATÁLOGO CINEFLIX</span>
-                <h3 class="propose-title">Elegir película para la sala</h3>
-                <p class="propose-desc">Busca cualquier película del catálogo para verla todos juntos en la gran pantalla.</p>
-                <div class="propose-search-wrap">
+            <div class="propose-modal-header" id="propose-modal-header">
+                <span class="propose-badge" id="propose-modal-badge">🎬 CATÁLOGO CINEFLIX</span>
+                <h3 class="propose-title" id="propose-modal-title">Elegir película para la sala</h3>
+                <p class="propose-desc" id="propose-modal-desc">Busca cualquier película del catálogo para verla todos juntos en la gran pantalla.</p>
+                <div class="propose-search-wrap" id="propose-search-wrap">
                     <input type="text" id="propose-search-input" class="propose-input" placeholder="🔍 Escribe para buscar (ej: Matrix, Shrek, Batman...)" autocomplete="off" oninput="onProposeSearchInput()">
                 </div>
             </div>
+            <!-- Paso 1: Catálogo -->
             <div class="propose-results" id="propose-results"></div>
+            <!-- Paso 2: Selección de archivo/versión de Telegram -->
+            <div class="propose-files hidden" id="propose-files"></div>
         </div>
     </div>
 
