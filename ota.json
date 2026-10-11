@@ -1,9 +1,9 @@
 {
-    "versionCode":  56,
-    "versionName":  "1.4.4f",
-    "apkUrl":  "https://raw.githubusercontent.com/Crono2021/crono-apps/566b91f40420df493ecf64c1f8c49a61f3b59f4d/cineflix.apk",
-    "sha256":  "b0c2590929c94ba2faaeb87826eb28851d49dbfe0a68b1c6c1730202e8794cdc",
-    "changelog":  "- Mejorado soporte para archivos 4k multipart.",
-    "mandatory":  false,
-    "minVersionCode":  1
+    "versionCode": 57,
+    "versionName": "1.4.5",
+    "apkUrl": "https://raw.githubusercontent.com/Crono2021/crono-apps/37ddfdc9ceef809ef97d1e9986f3dd4065b9ee28/cineflix.apk",
+    "sha256": "25cc47f4f6a1c1a281c6db3df0466850c60169a18aac1bec0ab904c5fa97d6e1",
+    "changelog": "- Añadidas Salas de Cine\n(Watch Party para ver películas con tus amigos)",
+    "mandatory": false,
+    "minVersionCode": 1
 }
