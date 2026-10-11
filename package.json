@@ -1,6 +1,6 @@
 {
   "name": "cineflix-desktop",
-  "version": "1.0.3",
+  "version": "1.1.1",
   "description": "Cineflix — Cliente de escritorio con reproductor MPV nativo",
   "main": "out/main/main.js",
   "scripts": {
@@ -31,7 +31,9 @@
     "npmRebuild": false,
     "compression": "maximum",
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "extraResources": [
         {
           "from": "resources/mpv.exe",
@@ -44,7 +46,10 @@
       ]
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.entertainment",
       "identity": null,
       "extraResources": [

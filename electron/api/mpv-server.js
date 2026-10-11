@@ -1,18 +1,22 @@
 
 const http = require('http')
-const net  = require('net')
+const fs   = require('fs')
+const path = require('path')
+
+function slog(msg) {
+  const logPath = path.join(require('os').tmpdir(), 'cineflix_main_tg.log');
+  fs.appendFileSync(logPath, `[${new Date().toISOString()}][StreamServer] ${msg}\n`);
+}
 
 let _server     = null
-let _getWindow  = null  // lazy getter — set by main.js after window creation
+let _getWindow  = null
 
 // streamId → { size, mimeType }
 const streamRegistry = new Map()
 
-// requestId → { resolve, reject, timeout }
+// Pending range requests: requestId → { resolve, reject, timer }
 const pendingRequests = new Map()
-let reqCounter = 0
-
-
+let _requestCounter = 0
 
 function setWindowGetter(fn) { _getWindow = fn }
 
@@ -21,6 +25,7 @@ function start() {
     _server = http.createServer(handleRequest)
     _server.listen(0, '127.0.0.1', () => {
       const port = _server.address().port
+      slog(`Listening on http://127.0.0.1:${port}`)
       console.log(`[StreamServer] Listening on http://127.0.0.1:${port}`)
       resolve(port)
     })
@@ -30,34 +35,116 @@ function start() {
 
 function stop() {
   if (_server) { _server.close(); _server = null }
+  for (const [id, p] of pendingRequests) {
+    clearTimeout(p.timer)
+    p.reject(new Error('Server stopped'))
+  }
+  pendingRequests.clear()
 }
 
 function registerStream(streamId, docInfo) {
+  slog(`registerStream: ${streamId} size=${docInfo.size} mime=${docInfo.mimeType}`)
   streamRegistry.set(streamId, docInfo)
 }
 
+/**
+ * Handle a rangeReply from the renderer process.
+ */
 function handleRangeReply(requestId, buffer) {
   const pending = pendingRequests.get(requestId)
   if (!pending) return
-  clearTimeout(pending.timeout)
   pendingRequests.delete(requestId)
-  pending.resolve(Buffer.from(buffer))
+  clearTimeout(pending.timer)
+  pending.resolve(buffer)
 }
 
+/**
+ * Cancel all pending IPC requests belonging to a specific connection.
+ */
+function cancelConnectionRequests(connectionId) {
+  const cancelledIds = []
+  for (const [id, p] of pendingRequests) {
+    if (p.connectionId === connectionId) {
+      pendingRequests.delete(id)
+      clearTimeout(p.timer)
+      p.resolve(null) // Resolve with null to signal cancellation (don't reject to avoid noise)
+      cancelledIds.push(id)
+    }
+  }
+  // Tell the renderer to drop these from its download queue
+  if (cancelledIds.length > 0) {
+    slog(`Cancelling ${cancelledIds.length} renderer requests for connId=${connectionId}`)
+    const win = _getWindow && _getWindow()
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('stream:cancelRequests', cancelledIds)
+    }
+  }
+}
 
+/**
+ * Request a byte range from the renderer process via IPC.
+ */
+function fetchRange(streamId, start, size, connectionId) {
+  return new Promise((resolve, reject) => {
+    const win = _getWindow && _getWindow()
+    if (!win || win.isDestroyed()) {
+      return reject(new Error('No window available for IPC'))
+    }
+
+    const requestId = `req_${++_requestCounter}_${Date.now()}`
+    
+    const timer = setTimeout(() => {
+      pendingRequests.delete(requestId)
+      slog(`IPC TIMEOUT: ${requestId} streamId=${streamId} offset=${start}`)
+      reject(new Error(`IPC fetch timeout for ${streamId} offset=${start}`))
+    }, 30000)
+
+    pendingRequests.set(requestId, { resolve, reject, timer, connectionId })
+
+    win.webContents.send('stream:fetchRange', { requestId, streamId, start, size })
+  })
+}
+
+function setCorsHeaders(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Private-Network', 'true')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept-Encoding, Access-Control-Request-Private-Network')
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges')
+}
 
 function handleRequest(req, res) {
-  // Use URL parsing to drop query params and split the path
+  setCorsHeaders(res)
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204)
+    res.end()
+    return
+  }
+
   const urlParts = new URL(req.url, 'http://localhost');
   const m = urlParts.pathname.match(/^\/stream\/([^\/?]+)/);
   if (!m) { res.writeHead(404); res.end(); return }
 
   const streamId = m[1]
   const info = streamRegistry.get(streamId)
-  if (!info) { res.writeHead(404); res.end('Stream not registered'); return }
+  if (!info) {
+    slog(`404: stream not found: ${streamId}. Registry has: ${[...streamRegistry.keys()].join(', ')}`)
+    res.writeHead(404); res.end('Stream not registered'); return
+  }
 
   const totalSize = info.size
   const mimeType  = info.mimeType || 'video/mp4'
+
+  if (req.method === 'HEAD') {
+    res.writeHead(200, {
+      'Content-Type': mimeType,
+      'Content-Length': totalSize,
+      'Accept-Ranges': 'bytes',
+    })
+    res.end()
+    return
+  }
 
   const rangeHeader = req.headers['range']
   let start = 0
@@ -76,6 +163,10 @@ function handleRequest(req, res) {
   }
 
   const responseSize = end - start + 1
+  // Unique ID for this HTTP connection, used to cancel stale IPC requests on abort
+  const connectionId = `conn_${++_requestCounter}_${Date.now()}`
+
+  slog(`Serving stream: ${streamId} range=${start}-${end} (${responseSize} bytes) connId=${connectionId}`)
 
   if (isRange) {
     res.writeHead(206, {
@@ -92,115 +183,89 @@ function handleRequest(req, res) {
     })
   }
 
-  // Dynamic chunk sizing (TCP Slow Start)
-  // Start small (512KB) so that ffmpeg's initial probing seeks are lightning fast.
-  // Double the size on successful contiguous reads up to 4MB to maximize bandwidth during playback.
-  let currentChunkSize = 512 * 1024; 
-  const MAX_CHUNK_SIZE = 4 * 1024 * 1024;
+  // When MPV seeks, it destroys the old HTTP connection.
+  // We must cancel all pending IPC requests for this connection immediately.
+  req.on('close', () => {
+    cancelConnectionRequests(connectionId)
+  })
+
+  // 2MB chunks matching renderer cache blocks (each triggers 4-way parallel Telegram download)
+  const CHUNK_SIZE = 2 * 1024 * 1024;
+  // Keep 4 requests in flight at all times via sliding window (no gaps between batches)
+  const PIPELINE_SIZE = 4;
   let currentStart = start;
-  let emptyRetries = 0;  // Track consecutive empty reads
 
   const streamLoop = async () => {
-    while (currentStart <= end) {
-      if (req.destroyed || res.destroyed) break;
-      
-      const fetchSize = Math.min(currentChunkSize, end - currentStart + 1);
-      try {
-        const buf = await fetchRange(streamId, currentStart, fetchSize);
-        
-        if (!buf || buf.byteLength === 0) {
-          emptyRetries++;
-          if (emptyRetries >= 3) {
-            // After 3 empty reads, pad the remaining bytes with zeros
-            // This prevents ffmpeg's "Stream ends prematurely" exponential backoff
-            const remaining = end - currentStart + 1;
-            if (remaining > 0 && remaining <= 1024 * 1024) {  // Only pad up to 1MB
-              console.log(`[StreamServer] Padding ${remaining} bytes at EOF to prevent ffmpeg retry storm`);
-              if (!req.destroyed && !res.destroyed) {
-                res.write(Buffer.alloc(remaining));
-              }
-              currentStart = end + 1;  // Mark as complete
-            }
-            break;
-          }
-          continue;  // Retry instead of breaking immediately
-        }
-        
-        emptyRetries = 0;  // Reset on successful read
+    // Sliding window: always keep PIPELINE_SIZE requests in flight
+    const pipeline = [];  // { offset, size, promise }
+    let nextFetchOffset = start;
+
+    // Fill the pipeline
+    const fillPipeline = () => {
+      while (pipeline.length < PIPELINE_SIZE && nextFetchOffset <= end) {
         if (req.destroyed || res.destroyed) break;
+        // Align fetchSize so we don't cross a CHUNK_SIZE (2MB) boundary.
+        // This ensures the renderer's block slicing perfectly matches our offsets without gaps.
+        const nextBoundary = Math.ceil((nextFetchOffset + 1) / CHUNK_SIZE) * CHUNK_SIZE;
+        const maxFetch = nextBoundary - nextFetchOffset;
+        const fetchSize = Math.min(maxFetch, end - nextFetchOffset + 1);
         
-        const canWrite = res.write(buf);
-        currentStart += buf.byteLength;
-        
-        const win = _getWindow && _getWindow();
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('stream:progress', { downloaded: currentStart, total: totalSize });
+        pipeline.push({
+          offset: nextFetchOffset,
+          size: fetchSize,
+          promise: fetchRange(streamId, nextFetchOffset, fetchSize, connectionId)
+        });
+        nextFetchOffset += fetchSize;
+      }
+    };
+
+    fillPipeline();
+
+    while (pipeline.length > 0) {
+      if (req.destroyed || res.destroyed) {
+        cancelConnectionRequests(connectionId);
+        break;
+      }
+
+      const item = pipeline.shift();  // Take the oldest (first in sequence)
+      try {
+        const buf = await item.promise;
+        if (buf === null) break;  // cancelled
+        if (!buf || buf.byteLength === 0) {
+          const remaining = end - item.offset + 1;
+          if (remaining > 0 && remaining <= 1024 * 1024) {
+            if (!req.destroyed && !res.destroyed) res.write(Buffer.alloc(remaining));
+          }
+          break;
         }
-        
+
+        if (req.destroyed || res.destroyed) break;
+        const data = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+        const canWrite = res.write(data);
+        currentStart = item.offset + data.byteLength;
+
+        // Immediately queue the next request (sliding window - no gap!)
+        fillPipeline();
+
         if (!canWrite) {
           await new Promise(resolve => {
-            const onDrain = () => {
-              res.removeListener('close', onClose);
-              resolve();
-            };
-            const onClose = () => {
-              res.removeListener('drain', onDrain);
-              resolve();
-            };
+            const onDrain = () => { res.removeListener('close', onClose); resolve(); };
+            const onClose = () => { res.removeListener('drain', onDrain); resolve(); };
             res.once('drain', onDrain);
             res.once('close', onClose);
           });
         }
-        
-        // Increase chunk size if we successfully wrote without dropping the connection
-        if (!req.destroyed && !res.destroyed && currentChunkSize < MAX_CHUNK_SIZE) {
-          currentChunkSize = Math.min(currentChunkSize * 2, MAX_CHUNK_SIZE);
-        }
       } catch (err) {
-        console.error('[StreamServer] fetch error:', err);
+        if (!req.destroyed) slog(`FETCH ERROR at offset=${item.offset}: ${err.message}`);
         break;
       }
     }
-    res.end();
+    if (!res.destroyed && !res.writableEnded) {
+      res.end();
+    }
   };
   
   streamLoop();
-}
-
-async function streamChunked(streamId, start, end, totalSize, mimeType, res) {
-  const CHUNK = 512 * 1024 // 512KB chunks
-  let pos = start
-  while (pos <= end) {
-    const size = Math.min(CHUNK, end - pos + 1)
-    try {
-      const buf = await fetchRange(streamId, pos, size)
-      if (!res.writableEnded) res.write(buf)
-    } catch {
-      break
-    }
-    pos += size
-  }
-  if (!res.writableEnded) res.end()
-}
-
-
-
-function fetchRange(streamId, start, size) {
-  return new Promise((resolve, reject) => {
-    const win = _getWindow ? _getWindow() : null
-    if (!win || win.isDestroyed()) {
-      return reject(new Error('No window'))
-    }
-
-    const requestId = `r${++reqCounter}`
-    const timeout = setTimeout(() => {
-      pendingRequests.delete(requestId)
-      reject(new Error(`Timeout fetching range ${start}+${size}`))
-    }, 30_000)
-
-    pendingRequests.set(requestId, { resolve, reject, timeout })
-    win.webContents.send('stream:fetchRange', { requestId, streamId, start, size })
-  })
 }
 
 module.exports = { start, stop, setWindowGetter, registerStream, handleRangeReply }

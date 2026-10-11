@@ -12,8 +12,20 @@ const { app, BrowserWindow, ipcMain, globalShortcut, shell } = require('electron
 const path = require('path')
 const fs   = require('fs')
 
+// Disable Chromium's Private Network Access blocking and allow insecure loopback streaming from HTTPS
+app.commandLine.appendSwitch('disable-web-security')
+app.commandLine.appendSwitch('allow-running-insecure-content')
+app.commandLine.appendSwitch('disable-features', 'BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults')
+
 const mpvController = require(path.join(__dirname, 'api', 'mpv.js'))
 const mpvServer     = require(path.join(__dirname, 'api', 'mpv-server.js'))
+const telegramMain  = require(path.join(__dirname, 'api', 'telegram-main.js'))
+
+function mlog(msg) {
+  const os = require('os')
+  const logPath = path.join(os.tmpdir(), 'cineflix_main_tg.log')
+  fs.appendFileSync(logPath, `[${new Date().toISOString()}][Main] ${msg}\n`)
+}
 
 // ── Persistent store ──────────────────────────────────────────────────────────
 class SimpleStore {
@@ -50,6 +62,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: false,
+      allowRunningInsecureContent: true,
     },
     show: false,
     autoHideMenuBar: true,
@@ -70,7 +83,7 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:7500')
     // mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
-    mainWindow.loadURL('https://cineflix-production-19e3.up.railway.app/')
+    mainWindow.loadURL('https://cineflixapp.duckdns.org/')
   }
 }
 
@@ -127,12 +140,52 @@ ipcMain.handle('store:get',    (_e, key)        => store.get(key))
 ipcMain.handle('store:set',    (_e, key, value) => { store.set(key, value) })
 ipcMain.handle('store:delete', (_e, key)        => { store.delete(key) })
 
-// ── IPC: Integrated player lifecycle ─────────────────────────────────────────
 ipcMain.handle('player:launch', async (_e, streamInfo) => {
   try {
+    mlog(`Received streamInfo keys: ${Object.keys(streamInfo).join(', ')}`)
+    mlog(`Has playlist: ${!!streamInfo.playlist}, length: ${streamInfo.playlist?.length}`)
+
+    if (streamInfo.playlist) {
+      // Find the first item with telegramConfig to init pool
+      const tgItem = streamInfo.playlist.find(p => p.telegramConfig)
+      mlog(`Found tgItem: ${!!tgItem}`)
+      if (tgItem) {
+        mlog('Initializing Telegram pool...')
+        await telegramMain.initTelegramPool(
+          tgItem.telegramConfig.sessionStr,
+          tgItem.telegramConfig.apiId,
+          tgItem.telegramConfig.apiHash
+        )
+        mlog('Telegram pool initialized. Registering streams...')
+        // Register all streams
+        for (const item of streamInfo.playlist) {
+          if (item.telegramConfig) {
+            mlog(`Registering stream: ${item.streamId} size=${item.fileSize} fileRef.length=${item.telegramConfig.doc?.fileReference?.length}`)
+            telegramMain.registerTelegramStream(item.streamId, item.telegramConfig.doc)
+            mpvServer.registerStream(item.streamId, { size: item.fileSize, mimeType: item.mimeType })
+          }
+        }
+        mlog('All streams registered.')
+      }
+    } else if (streamInfo.telegramConfig) {
+      // Legacy fallback
+      mlog('Legacy single-stream mode')
+      await telegramMain.initTelegramPool(
+        streamInfo.telegramConfig.sessionStr,
+        streamInfo.telegramConfig.apiId,
+        streamInfo.telegramConfig.apiHash
+      )
+      telegramMain.registerTelegramStream(streamInfo.id, streamInfo.telegramConfig.doc)
+    } else {
+      mlog('WARNING: No playlist and no telegramConfig found in streamInfo!')
+    }
+
+    mlog('Calling openPlayerWindows...')
     await openPlayerWindows(streamInfo)
+    mlog('openPlayerWindows returned ok')
     return { ok: true }
   } catch (e) {
+    mlog(`ERROR in player:launch: ${e.message}\n${e.stack}`)
     console.error('[player:launch]', e)
     closePlayerWindows()
     return { ok: false, error: e.message }
@@ -159,7 +212,15 @@ ipcMain.handle('mpv:streamPort',()               => app.streamPort)
 ipcMain.handle('open-external', (_e, url) => shell.openExternal(url))
 
 // ── IPC: Stream registry ──────────────────────────────────────────────────────
-ipcMain.handle('stream:register', (_e, streamId, docInfo) => {
+ipcMain.handle('stream:register', async (_e, streamId, docInfo) => {
+  if (docInfo.telegramConfig) {
+    await telegramMain.initTelegramPool(
+      docInfo.telegramConfig.sessionStr,
+      docInfo.telegramConfig.apiId,
+      docInfo.telegramConfig.apiHash
+    )
+    telegramMain.registerTelegramStream(streamId, docInfo.telegramConfig.doc)
+  }
   mpvServer.registerStream(streamId, docInfo)
   return { ok: true }
 })
@@ -171,7 +232,7 @@ ipcMain.on('stream:rangeReply', (_e, requestId, buffer) => {
 // ── IPC: Movies API (no CORS via main process) ────────────────────────────────
 ipcMain.handle('movies:fetch', async () => {
   try {
-    const res = await fetch('https://cineflix-production-19e3.up.railway.app/api/movies')
+    const res = await fetch('https://cineflixapp.duckdns.org/api/movies')
     if (!res.ok) return []
     return await res.json()
   } catch (e) {
