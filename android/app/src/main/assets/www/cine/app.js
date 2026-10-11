@@ -383,12 +383,19 @@ function buildLobby() {
         const bar = document.createElement('div'); bar.className = 'room-card-bar';
         const fill = document.createElement('i'); fill.id = 'bar-' + r.id; bar.appendChild(fill);
         meta.append(cnt, bar);
-        const go = document.createElement('div'); go.className = 'room-card-go'; go.textContent = '🎟️ Entrar a la sala';
-        body.append(name, tag, meta, go);
+        const showInfo = document.createElement('div'); showInfo.className = 'room-card-show hidden'; showInfo.id = 'show-' + r.id;
+        const go = document.createElement('div'); go.className = 'room-card-go'; go.id = 'go-' + r.id; go.textContent = '🎟️ Entrar a la sala';
+        body.append(name, tag, meta, showInfo, go);
         card.append(cv, body);
         card.onclick = () => enterRoom(r.id);
         grid.appendChild(card);
     });
+}
+
+function safeHtmlStr(str) {
+    const d = document.createElement('div');
+    d.textContent = String(str || '');
+    return d.innerHTML;
 }
 
 async function fetchRoomStats() {
@@ -403,6 +410,33 @@ async function fetchRoomStats() {
             if (cnt) cnt.title = 'Conectados ahora mismo · personajes en stand by (su dueño no está conectado)';
             const taken = s.taken != null ? s.taken : s.seated;
             if (bar) bar.style.width = Math.round(100 * taken / s.capacity) + '%';
+
+            const go = document.getElementById('go-' + s.id);
+            const showEl = document.getElementById('show-' + s.id);
+            if (showEl && go) {
+                if (s.show === 'playing' && s.movie) {
+                    const elapsedMin = s.startAt ? Math.max(1, Math.floor((Date.now() - s.startAt) / 60000)) : 1;
+                    showEl.innerHTML = `<span class="room-live-badge">🔴 EN EMISIÓN</span> <b class="room-movie-title">${safeHtmlStr(s.movie.title)}</b> <span class="room-elapsed">(min ${elapsedMin})</span>`;
+                    showEl.classList.remove('hidden');
+                    go.textContent = '🎟️ Unirse a la sesión';
+                    go.classList.add('live');
+                } else if (s.show === 'loading' && s.movie) {
+                    showEl.innerHTML = `<span class="room-live-badge loading">⏳ PREPARANDO</span> <b class="room-movie-title">${safeHtmlStr(s.movie.title)}</b>`;
+                    showEl.classList.remove('hidden');
+                    go.textContent = '🎟️ Entrar (empieza ya)';
+                    go.classList.remove('live');
+                } else if (s.show === 'voting') {
+                    showEl.innerHTML = `<span class="room-live-badge voting">🗳️ VOTACIÓN</span>`;
+                    showEl.classList.remove('hidden');
+                    go.textContent = '🎟️ Entrar y votar';
+                    go.classList.remove('live');
+                } else {
+                    showEl.innerHTML = '';
+                    showEl.classList.add('hidden');
+                    go.textContent = '🎟️ Entrar a la sala';
+                    go.classList.remove('live');
+                }
+            }
         });
     } catch (e) {}
 }
@@ -836,8 +870,10 @@ function initCreatorOptions() {
     nameInp.value = myCharacter.name || '';
     nameInp.disabled = !!tg;     // con nombre de Telegram, no se edita: así se reconoce a la gente
     if (nameLbl) nameLbl.textContent = tg ? 'Tu nombre de Telegram (así te verá el grupo)' : 'Nombre de tu personaje';
-    document.getElementById('input-char-quote').value = myCharacter.quote || '';
-    document.getElementById('btn-save-char').lastChild.textContent = net.wantRoom ? ' Guardar y volver a la sala' : ' Guardar personaje';
+    const isMob = window.innerWidth <= 768;
+    document.getElementById('btn-save-char').lastChild.textContent = net.wantRoom
+        ? (isMob ? ' Guardar y volver' : ' Guardar y volver a la sala')
+        : (isMob ? ' Guardar' : ' Guardar personaje');
 }
 function updateProfileMeta() {
     myCharacter.name = document.getElementById('input-char-name').value.trim().slice(0, 16) || 'Cinéfilo';

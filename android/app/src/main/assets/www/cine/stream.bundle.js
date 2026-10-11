@@ -87159,8 +87159,8 @@ const API_HASH = "0523cf42fe71db02eeaa8ba52124c826";
 const BOT_USERNAME = "videoclubpacobot";
 const SESSION_KEY = "tg_session";
 let client = null;
-let swPort = null;
-const streamRegistry = /* @__PURE__ */ new Map();
+let swPort = typeof window !== "undefined" && window._swPort ? window._swPort : null;
+const streamRegistry = typeof window !== "undefined" ? window._streamRegistry = window._streamRegistry || /* @__PURE__ */ new Map() : /* @__PURE__ */ new Map();
 window._telegramPlaybacks = /* @__PURE__ */ new Map();
 window._currentGramJSRequestId = null;
 window._activeGramJSPlaybackId = null;
@@ -87714,11 +87714,12 @@ async function getVideoMessages(limit = 50, minId = 0, minTimestamp = 0) {
   return videos;
 }
 __name(getVideoMessages, "getVideoMessages");
-let _electronHandlerActive = false;
+let _electronHandlerActive = typeof window !== "undefined" && window._electronHandlerActive || false;
 function initElectronStreamHandler() {
   var _a;
-  if (!((_a = window.cineflix) == null ? void 0 : _a.isElectron) || _electronHandlerActive) return;
+  if (!((_a = window.cineflix) == null ? void 0 : _a.isElectron) || _electronHandlerActive || typeof window !== "undefined" && window._electronHandlerActive) return;
   _electronHandlerActive = true;
+  if (typeof window !== "undefined") window._electronHandlerActive = true;
   const _toast = /* @__PURE__ */ __name((msg, color = "#0f0") => {
     try {
       let el2 = document.getElementById("electron-stream-toast");
@@ -87741,7 +87742,7 @@ function initElectronStreamHandler() {
   }, "_toast");
   const CACHE_BLOCK = 2 * 1024 * 1024;
   const MAX_CACHE_BLOCKS = 10;
-  const _blockCache = /* @__PURE__ */ new Map();
+  const _blockCache = typeof window !== "undefined" ? window._electronBlockCache = window._electronBlockCache || /* @__PURE__ */ new Map() : /* @__PURE__ */ new Map();
   const _cachedFetch = /* @__PURE__ */ __name(async (client2, doc, streamId, start, size) => {
     const fileSize = Number(doc.size);
     const blockIdx = Math.floor(start / CACHE_BLOCK);
@@ -88056,6 +88057,7 @@ async function initServiceWorker() {
       new Promise((r) => setTimeout(r, 2e3))
     ]);
     swPort = channel.port1;
+    if (typeof window !== "undefined") window._swPort = swPort;
     swPort.onmessage = async (e) => {
       const { type: type2, requestId, streamId, start, size } = e.data;
       if (type2 !== "FETCH_RANGE") return;
@@ -88101,6 +88103,53 @@ async function streamVideo(media, videoElement, onProgress) {
       size: Number(doc2.size),
       mimeType: doc2.mimeType || "video/mp4"
     });
+    if (videoElement) {
+      try {
+        const port = await window.cineflix.mpv.streamPort();
+        videoElement.src = `http://127.0.0.1:${port}/stream/${streamId}`;
+        videoElement.muted = false;
+        videoElement.volume = 1;
+        videoElement.load();
+        videoElement.play().catch(() => {
+        });
+        await new Promise((resolve, reject) => {
+          let done = false;
+          const finish = /* @__PURE__ */ __name(() => {
+            if (!done) {
+              done = true;
+              cleanup();
+              resolve();
+            }
+          }, "finish");
+          const fail2 = /* @__PURE__ */ __name((e) => {
+            if (!done) {
+              done = true;
+              cleanup();
+              const err = videoElement.error;
+              console.error("[Electron stream] videoElement load error:", err || e);
+              reject(new Error(err ? `Error de vídeo (${err.code}): ${err.message || "Formato no compatible"}` : "Error al cargar vídeo"));
+            }
+          }, "fail");
+          const cleanup = /* @__PURE__ */ __name(() => {
+            clearTimeout(timer);
+            videoElement.removeEventListener("canplay", finish);
+            videoElement.removeEventListener("loadeddata", finish);
+            videoElement.removeEventListener("error", fail2);
+          }, "cleanup");
+          const timer = setTimeout(() => {
+            if (videoElement.readyState >= 1) finish();
+            else if (videoElement.error) fail2(videoElement.error);
+            else finish();
+          }, 1e4);
+          videoElement.addEventListener("canplay", finish, { once: true });
+          videoElement.addEventListener("loadeddata", finish, { once: true });
+          videoElement.addEventListener("error", fail2, { once: true });
+        });
+      } catch (e) {
+        console.warn("[Electron stream] videoElement setup error:", e);
+        throw e;
+      }
+    }
     return { streamId, fileSize: Number(doc2.size), mimeType: doc2.mimeType || "video/mp4" };
   }
   await initServiceWorker();
@@ -88326,15 +88375,17 @@ function useTDLib() {
   return !!window.AndroidBridge;
 }
 __name(useTDLib, "useTDLib");
-const isElectron = /* @__PURE__ */ __name(() => !!(window.cineflix && window.cineflix.isElectron), "isElectron");
-function isMp4(v) {
+function isMp4OrWebm(v) {
   const mt = String(v.mimeType || "").toLowerCase();
   const fn = String(v.fileName || "").toLowerCase();
-  return mt === "video/mp4" || /\.mp4$/.test(fn) || /\.m4v$/.test(fn);
+  return mt === "video/mp4" || mt === "video/webm" || /\.mp4$/i.test(fn) || /\.m4v$/i.test(fn) || /\.webm$/i.test(fn);
 }
-__name(isMp4, "isMp4");
+__name(isMp4OrWebm, "isMp4OrWebm");
 function pickMp4(videos) {
-  const list = (videos || []).filter((v) => v && v.media && isMp4(v));
+  let list = (videos || []).filter((v) => v && v.media && isMp4OrWebm(v));
+  if (!list.length) {
+    list = (videos || []).filter((v) => v && v.media);
+  }
   if (!list.length) return null;
   const score = /* @__PURE__ */ __name((v) => {
     const h = Number(v.height) || 720;
@@ -88355,7 +88406,6 @@ const fail = /* @__PURE__ */ __name((code2, msg) => {
   return e;
 }, "fail");
 function whyUnsupported() {
-  if (isElectron()) return "unsupported";
   if (isNativeApp()) return "native";
   return null;
 }
@@ -88409,7 +88459,8 @@ const CineStream = {
     if (!file2) throw fail("NO_MP4", "Esta película no tiene versión mp4");
     say("Preparando el vídeo…");
     try {
-      videoEl.muted = true;
+      videoEl.muted = false;
+      videoEl.volume = 1;
       await streamVideo(file2.media, videoEl, () => {
       });
     } catch (e) {

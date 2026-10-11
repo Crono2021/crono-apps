@@ -1,7 +1,7 @@
 /* Sonido sintetizado (WebAudio) */
 // Sound System (Synthesized Web Audio API)
 let audioCtx = null;
-let isSoundEnabled = false;
+let isSoundEnabled = true;
 
 function initAudio() {
     if (!audioCtx) {
@@ -12,6 +12,8 @@ function initAudio() {
         audioCtx.resume();
     }
 }
+document.addEventListener('click', () => { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); }, { passive: true });
+document.addEventListener('keydown', () => { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); }, { passive: true });
 
 function playBlip(freq = 440, type = 'square', duration = 0.08) {
     if (!isSoundEnabled) return;

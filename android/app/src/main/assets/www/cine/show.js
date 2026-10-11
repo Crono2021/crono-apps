@@ -63,6 +63,11 @@ function showOnState(st, fromJoin) {
     if (st.phase === 'idle') showStopPlayback();
     else if ((st.phase === 'loading' || st.phase === 'playing') && SHOW.movie) showStartPrepare();
     else if (st.phase === 'voting') showStopPlayback();
+
+    // Si la película ya estaba preparada y pasamos a 'playing', asegurar reproducción inmediata
+    if (st.phase === 'playing' && SHOW.prepared && showVideo && showVideo.paused) {
+        showPlay();
+    }
     showRender();
 }
 
@@ -154,6 +159,13 @@ async function showStartPrepare() {
         if (SHOW.key !== key) { try { eng.stop(showVideo); } catch (e) {} return; }
         SHOW.prepared = true; SHOW.preparing = false; SHOW.status = '✅ Película lista';
         showReportDuration(r && r.duration);
+        if (SHOW.phase === 'playing' && SHOW.startAt) {
+            const target = Math.max(0, (srvNow() - SHOW.startAt) / 1000);
+            if (target > 1 && showVideo) {
+                try { showVideo.currentTime = target; } catch (e) {}
+            }
+            showPlay();
+        }
     } catch (e) {
         if (SHOW.key !== key) return;
         SHOW.preparing = false; SHOW.prepared = false;
@@ -208,6 +220,7 @@ function showVideoEl() {
 }
 function showPlay() {
     const v = showVideoEl();
+    if (!v) return;
     v.muted = !SHOW.soundOn;
     if (SHOW.soundOn) v.volume = 1;
     const p = v.play();
@@ -215,12 +228,7 @@ function showPlay() {
         p.then(() => {
             if (SHOW.blocked) { SHOW.blocked = false; showRender(); }
         }).catch((err) => {
-            console.warn('[Show] Play unmuted blocked by policy, trying muted fallback if needed:', err);
-            if (v.muted === false) {
-                v.muted = true;
-                v.play().catch(() => {});
-            }
-            if (!SHOW.blocked) { SHOW.blocked = true; showRender(); }
+            console.warn('[Show] Play error:', err);
         });
     }
 }
@@ -234,28 +242,31 @@ function showSyncTick() {
         return;
     }
     if (SHOW.duration && target > SHOW.duration + 1) { if (!v.paused) v.pause(); return; }
-    if (v.readyState < 1) return;
+
+    // Si ya es la hora o la película está en emisión, arrancar la reproducción inmediatamente
+    if (v.paused && !v.ended) showPlay();
+
+    // NUNCA hacer saltos (seek) si el vídeo está pausado, en proceso de seek, o sin buffer suficiente
+    if (v.readyState < 2 || v.paused || v.seeking || SHOW.seekPending) return;
+
     const drift = target - v.currentTime;
     const limit = isFinite(v.duration) ? Math.max(0, v.duration - 0.5) : target;
     const since = Date.now() - (SHOW.lastSeekAt || 0);
 
-    // Solo saltar si el desfase es notable (> 10s) para evitar romper la reproducción continua
-    if (Math.abs(drift) > 10 && since > 6000) {
+    // Salto directo para sincronizar si el desfase es notable (> 5s)
+    if (Math.abs(drift) > 5 && since > 4000) {
         SHOW.lastSeekAt = Date.now(); SHOW.seekPending = true;
         try { v.currentTime = Math.max(0, Math.min(target, limit)); } catch (e) {}
         v.playbackRate = 1;
         return;
     }
 
-    // Para desfases pequeños (< 3.5s), velocidad exactamente 1.0x (máxima fluidez y suavidad como en reproductor normal)
-    // Para desfases moderados (3.5s - 10s), micro-ajuste de solo el 3% (imperceptible y sin distorsión de audio)
-    if (Math.abs(drift) > 3.5) {
+    // Micro-ajuste suave para drift moderado (2.5s - 5s)
+    if (Math.abs(drift) > 2.5) {
         v.playbackRate = drift > 0 ? 1.03 : 0.97;
     } else if (v.playbackRate !== 1) {
         v.playbackRate = 1;
     }
-
-    if (v.paused && !v.ended && !SHOW.blocked) showPlay();
 }
 
 /* ── Panel (debajo de la sala) ── */
@@ -281,29 +292,53 @@ function showRender() {
     const st = document.createElement('div'); st.className = 'show-status';
     const seated = mySeat() >= 0;
     if (SHOW.phase === 'idle') {
-        msg.textContent = '🎟️ Sesión de cine: vota entre 4 películas y velas todos juntos en la pantalla';
-        rowBtns.appendChild(showBtn('🗳️ Proponer película', 'start', () => {
+        msg.textContent = '🎟️ Sesión de cine: elige una del catálogo o vota entre 4 al azar';
+        rowBtns.appendChild(showBtn('🔍 Buscar en catálogo', 'propose-catalog', () => {
             if (!seated) return toast('Siéntate para proponer una película 🪑');
+            openProposeModal();
+        }, 'on'));
+        rowBtns.appendChild(showBtn('🎲 4 al azar', 'propose-random', () => {
+            if (!seated) return toast('Siéntate para proponer 🪑');
             netSend({ type: 'show_start' });
         }));
     } else if (SHOW.phase === 'voting') {
-        msg.textContent = '🗳️ ¿Qué vemos?' + (SHOW.by ? ' (lo propone ' + SHOW.by + ')' : '') + ' ⏳ ';
-        showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
-        SHOW.candidates.forEach((c, i) => {
-            const n = SHOW.votes[i] || 0;
-            const b = showBtn((SHOW.myVote === i ? '✔ ' : '') + showTitle(c) + ' · ' + n + (n === 1 ? ' voto' : ' votos'), 'vote' + i, () => {
+        if (SHOW.candidates.length === 1) {
+            const single = SHOW.candidates[0];
+            msg.textContent = '🍿 ' + (SHOW.by ? SHOW.by + ' propone: ' : 'Propuesta: ') + '«' + showTitle(single) + '» ⏳ ';
+            showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
+
+            const nYes = SHOW.votes[0] || 0;
+            const bYes = showBtn((SHOW.myVote === 0 ? '✔ ' : '') + '👍 ¡Me apunto! · ' + nYes + (nYes === 1 ? ' voto' : ' votos'), 'vote0', () => {
                 if (!seated) return toast('Siéntate para votar 🪑');
-                SHOW.myVote = i; netSend({ type: 'show_vote', i }); showRender();
-            }, SHOW.myVote === i ? 'on' : '');
-            rowBtns.appendChild(b);
-        });
-        const rerollIdx = SHOW.candidates.length;
-        const nReroll = SHOW.votes[rerollIdx] || 0;
-        const bReroll = showBtn((SHOW.myVote === rerollIdx ? '✔ ' : '') + '🔄 Pedir 4 distintas · ' + nReroll + (nReroll === 1 ? ' voto' : ' votos'), 'vote-reroll', () => {
-            if (!seated) return toast('Siéntate para votar 🪑');
-            SHOW.myVote = rerollIdx; netSend({ type: 'show_vote', i: rerollIdx }); showRender();
-        }, SHOW.myVote === rerollIdx ? 'on' : '');
-        rowBtns.appendChild(bReroll);
+                SHOW.myVote = 0; netSend({ type: 'show_vote', i: 0 }); showRender();
+            }, SHOW.myVote === 0 ? 'on' : '');
+            rowBtns.appendChild(bYes);
+
+            const nNo = SHOW.votes[1] || 0;
+            const bNo = showBtn((SHOW.myVote === 1 ? '✔ ' : '') + '🔄 Rechazar / 4 al azar · ' + nNo + (nNo === 1 ? ' voto' : ' votos'), 'vote1', () => {
+                if (!seated) return toast('Siéntate para votar 🪑');
+                SHOW.myVote = 1; netSend({ type: 'show_vote', i: 1 }); showRender();
+            }, SHOW.myVote === 1 ? 'on' : '');
+            rowBtns.appendChild(bNo);
+        } else {
+            msg.textContent = '🗳️ ¿Qué vemos?' + (SHOW.by ? ' (lo propone ' + SHOW.by + ')' : '') + ' ⏳ ';
+            showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
+            SHOW.candidates.forEach((c, i) => {
+                const n = SHOW.votes[i] || 0;
+                const b = showBtn((SHOW.myVote === i ? '✔ ' : '') + showTitle(c) + ' · ' + n + (n === 1 ? ' voto' : ' votos'), 'vote' + i, () => {
+                    if (!seated) return toast('Siéntate para votar 🪑');
+                    SHOW.myVote = i; netSend({ type: 'show_vote', i }); showRender();
+                }, SHOW.myVote === i ? 'on' : '');
+                rowBtns.appendChild(b);
+            });
+            const rerollIdx = SHOW.candidates.length;
+            const nReroll = SHOW.votes[rerollIdx] || 0;
+            const bReroll = showBtn((SHOW.myVote === rerollIdx ? '✔ ' : '') + '🔄 Pedir 4 distintas · ' + nReroll + (nReroll === 1 ? ' voto' : ' votos'), 'vote-reroll', () => {
+                if (!seated) return toast('Siéntate para votar 🪑');
+                SHOW.myVote = rerollIdx; netSend({ type: 'show_vote', i: rerollIdx }); showRender();
+            }, SHOW.myVote === rerollIdx ? 'on' : '');
+            rowBtns.appendChild(bReroll);
+        }
     } else if (SHOW.phase === 'loading') {
         msg.textContent = '🍿 «' + showTitle(SHOW.movie) + '» empieza en ';
         showCountEl = document.createElement('b'); showCountEl.id = 'show-count'; msg.appendChild(showCountEl);
@@ -336,7 +371,7 @@ function showOpenFullscreen() {
 }
 
 function getCinemaScreenRect() {
-    const canvas = showEl('room-canvas');
+    const canvas = showEl('cinema-canvas') || showEl('room-canvas');
     if (!canvas) return null;
     const r = canvas.getBoundingClientRect();
     const sx = r.width / 960, sy = r.height / 540;
@@ -358,16 +393,23 @@ function showSetExpanded(on) {
     if (on) {
         SHOW.expanded = true;
         // Activar sonido si estaba muteado para escuchar la película en pantalla completa
-        if (showVideo && showVideo.muted) {
-            showVideo.muted = false;
-            showVideo.volume = 1;
+        if (showVideo) {
+            if (showVideo.muted) {
+                showVideo.muted = false;
+                showVideo.volume = 1;
+            }
             SHOW.soundOn = true;
+            SHOW.mutedByAutoplay = false;
+            SHOW.blocked = false;
+            if (showVideo.paused) showPlay();
             showRender();
         }
 
         const startRect = getCinemaScreenRect();
         ov.classList.remove('mini');
         ov.classList.add('full');
+        ov.classList.add('user-active');
+        if (typeof showRegisterActivity === 'function') showRegisterActivity();
         showUpdateOverlayBtns();
         showRenderCaps();
 
@@ -399,6 +441,8 @@ function showSetExpanded(on) {
         const c = showEl('so-close'); if (c) { try { c.focus({ preventScroll: true }); } catch (e) {} }
     } else {
         SHOW.expanded = false;
+        if (typeof showActivityTimer !== 'undefined' && showActivityTimer) { clearTimeout(showActivityTimer); showActivityTimer = null; }
+        ov.classList.remove('user-active');
         const targetRect = getCinemaScreenRect();
         if (box && targetRect && targetRect.w > 20) {
             const curRect = box.getBoundingClientRect();
@@ -459,14 +503,65 @@ function showUpdateOverlayBtns() {
 }
 
 function unlockShowAudio() {
-    if (showVideo && SHOW.soundOn && showVideo.muted) {
+    if (!showVideo) return;
+    if (showVideo.paused && SHOW.phase === 'playing' && SHOW.prepared) {
+        showPlay();
+    }
+    if (SHOW.soundOn && showVideo.muted) {
         showVideo.muted = false;
         showVideo.volume = 1;
+        SHOW.blocked = false;
+        showRender();
     }
 }
 document.addEventListener('click', unlockShowAudio, { passive: true });
 document.addEventListener('keydown', unlockShowAudio, { passive: true });
+let showActivityTimer = null;
+function showRegisterActivity() {
+    const ov = showEl('screen-overlay');
+    if (!ov || !SHOW.expanded) return;
+    ov.classList.add('user-active');
+    if (showActivityTimer) clearTimeout(showActivityTimer);
+    showActivityTimer = setTimeout(() => {
+        if (SHOW.expanded && ov) {
+            ov.classList.remove('user-active');
+        }
+    }, 3500);
+}
+window.addEventListener('mousemove', showRegisterActivity, { passive: true });
+window.addEventListener('pointermove', showRegisterActivity, { passive: true });
+window.addEventListener('mousedown', showRegisterActivity, { passive: true });
+window.addEventListener('touchstart', showRegisterActivity, { passive: true });
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' || e.keyCode === 27) {
+        const propModal = showEl('propose-modal');
+        if (propModal && !propModal.classList.contains('hidden')) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            closeProposeModal();
+            return;
+        }
+        if (SHOW.expanded) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            showSetExpanded(false);
+            return;
+        }
+    }
+    if (SHOW.expanded) {
+        showRegisterActivity();
+    }
+}, true);
+
 function showHandleBack() {
+    const propModal = showEl('propose-modal');
+    if (propModal && !propModal.classList.contains('hidden')) {
+        closeProposeModal();
+        return true;
+    }
     if (SHOW.expanded) { showSetExpanded(false); return true; }
     return false;
 }
@@ -513,7 +608,8 @@ function drawShowScreen(ctx, now, SCR) {
     const cx = SCR.x + SCR.w / 2;
     ctx.save();
     ctx.textAlign = 'center';
-    if (SHOW.phase === 'playing' && SHOW.prepared && showVideo && showVideo.readyState >= 2 && !SHOW.error) {
+    const canDraw = SHOW.phase === 'playing' && SHOW.prepared && showVideo && (showVideo.readyState >= 2 || (showVideo.readyState >= 1 && (showVideo.videoWidth > 0 || showVideo.currentTime > 0)) || showVideo.currentTime > 0) && !SHOW.error;
+    if (canDraw) {
         // Vídeo en baja resolución con píxeles gruesos (estilo retro): 186×105 ampliado ×2
         const PW = 186, PH = 105;
         if (!showPix) { showPix = document.createElement('canvas'); showPix.width = PW; showPix.height = PH; showPixCtx = showPix.getContext('2d'); }
@@ -533,18 +629,35 @@ function drawShowScreen(ctx, now, SCR) {
     ctx.fillStyle = 'rgba(4,6,12,0.86)'; ctx.fillRect(SCR.x, SCR.y, SCR.w, SCR.h);
     const gold = '#f1c40f';
     if (SHOW.phase === 'voting') {
-        ctx.fillStyle = gold; ctx.font = '11px ' + SHOW_FONT;
-        ctx.fillText('¿QUÉ VEMOS?  ' + showFmt(SHOW.endsAt - srvNow()), cx, SCR.y + 24);
-        ctx.font = '8px ' + SHOW_FONT;
-        SHOW.candidates.forEach((c, i) => {
-            const n = SHOW.votes[i] || 0;
-            ctx.fillStyle = SHOW.myVote === i ? '#2ecc71' : '#fff';
-            ctx.fillText(showFit(ctx, (i + 1) + '. ' + showTitle(c) + '  [' + n + ']', SCR.w - 30), cx, SCR.y + 48 + i * 22);
-        });
-        const rerollIdx = SHOW.candidates.length;
-        const nReroll = SHOW.votes[rerollIdx] || 0;
-        ctx.fillStyle = SHOW.myVote === rerollIdx ? '#2ecc71' : '#f39c12';
-        ctx.fillText(showFit(ctx, '5. 🔄 Pedir 4 distintas  [' + nReroll + ']', SCR.w - 30), cx, SCR.y + 48 + rerollIdx * 22);
+        if (SHOW.candidates.length === 1) {
+            const single = SHOW.candidates[0];
+            ctx.fillStyle = gold; ctx.font = '10px ' + SHOW_FONT;
+            ctx.fillText('¿VER ESTA PELI?  ' + showFmt(SHOW.endsAt - srvNow()), cx, SCR.y + 24);
+            ctx.fillStyle = '#fff'; ctx.font = '9px ' + SHOW_FONT;
+            ctx.fillText(showFit(ctx, showTitle(single), SCR.w - 30), cx, SCR.y + 54);
+
+            const nYes = SHOW.votes[0] || 0;
+            ctx.fillStyle = SHOW.myVote === 0 ? '#2ecc71' : '#f1c40f';
+            ctx.font = '8px ' + SHOW_FONT;
+            ctx.fillText(showFit(ctx, '1. 👍 ¡Me apunto!  [' + nYes + ']', SCR.w - 30), cx, SCR.y + 86);
+
+            const nNo = SHOW.votes[1] || 0;
+            ctx.fillStyle = SHOW.myVote === 1 ? '#2ecc71' : '#e74c3c';
+            ctx.fillText(showFit(ctx, '2. 🔄 4 al azar  [' + nNo + ']', SCR.w - 30), cx, SCR.y + 110);
+        } else {
+            ctx.fillStyle = gold; ctx.font = '11px ' + SHOW_FONT;
+            ctx.fillText('¿QUÉ VEMOS?  ' + showFmt(SHOW.endsAt - srvNow()), cx, SCR.y + 24);
+            ctx.font = '8px ' + SHOW_FONT;
+            SHOW.candidates.forEach((c, i) => {
+                const n = SHOW.votes[i] || 0;
+                ctx.fillStyle = SHOW.myVote === i ? '#2ecc71' : '#fff';
+                ctx.fillText(showFit(ctx, (i + 1) + '. ' + showTitle(c) + '  [' + n + ']', SCR.w - 30), cx, SCR.y + 48 + i * 22);
+            });
+            const rerollIdx = SHOW.candidates.length;
+            const nReroll = SHOW.votes[rerollIdx] || 0;
+            ctx.fillStyle = SHOW.myVote === rerollIdx ? '#2ecc71' : '#f39c12';
+            ctx.fillText(showFit(ctx, '5. 🔄 Pedir 4 distintas  [' + nReroll + ']', SCR.w - 30), cx, SCR.y + 48 + rerollIdx * 22);
+        }
     } else {
         ctx.fillStyle = gold; ctx.font = '11px ' + SHOW_FONT;
         const title = showTitle(SHOW.movie).toUpperCase();
@@ -562,3 +675,112 @@ function drawShowScreen(ctx, now, SCR) {
     }
     ctx.restore();
 }
+
+/* ── Modal de Búsqueda y Propuesta de Películas del Catálogo ── */
+let proposeSearchDebounce = null;
+function openProposeModal() {
+    const modal = showEl('propose-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    const input = showEl('propose-search-input');
+    if (input) {
+        input.value = '';
+        setTimeout(() => input.focus(), 60);
+    }
+    fetchProposeMovies('');
+}
+
+function closeProposeModal() {
+    const modal = showEl('propose-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function onProposeSearchInput() {
+    if (proposeSearchDebounce) clearTimeout(proposeSearchDebounce);
+    proposeSearchDebounce = setTimeout(() => {
+        const input = showEl('propose-search-input');
+        const q = input ? input.value.trim() : '';
+        fetchProposeMovies(q);
+    }, 250);
+}
+
+async function fetchProposeMovies(query) {
+    const container = showEl('propose-results');
+    if (!container) return;
+    container.innerHTML = '<div class="propose-state-msg">Cargando catálogo… 🍿</div>';
+    try {
+        const url = query
+            ? `/api/movies?q=${encodeURIComponent(query)}&limit=15`
+            : `/api/movies?limit=15&sort=random`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Error al conectar con el catálogo');
+        const data = await res.json();
+        const items = data.items || (Array.isArray(data) ? data : []);
+        renderProposeResults(items);
+    } catch (err) {
+        container.innerHTML = `<div class="propose-state-msg" style="color:#f87171;">⚠️ Error: ${err.message || 'No se pudieron cargar las películas'}</div>`;
+    }
+}
+
+function renderProposeResults(items) {
+    const container = showEl('propose-results');
+    if (!container) return;
+    container.innerHTML = '';
+    if (!items || !items.length) {
+        container.innerHTML = '<div class="propose-state-msg">No se encontraron películas con ese título 🔎</div>';
+        return;
+    }
+    items.forEach(m => {
+        const item = document.createElement('div');
+        item.className = 'propose-item';
+
+        const poster = document.createElement('img');
+        poster.className = 'propose-item-poster';
+        poster.loading = 'lazy';
+        poster.alt = m.title || '';
+        poster.src = m.tmdb_poster ? `https://image.tmdb.org/t/p/w185${m.tmdb_poster}` : '/placeholder-poster.png';
+        poster.onerror = () => { poster.style.display = 'none'; };
+
+        const info = document.createElement('div');
+        info.className = 'propose-item-info';
+
+        const title = document.createElement('div');
+        title.className = 'propose-item-title';
+        title.textContent = m.title || 'Sin título';
+
+        const year = document.createElement('div');
+        year.className = 'propose-item-year';
+        year.textContent = m.year ? String(m.year) : (m.genre || 'Película');
+
+        info.append(title, year);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'propose-item-btn';
+        btn.textContent = '🎬 Poner en sala';
+        btn.onclick = () => proposeMovie(m);
+
+        item.append(poster, info, btn);
+        container.appendChild(item);
+    });
+}
+
+function proposeMovie(m) {
+    if (mySeat() < 0) return toast('Siéntate para proponer una película 🪑');
+    closeProposeModal();
+    netSend({
+        type: 'show_start',
+        movie: {
+            id: m.id,
+            title: m.title,
+            year: m.year,
+            search_title: m.search_title || m.title
+        }
+    });
+}
+
+window.openProposeModal = openProposeModal;
+window.closeProposeModal = closeProposeModal;
+window.onProposeSearchInput = onProposeSearchInput;
+window.proposeMovie = proposeMovie;
+

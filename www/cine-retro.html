@@ -7,7 +7,7 @@
     <link rel="icon" type="image/png" href="/favicon.png">
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/cine/cine.css?v=20261011d">
-    <link rel="stylesheet" href="/cine/room.css?v=20261011d">
+    <link rel="stylesheet" href="/cine/room.css?v=20261011e">
 </head>
 <body>
 
@@ -201,12 +201,28 @@
         </div>
     </div>
 
+    <!-- Modal para buscar y proponer cualquier película del catálogo -->
+    <div class="propose-modal-backdrop hidden" id="propose-modal" onclick="if(event.target===this)closeProposeModal()">
+        <div class="propose-modal-box">
+            <button class="propose-modal-close" onclick="closeProposeModal()" title="Cerrar">✕</button>
+            <div class="propose-modal-header">
+                <span class="propose-badge">🎬 CATÁLOGO CINEFLIX</span>
+                <h3 class="propose-title">Elegir película para la sala</h3>
+                <p class="propose-desc">Busca cualquier película del catálogo para verla todos juntos en la gran pantalla.</p>
+                <div class="propose-search-wrap">
+                    <input type="text" id="propose-search-input" class="propose-input" placeholder="🔍 Escribe para buscar (ej: Matrix, Shrek, Batman...)" autocomplete="off" oninput="onProposeSearchInput()">
+                </div>
+            </div>
+            <div class="propose-results" id="propose-results"></div>
+        </div>
+    </div>
+
     <script src="/qrcode.min.js"></script>
-    <script src="/cine/sprite.js?v=20261011d"></script>
-    <script src="/cine/audio.js?v=20261011d"></script>
-    <script src="/cine/scenes.js?v=20261011d"></script>
-    <script src="/cine/show.js?v=20261011d"></script>
-    <script src="/cine/app.js?v=20261011d"></script>
-    <script src="/cine/tv.js?v=20261011d"></script>
+    <script src="/cine/sprite.js?v=20261011e"></script>
+    <script src="/cine/audio.js?v=20261011e"></script>
+    <script src="/cine/scenes.js?v=20261011e"></script>
+    <script src="/cine/show.js?v=20261011e"></script>
+    <script src="/cine/app.js?v=20261011e"></script>
+    <script src="/cine/tv.js?v=20261011e"></script>
 </body>
 </html>

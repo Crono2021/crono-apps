@@ -153,7 +153,13 @@
             else qrModal.classList.add('hidden');
             return true;
         }
-        if (window.showHandleBack && showHandleBack()) return true;   // vídeo ampliado de la sesión de cine
+        const propModal = $('propose-modal');
+        if (propModal && !propModal.classList.contains('hidden')) {
+            if (typeof window.closeProposeModal === 'function') window.closeProposeModal();
+            else propModal.classList.add('hidden');
+            return true;
+        }
+        if (window.showHandleBack && showHandleBack()) return true;   // vídeo ampliado de la sesión de cine o modal
         const ov = $('overlay');
         if (ov && !ov.classList.contains('hidden')) return false;
         if (view === 'cinema') { leaveToLobby(); return true; }
@@ -167,6 +173,7 @@
     const VK_LABELS = {
         'hud-chat-input': ['Mensaje para la sala', 'Enviar'],
         'so-input': ['Comenta la película', 'Enviar'],
+        'propose-search-input': ['Buscar película en el catálogo', 'Buscar'],
         'input-char-name': ['Nombre de tu personaje', 'Aceptar'],
         'input-char-quote': ['Tu frase (opcional)', 'Aceptar'],
         'seat-input': ['Número de butaca (1-32)', 'Ir']
