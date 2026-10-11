@@ -237,6 +237,12 @@
             <div class="propose-results" id="propose-results"></div>
             <!-- Paso 2: Selección de archivo/versión de Telegram -->
             <div class="propose-files hidden" id="propose-files"></div>
+
+            <!-- Controles flotantes de scroll para Smart TV / Magic Remote -->
+            <div class="propose-scroll-nav hidden" id="propose-scroll-nav">
+                <button type="button" class="propose-scroll-btn up" id="propose-scroll-up" onclick="scrollProposeContainer(-1)" title="Subir">▲</button>
+                <button type="button" class="propose-scroll-btn down" id="propose-scroll-down" onclick="scrollProposeContainer(1)" title="Bajar">▼</button>
+            </div>
         </div>
     </div>
 

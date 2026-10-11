@@ -71,13 +71,17 @@
         if (ov && !ov.classList.contains('hidden')) return ov;
         const qrModal = $('qr-modal');
         if (qrModal && !qrModal.classList.contains('hidden')) return qrModal;
+        const propModal = $('propose-modal');
+        if (propModal && !propModal.classList.contains('hidden')) return propModal;
+        const privModal = $('priv-modal');
+        if (privModal && !privModal.classList.contains('hidden')) return privModal;
         if (typeof SHOW !== 'undefined' && SHOW.expanded) return $('screen-overlay');
         return document.body;
     }
     function focusEl(el) {
         if (!el) return;
         try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
-        try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) {}
+        try { el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }); } catch (e) {}
     }
     function moveFocus(dir, root) {
         root = root || currentRoot();

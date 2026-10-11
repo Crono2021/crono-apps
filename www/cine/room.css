@@ -649,13 +649,19 @@ body.tv-mode input[readonly] { cursor: pointer; }
     box-shadow: 0 0 0 2px rgba(241, 196, 15, 0.2);
 }
 .propose-results {
-    padding: 12px 18px 18px 18px;
+    padding: 12px 18px 76px 18px;
     overflow-y: auto;
     flex: 1;
     display: flex;
     flex-direction: column;
     gap: 8px;
     max-height: 52vh;
+    scrollbar-width: thin;
+    scrollbar-color: #f1c40f rgba(15, 23, 42, 0.7);
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none;
 }
 .propose-item {
     display: flex;
@@ -665,11 +671,14 @@ body.tv-mode input[readonly] { cursor: pointer; }
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     padding: 8px 12px;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    outline: none;
 }
-.propose-item:hover {
+.propose-item:hover,
+.propose-item:focus {
     background: rgba(241, 196, 15, 0.08);
-    border-color: rgba(241, 196, 15, 0.35);
+    border-color: rgba(241, 196, 15, 0.6);
+    box-shadow: 0 0 0 2px rgba(241, 196, 15, 0.25);
 }
 .propose-item-poster {
     width: 40px;
@@ -707,8 +716,10 @@ body.tv-mode input[readonly] { cursor: pointer; }
     padding: 8px 14px;
     cursor: pointer;
     transition: transform 0.1s, box-shadow 0.1s;
+    outline: none;
 }
-.propose-item-btn:hover {
+.propose-item-btn:hover,
+.propose-item-btn:focus {
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(241, 196, 15, 0.4);
 }
@@ -728,16 +739,113 @@ body.tv-mode input[readonly] { cursor: pointer; }
 
 /* ── Selección de Versión / Archivo del Bot en Proponer ── */
 .propose-files {
-    padding: 12px 18px 18px 18px;
+    padding: 12px 18px 76px 18px;
     overflow-y: auto;
     flex: 1;
     display: flex;
     flex-direction: column;
     gap: 10px;
     max-height: 52vh;
+    scrollbar-width: thin;
+    scrollbar-color: #f1c40f rgba(15, 23, 42, 0.7);
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none;
 }
 .propose-files.hidden {
     display: none !important;
+}
+
+/* Scrollbars accesibles para Smart TV y Magic Remote */
+.propose-files::-webkit-scrollbar,
+.propose-results::-webkit-scrollbar {
+    width: 14px;
+}
+.propose-files::-webkit-scrollbar-track,
+.propose-results::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.7);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin: 6px 0;
+}
+.propose-files::-webkit-scrollbar-thumb,
+.propose-results::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #f1c40f 0%, #d4ac0d 100%);
+    border-radius: 8px;
+    border: 2px solid #0f172a;
+    box-shadow: 0 0 10px rgba(241, 196, 15, 0.4);
+}
+.propose-files::-webkit-scrollbar-thumb:hover,
+.propose-results::-webkit-scrollbar-thumb:hover {
+    background: #fef08a;
+    box-shadow: 0 0 16px rgba(241, 196, 15, 0.8);
+}
+
+/* Estado durante el arrastre (Drag-to-scroll) */
+.propose-files.is-dragging,
+.propose-results.is-dragging {
+    cursor: grabbing !important;
+}
+.propose-files.is-dragging *,
+.propose-results.is-dragging * {
+    cursor: grabbing !important;
+    pointer-events: none !important;
+}
+
+/* Controles flotantes de scroll para Smart TV / Magic Remote */
+.propose-scroll-nav {
+    position: absolute;
+    right: 18px;
+    bottom: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 30;
+    pointer-events: none;
+    animation: propFadeIn 0.2s ease-out;
+}
+.propose-scroll-nav.hidden {
+    display: none !important;
+}
+.propose-scroll-btn {
+    pointer-events: auto;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: rgba(15, 23, 42, 0.92);
+    border: 2px solid rgba(241, 196, 15, 0.75);
+    color: #f1c40f;
+    font-size: 18px;
+    font-weight: 900;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8), 0 0 16px rgba(241, 196, 15, 0.35);
+    transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    outline: none;
+}
+.propose-scroll-btn:hover,
+.propose-scroll-btn:focus {
+    background: #f1c40f;
+    color: #0b0f17;
+    transform: scale(1.12);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.9), 0 0 25px rgba(241, 196, 15, 0.7);
+    border-color: #fef08a;
+}
+.propose-scroll-btn:active {
+    transform: scale(0.95);
+}
+.propose-scroll-btn.disabled {
+    opacity: 0.28;
+    pointer-events: none;
+    border-color: rgba(255, 255, 255, 0.18);
+    color: #64748b;
+    box-shadow: none;
 }
 .propose-file-item {
     display: flex;
@@ -751,10 +859,13 @@ body.tv-mode input[readonly] { cursor: pointer; }
     cursor: pointer;
     text-align: left;
 }
-.propose-file-item:hover {
-    background: rgba(241, 196, 15, 0.1);
-    border-color: rgba(241, 196, 15, 0.5);
+.propose-file-item:hover,
+.propose-file-item:focus {
+    background: rgba(241, 196, 15, 0.12);
+    border-color: rgba(241, 196, 15, 0.65);
     transform: translateY(-1px);
+    box-shadow: 0 0 0 2px rgba(241, 196, 15, 0.3);
+    outline: none;
 }
 .propose-file-item.recommended {
     background: linear-gradient(135deg, rgba(241, 196, 15, 0.14) 0%, rgba(30, 41, 59, 0.5) 100%);

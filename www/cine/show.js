@@ -773,6 +773,163 @@ function showFormatBytes(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+function setupDragToScroll(container) {
+    if (!container || container._hasDragScroll) return;
+    container._hasDragScroll = true;
+
+    let isDown = false;
+    let startY = 0;
+    let startScrollTop = 0;
+    let isDragging = false;
+    let velocityY = 0;
+    let lastY = 0;
+    let lastTime = 0;
+    let momentumId = null;
+    let blockNextClick = false;
+
+    // Deshabilitar selección de texto durante el arrastre
+    container.style.userSelect = 'none';
+    container.style.webkitUserSelect = 'none';
+
+    function onPointerDown(e) {
+        if (e.button !== 0 && e.button !== undefined) return;
+        // Dejar que el scroll táctil nativo funcione en móviles táctiles
+        if (e.pointerType === 'touch') return;
+
+        isDown = true;
+        isDragging = false;
+        startY = e.clientY;
+        startScrollTop = container.scrollTop;
+        lastY = e.clientY;
+        lastTime = performance.now();
+        velocityY = 0;
+
+        if (momentumId) {
+            cancelAnimationFrame(momentumId);
+            momentumId = null;
+        }
+    }
+
+    function onPointerMove(e) {
+        if (!isDown) return;
+        const dy = e.clientY - startY;
+
+        if (!isDragging && Math.abs(dy) > 6) {
+            isDragging = true;
+            container.classList.add('is-dragging');
+        }
+
+        if (isDragging) {
+            container.scrollTop = startScrollTop - dy;
+            const now = performance.now();
+            const dt = now - lastTime;
+            if (dt > 0) {
+                velocityY = 0.5 * velocityY + 0.5 * ((e.clientY - lastY) / dt);
+            }
+            lastY = e.clientY;
+            lastTime = now;
+            updateProposeScrollNav();
+        }
+    }
+
+    function onPointerUp() {
+        if (!isDown) return;
+        isDown = false;
+
+        if (isDragging) {
+            blockNextClick = true;
+            setTimeout(() => {
+                blockNextClick = false;
+                isDragging = false;
+                container.classList.remove('is-dragging');
+            }, 120);
+
+            // Inercia / momentum cinético suave
+            let vel = velocityY * 12;
+            const friction = 0.92;
+            function momentumStep() {
+                if (Math.abs(vel) < 0.5 || isDown) {
+                    momentumId = null;
+                    updateProposeScrollNav();
+                    return;
+                }
+                container.scrollTop -= vel;
+                vel *= friction;
+                updateProposeScrollNav();
+                momentumId = requestAnimationFrame(momentumStep);
+            }
+            momentumId = requestAnimationFrame(momentumStep);
+        } else {
+            isDragging = false;
+        }
+    }
+
+    // Interceptar clics durante o inmediatamente después del arrastre
+    container.addEventListener('click', (e) => {
+        if (blockNextClick || isDragging) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            blockNextClick = false;
+            isDragging = false;
+            container.classList.remove('is-dragging');
+        }
+    }, true);
+
+    if (window.PointerEvent) {
+        container.addEventListener('pointerdown', onPointerDown);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', onPointerUp);
+    } else {
+        container.addEventListener('mousedown', onPointerDown);
+        window.addEventListener('mousemove', onPointerMove);
+        window.addEventListener('mouseup', onPointerUp);
+    }
+
+    container.addEventListener('scroll', () => {
+        updateProposeScrollNav();
+    }, { passive: true });
+}
+
+function scrollProposeContainer(dir) {
+    const filesCont = showEl('propose-files');
+    const resultsCont = showEl('propose-results');
+    const cont = (filesCont && !filesCont.classList.contains('hidden')) ? filesCont : resultsCont;
+    if (!cont) return;
+    const step = Math.max(160, Math.round(cont.clientHeight * 0.72));
+    cont.scrollBy({ top: dir * step, behavior: 'smooth' });
+    setTimeout(updateProposeScrollNav, 150);
+    setTimeout(updateProposeScrollNav, 400);
+}
+
+function updateProposeScrollNav() {
+    const nav = showEl('propose-scroll-nav');
+    if (!nav) return;
+    const filesCont = showEl('propose-files');
+    const resultsCont = showEl('propose-results');
+    const cont = (filesCont && !filesCont.classList.contains('hidden')) ? filesCont : resultsCont;
+    if (!cont) {
+        nav.classList.add('hidden');
+        return;
+    }
+    const canScroll = cont.scrollHeight > cont.clientHeight + 10;
+    if (!canScroll) {
+        nav.classList.add('hidden');
+        return;
+    }
+    nav.classList.remove('hidden');
+
+    const btnUp = showEl('propose-scroll-up');
+    const btnDown = showEl('propose-scroll-down');
+    if (btnUp) {
+        btnUp.classList.toggle('disabled', cont.scrollTop <= 6);
+    }
+    if (btnDown) {
+        btnDown.classList.toggle('disabled', cont.scrollTop + cont.clientHeight >= cont.scrollHeight - 6);
+    }
+}
+
 function backToProposeCatalog() {
     const wrap = showEl('propose-search-wrap');
     const results = showEl('propose-results');
@@ -781,13 +938,20 @@ function backToProposeCatalog() {
     const descEl = showEl('propose-modal-desc');
     const badgeEl = showEl('propose-modal-badge');
 
-    if (filesCont) filesCont.classList.add('hidden');
+    if (filesCont) {
+        filesCont.classList.add('hidden');
+        filesCont.scrollTop = 0;
+    }
     if (wrap) wrap.classList.remove('hidden');
     if (results) results.classList.remove('hidden');
 
     if (badgeEl) badgeEl.textContent = '🎬 CATÁLOGO CINEFLIX';
     if (titleEl) titleEl.textContent = 'Elegir película para la sala';
     if (descEl) descEl.textContent = 'Busca cualquier película del catálogo para verla todos juntos en la gran pantalla.';
+
+    if (results) setupDragToScroll(results);
+    if (filesCont) setupDragToScroll(filesCont);
+    setTimeout(updateProposeScrollNav, 60);
 }
 
 function openProposeModal() {
@@ -801,6 +965,7 @@ function openProposeModal() {
         setTimeout(() => input.focus(), 60);
     }
     fetchProposeMovies('');
+    setTimeout(updateProposeScrollNav, 100);
 }
 
 function closeProposeModal() {
@@ -848,6 +1013,9 @@ function renderProposeResults(items) {
         const item = document.createElement('div');
         item.className = 'propose-item';
         item.style.cursor = 'pointer';
+        item.tabIndex = 0;
+        item.setAttribute('role', 'button');
+        item.setAttribute('aria-label', `Elegir película ${m.title || ''}`);
 
         const poster = document.createElement('img');
         poster.className = 'propose-item-poster';
@@ -879,10 +1047,20 @@ function renderProposeResults(items) {
         };
 
         item.onclick = () => selectMovieForProposal(m);
+        item.onkeydown = (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                selectMovieForProposal(m);
+            }
+        };
 
         item.append(poster, info, btn);
         container.appendChild(item);
     });
+
+    setupDragToScroll(container);
+    updateProposeScrollNav();
+    setTimeout(updateProposeScrollNav, 60);
 }
 
 function showParseMultipartName(filename) {
@@ -1153,6 +1331,9 @@ function renderMovieFiles(m, files) {
     // Opción Automática inteligente (MP4 preferido o MKV <= 4GB)
     const autoItem = document.createElement('div');
     autoItem.className = 'propose-file-item recommended';
+    autoItem.tabIndex = 0;
+    autoItem.setAttribute('role', 'button');
+    autoItem.setAttribute('aria-label', 'Selección automática recomendada');
     autoItem.innerHTML = `
         <div class="propose-file-top">
             <span class="propose-file-name">⚡ Selección Automática (Recomendada)</span>
@@ -1163,6 +1344,12 @@ function renderMovieFiles(m, files) {
         </div>
     `;
     autoItem.onclick = () => proposeMovie(m, null);
+    autoItem.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            proposeMovie(m, null);
+        }
+    };
     filesCont.appendChild(autoItem);
 
     if (!files || !files.length) {
@@ -1179,6 +1366,8 @@ function renderMovieFiles(m, files) {
         directBtn.onclick = () => proposeMovie(m, null);
         warn.appendChild(directBtn);
         filesCont.appendChild(warn);
+        setupDragToScroll(filesCont);
+        updateProposeScrollNav();
         return;
     }
 
@@ -1194,6 +1383,9 @@ function renderMovieFiles(m, files) {
     sorted.forEach((f, idx) => {
         const item = document.createElement('div');
         item.className = 'propose-file-item';
+        item.tabIndex = 0;
+        item.setAttribute('role', 'button');
+        item.setAttribute('aria-label', `Archivo ${idx + 1}: ${f.fileName || ''}`);
 
         let badgeHtml = '';
         if (f.isMp4) {
@@ -1223,8 +1415,18 @@ function renderMovieFiles(m, files) {
             </div>
         `;
         item.onclick = () => proposeMovie(m, f);
+        item.onkeydown = (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                proposeMovie(m, f);
+            }
+        };
         filesCont.appendChild(item);
     });
+
+    setupDragToScroll(filesCont);
+    updateProposeScrollNav();
+    setTimeout(updateProposeScrollNav, 60);
 }
 
 function proposeMovie(m, chosenFile = null) {
@@ -1259,7 +1461,11 @@ window.openProposeModal = openProposeModal;
 window.closeProposeModal = closeProposeModal;
 window.backToProposeCatalog = backToProposeCatalog;
 window.selectMovieForProposal = selectMovieForProposal;
+window.renderMovieFiles = renderMovieFiles;
+window.renderProposeResults = renderProposeResults;
 window.onProposeSearchInput = onProposeSearchInput;
 window.proposeMovie = proposeMovie;
+window.scrollProposeContainer = scrollProposeContainer;
+window.updateProposeScrollNav = updateProposeScrollNav;
 
 
