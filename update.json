@@ -1,10 +1,10 @@
 {
   "android": {
     "version": 58,
-    "url": "https://raw.githubusercontent.com/Crono2021/crono-apps/cineflix-android/cineflix.apk"
+    "url": "https://cineflixapp.duckdns.org/cineflix.apk"
   },
   "android_tv": {
     "version": 58,
-    "url": "https://raw.githubusercontent.com/Crono2021/crono-apps/cineflix-android/cineflix.apk"
+    "url": "https://cineflixapp.duckdns.org/cineflix.apk"
   }
 }
