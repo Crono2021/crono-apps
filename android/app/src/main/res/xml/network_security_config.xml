@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Allow cleartext HTTP to localhost only (NanoHTTPD streaming proxy) -->
+    <!-- Allow cleartext HTTP to localhost streaming proxy and local LAN Smart TVs (DLNA / UPnP SOAP & XML) -->
+    <base-config cleartextTrafficPermitted="true" />
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">127.0.0.1</domain>
         <domain includeSubdomains="false">localhost</domain>

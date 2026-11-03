@@ -16,6 +16,99 @@
         app:use_controller="false"
         app:surface_type="surface_view" />
 
+    <!-- Tarjeta de Estado Mando TV (visible mientras se emite por DLNA o Chromecast) -->
+    <LinearLayout
+        android:id="@+id/layout_cast_status_card"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="34dp"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:background="@drawable/bg_tv_dialog"
+        android:paddingHorizontal="22dp"
+        android:paddingVertical="14dp"
+        android:elevation="8dp"
+        android:translationZ="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tv_cast_active_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📺 Emitiendo en Smart TV"
+            android:textColor="#34D399"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:maxWidth="380dp" />
+
+        <TextView
+            android:id="@+id/tv_cast_active_subtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:text="Reproducción directa por Wi-Fi"
+            android:textColor="#CBD5E1"
+            android:textSize="12sp"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:maxWidth="380dp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/btn_cast_card_catalog"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="10dp"
+                android:text="📚 Catálogo"
+                android:textColor="#DDD6FE"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:focusable="true"
+                android:clickable="true"
+                android:background="@drawable/bg_tv_button_selector" />
+
+            <TextView
+                android:id="@+id/btn_cast_card_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="10dp"
+                android:text="🔄 Cambiar TV"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:focusable="true"
+                android:clickable="true"
+                android:background="@drawable/bg_tv_button_selector" />
+
+            <TextView
+                android:id="@+id/btn_cast_card_stop"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📱 Ver aquí"
+                android:textColor="#FCA5A5"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:focusable="true"
+                android:clickable="true"
+                android:background="@drawable/bg_tv_button_selector" />
+        </LinearLayout>
+    </LinearLayout>
+
     <!-- Título Flotante (arriba centro) -->
     <TextView
         android:id="@+id/tv_video_title"
@@ -168,6 +261,21 @@
                 android:layout_height="0dp"
                 android:layout_weight="1" />
 
+            <!-- Enviar a TV (también accesible desde la barra inferior con mando o dedo) -->
+            <ImageButton
+                android:id="@+id/btn_cast_bottom"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_cast_tv"
+                android:scaleType="fitCenter"
+                android:padding="8dp"
+                android:contentDescription="Enviar a TV"
+                android:focusable="true"
+                android:nextFocusRight="@+id/btn_tracks"
+                android:nextFocusUp="@+id/seek_bar" />
+
             <!-- Pistas (Audio / Subtítulos) -->
             <ImageButton
                 android:id="@+id/btn_tracks"
@@ -180,6 +288,7 @@
                 android:padding="8dp"
                 android:contentDescription="Tracks"
                 android:focusable="true"
+                android:nextFocusLeft="@+id/btn_cast_bottom"
                 android:nextFocusRight="@+id/btn_resize"
                 android:nextFocusUp="@+id/seek_bar" />
 
@@ -225,15 +334,27 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- Contenedor Chromecast (añadido para Cineflix) -->
+    <!-- Contenedor Enviar a TV unificado (arriba derecha: Chromecast + Samsung Tizen + LG webOS + DLNA) -->
     <FrameLayout
         android:id="@+id/cast_button_container"
         android:layout_width="48dp"
         android:layout_height="48dp"
         android:layout_gravity="top|end"
-        android:layout_marginTop="32dp"
-        android:layout_marginEnd="32dp"
-        android:visibility="gone" />
+        android:layout_marginTop="28dp"
+        android:layout_marginEnd="28dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/btn_cast_unified"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_tv_button_selector"
+            android:src="@drawable/ic_cast_tv"
+            android:scaleType="fitCenter"
+            android:padding="11dp"
+            android:contentDescription="Enviar a TV"
+            android:focusable="true" />
+    </FrameLayout>
 
     <!-- Botón de Saltar Intro (Aparece durante intro/recap) -->
     <LinearLayout
@@ -288,7 +409,7 @@
         android:visibility="gone"
         android:elevation="10dp"
         android:translationZ="10dp">
-        
+
         <ImageView
             android:layout_width="24dp"
             android:layout_height="24dp"
@@ -296,7 +417,7 @@
             android:src="@android:drawable/ic_media_next"
             android:contentDescription="Next"
             app:tint="#FFFFFF" />
-            
+
         <TextView
             android:id="@+id/tv_next_episode_countdown"
             android:layout_width="wrap_content"

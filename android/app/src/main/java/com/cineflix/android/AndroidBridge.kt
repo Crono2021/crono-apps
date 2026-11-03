@@ -36,6 +36,12 @@ class AndroidBridge(
     @JavascriptInterface
     fun supportsStoredSevenZip(): Boolean = true
 
+    @JavascriptInterface
+    fun getDeviceModel(): String = TelegramEngine.resolveDeviceModel(context)
+
+    @JavascriptInterface
+    fun getSystemVersion(): String = TelegramEngine.resolveSystemVersion()
+
     init {
         GramJSStreamManager.webView = webView
         scope.launch {

@@ -4,8 +4,20 @@ import android.annotation.SuppressLint
 import android.content.res.Configuration
 import android.app.UiModeManager
 import android.content.Context
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.TextUtils
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.KeyEvent
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.TextView
+import com.cineflix.android.ui.player.cast.CastSessionCoordinator
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -24,6 +36,17 @@ class MainActivity : ComponentActivity() {
     private lateinit var bridge: AndroidBridge
     private lateinit var engine: TelegramEngine
     private var isAndroidTV = false
+    private lateinit var castMiniBar: LinearLayout
+    private lateinit var tvMiniCastTitle: TextView
+    private lateinit var tvMiniCastSubtitle: TextView
+    private lateinit var btnMiniCastPlayPause: ImageButton
+    private var wasMiniBarVisible = false
+
+    private val castStateObserver = object : CastSessionCoordinator.StateObserver {
+        override fun onCastStateChanged(snapshot: CastSessionCoordinator.CastUiSnapshot) {
+            updateCastMiniBar(snapshot)
+        }
+    }
 
     companion object {
         init {
@@ -142,10 +165,14 @@ class MainActivity : ComponentActivity() {
                         val pi = packageManager.getPackageInfo(packageName, 0)
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) pi.longVersionCode else @Suppress("DEPRECATION") pi.versionCode.toLong()
                     } catch (e: Throwable) { 2L }
+                    val devModelJs = org.json.JSONObject.quote(TelegramEngine.resolveDeviceModel(this@MainActivity))
+                    val sysVerJs = org.json.JSONObject.quote(TelegramEngine.resolveSystemVersion())
                     view.evaluateJavascript(
                         "window._cineflixIsTV = $tvFlag; " +
                         "window.__appPlatform = '$platformStr'; " +
                         "window.__appVersion = $vCode; " +
+                        "window.__cineflixDeviceModel = $devModelJs; " +
+                        "window.__cineflixSystemVersion = $sysVerJs; " +
                         "document.documentElement.classList.toggle('android-tv', $tvFlag); " +
                         "if ($tvFlag && !$isAmazon) { " +
                         "  window.addEventListener('keydown', function(e) { " +
@@ -415,9 +442,31 @@ class MainActivity : ComponentActivity() {
         }
         
         // Fix white flash on startup
-        webView.setBackgroundColor(android.graphics.Color.BLACK)
+        webView.setBackgroundColor(Color.BLACK)
 
-        setContentView(webView)
+        val rootContainer = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+        }
+        rootContainer.addView(
+            webView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        castMiniBar = createCastMiniBarView()
+        val miniBarLp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            leftMargin = dpToPx(12)
+            rightMargin = dpToPx(12)
+            bottomMargin = dpToPx(14)
+        }
+        rootContainer.addView(castMiniBar, miniBarLp)
+
+        setContentView(rootContainer)
 
         // OTA: comprobar actualizaciones al abrir la app
         OtaUpdateManager(this).checkForUpdate()
@@ -471,23 +520,22 @@ class MainActivity : ComponentActivity() {
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (isAndroidTV && (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)) {
-            val jsKeyCode = when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_UP -> 38
-                KeyEvent.KEYCODE_DPAD_DOWN -> 40
-                KeyEvent.KEYCODE_DPAD_LEFT -> 37
-                KeyEvent.KEYCODE_DPAD_RIGHT -> 39
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> 13
+            val mapped = when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> Pair(38, "ArrowUp")
+                KeyEvent.KEYCODE_DPAD_DOWN -> Pair(40, "ArrowDown")
+                KeyEvent.KEYCODE_DPAD_LEFT -> Pair(37, "ArrowLeft")
+                KeyEvent.KEYCODE_DPAD_RIGHT -> Pair(39, "ArrowRight")
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> Pair(13, "Enter")
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE -> Pair(179, "MediaPlayPause")
+                KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_NEXT -> Pair(228, "MediaFastForward")
+                KeyEvent.KEYCODE_MEDIA_REWIND, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> Pair(227, "MediaRewind")
+                KeyEvent.KEYCODE_MENU -> Pair(82, "Menu")
+                KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP -> Pair(166, "ChannelUp")
+                KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN -> Pair(167, "ChannelDown")
                 else -> null
             }
-            if (jsKeyCode != null) {
-                val jsKey = when (jsKeyCode) {
-                    38 -> "ArrowUp"
-                    40 -> "ArrowDown"
-                    37 -> "ArrowLeft"
-                    39 -> "ArrowRight"
-                    13 -> "Enter"
-                    else -> ""
-                }
+            if (mapped != null) {
+                val (jsKeyCode, jsKey) = mapped
                 val eventType = if (event.action == KeyEvent.ACTION_DOWN) "keydown" else "keyup"
                 val repeat = if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) "true" else "false"
                 webView.evaluateJavascript(
@@ -508,6 +556,7 @@ class MainActivity : ComponentActivity() {
 
     /** Only pause WebView rendering when activity is fully stopped (backgrounded) */
     override fun onStop() {
+        CastSessionCoordinator.removeStateObserver(castStateObserver)
         super.onStop()
         // NEVER call webView.pauseTimers() — it pauses the V8/Chromium timer loop process-wide,
         // which permanently freezes timers, WebSockets, and animations on Android TV when resumed.
@@ -518,6 +567,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         webView.onResume()
+        CastSessionCoordinator.addStateObserver(castStateObserver)
 
         if (isAndroidTV) {
             webView.isFocusable = true
@@ -638,9 +688,177 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        CastSessionCoordinator.removeStateObserver(castStateObserver)
         webViewInstance = null
         bridge.cleanup()
         super.onDestroy()
+    }
+
+    private fun dpToPx(dp: Int): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            dp.toFloat(),
+            resources.displayMetrics
+        ).toInt()
+    }
+
+    private fun openActiveCastRemotePlayer() {
+        if (!CastSessionCoordinator.isCastingActive) return
+        val intent = CastSessionCoordinator.buildReopenPlayerIntent(this)
+        playerLauncher.launch(intent)
+    }
+
+    private fun createCastMiniBarView(): LinearLayout {
+        val cardBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dpToPx(16).toFloat()
+            setColor(Color.parseColor("#F2131022"))
+            setStroke(dpToPx(1), Color.parseColor("#7C3AED"))
+        }
+
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = cardBg
+            elevation = dpToPx(12).toFloat()
+            setPadding(dpToPx(14), dpToPx(10), dpToPx(10), dpToPx(10))
+            visibility = View.GONE
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { openActiveCastRemotePlayer() }
+        }
+
+        val badgeTv = TextView(this).apply {
+            text = "📺"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setPadding(0, 0, dpToPx(10), 0)
+        }
+        bar.addView(badgeTv)
+
+        val textCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { openActiveCastRemotePlayer() }
+        }
+
+        tvMiniCastTitle = TextView(this).apply {
+            text = "Cineflix"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        tvMiniCastSubtitle = TextView(this).apply {
+            text = "Emitiendo en Smart TV"
+            setTextColor(Color.parseColor("#34D399"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        textCol.addView(tvMiniCastTitle)
+        textCol.addView(tvMiniCastSubtitle)
+        bar.addView(textCol)
+
+        val mandoBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dpToPx(10).toFloat()
+            setColor(Color.parseColor("#3B1D7A"))
+        }
+        val btnOpenRemote = TextView(this).apply {
+            text = "Mando"
+            setTextColor(Color.parseColor("#EDE9FE"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            setTypeface(typeface, Typeface.BOLD)
+            background = mandoBg
+            setPadding(dpToPx(10), dpToPx(6), dpToPx(10), dpToPx(6))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                leftMargin = dpToPx(8)
+                rightMargin = dpToPx(4)
+            }
+            setOnClickListener { openActiveCastRemotePlayer() }
+        }
+        bar.addView(btnOpenRemote)
+
+        btnMiniCastPlayPause = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_media_pause)
+            setBackgroundColor(Color.TRANSPARENT)
+            setColorFilter(Color.WHITE)
+            contentDescription = "Pausar o reanudar TV"
+            val size = dpToPx(38)
+            layoutParams = LinearLayout.LayoutParams(size, size)
+            setPadding(dpToPx(7), dpToPx(7), dpToPx(7), dpToPx(7))
+            setOnClickListener {
+                CastSessionCoordinator.togglePlayPause(this@MainActivity)
+            }
+        }
+        bar.addView(btnMiniCastPlayPause)
+
+        val btnMiniStop = TextView(this).apply {
+            text = "✕"
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#FCA5A5"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTypeface(typeface, Typeface.BOLD)
+            val size = dpToPx(36)
+            layoutParams = LinearLayout.LayoutParams(size, size)
+            setOnClickListener {
+                CastSessionCoordinator.stopCastingCompletely(this@MainActivity)
+                webView.postDelayed({
+                    webView.evaluateJavascript(
+                        "if (typeof window.fetchWatchProgress === 'function') window.fetchWatchProgress();",
+                        null
+                    )
+                }, 700L)
+            }
+        }
+        bar.addView(btnMiniStop)
+
+        return bar
+    }
+
+    private fun updateCastMiniBar(snapshot: CastSessionCoordinator.CastUiSnapshot) {
+        if (!::castMiniBar.isInitialized) return
+        if (!snapshot.isActive) {
+            castMiniBar.visibility = View.GONE
+            if (wasMiniBarVisible) {
+                wasMiniBarVisible = false
+                webView.evaluateJavascript(
+                    "(function(){ if (document && document.body) document.body.style.paddingBottom = ''; })();",
+                    null
+                )
+            }
+            return
+        }
+
+        castMiniBar.visibility = View.VISIBLE
+        if (!wasMiniBarVisible) {
+            wasMiniBarVisible = true
+            webView.evaluateJavascript(
+                "(function(){ if (document && document.body) document.body.style.paddingBottom = '88px'; })();",
+                null
+            )
+        }
+
+        tvMiniCastTitle.text = snapshot.movieTitle
+        val tvLabel = snapshot.tvName.ifBlank { "Smart TV" }
+        val posClock = CastSessionCoordinator.formatDurationClock(snapshot.positionMs)
+        val timePart = if (snapshot.durationMs > 0L) {
+            "$posClock / ${CastSessionCoordinator.formatDurationClock(snapshot.durationMs)}"
+        } else {
+            posClock
+        }
+        tvMiniCastSubtitle.text = when {
+            snapshot.isConnecting -> "Conectando con $tvLabel..."
+            snapshot.isPlaying -> "$tvLabel • $timePart"
+            else -> "En pausa • $tvLabel • $timePart"
+        }
+        btnMiniCastPlayPause.setImageResource(
+            if (snapshot.isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+        )
     }
 }
 

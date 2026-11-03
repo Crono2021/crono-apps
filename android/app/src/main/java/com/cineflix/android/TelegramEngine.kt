@@ -1,12 +1,17 @@
 package com.cineflix.android
 
+import android.app.UiModeManager
 import android.content.Context
+import android.content.res.Configuration
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.drinkless.tdlib.Client
 import org.drinkless.tdlib.TdApi
 import java.io.File
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -21,6 +26,17 @@ class TelegramEngine(private val context: Context) {
         const val API_ID = 36374374
         const val API_HASH = "8000603d2523b8a22df55c9476d9c64a"
 
+        private val UPPERCASE_BRANDS = setOf(
+            "LG", "TCL", "HTC", "ZTE", "OPPO", "VIVO", "ASUS", "HONOR", "POCO", "RCA", "JVC"
+        )
+        private val MARKETING_MODEL_KEYWORDS_REGEX = Regex(
+            "\\b(?:Galaxy|Redmi|POCO|Pixel|Moto|Motorola|OnePlus|Realme|Reno\\d*|Find\\s*X|Xperia|Zenfone\\d*|ROG\\s*Phone|Nothing\\s*Phone|Honor|Mate\\s*\\d+|Pura\\s*\\d+|Nova\\s*\\d+|Xiaomi\\s*\\d+|Mi\\s*\\d+|Pad\\s*\\d+|Tab\\s*[AS]\\d+|Chromecast|Shield|Bravia|Fire\\s*TV)",
+            RegexOption.IGNORE_CASE
+        )
+        private val IGNORED_GENERIC_DEVICE_NAMES = setOf(
+            "android", "android tv", "localhost", "unknown", "phone", "tablet", "device"
+        )
+
         @Volatile
         private var INSTANCE: TelegramEngine? = null
 
@@ -28,6 +44,110 @@ class TelegramEngine(private val context: Context) {
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: TelegramEngine(context.applicationContext).also { INSTANCE = it }
             }
+
+        fun resolveDeviceModel(context: Context): String {
+            val isTv = try {
+                val uiMode = context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+                uiMode?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+            } catch (_: Throwable) {
+                false
+            }
+            val deviceName = try {
+                Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+            } catch (_: Throwable) {
+                null
+            }
+            return formatRealAndroidDeviceModel(
+                manufacturerRaw = Build.MANUFACTURER,
+                modelRaw = Build.MODEL,
+                deviceNameRaw = deviceName,
+                isTelevision = isTv
+            )
+        }
+
+        fun resolveSystemVersion(): String {
+            return formatRealAndroidSystemVersion(Build.VERSION.RELEASE, Build.VERSION.SDK_INT)
+        }
+
+        fun resolveSystemLanguageCode(): String {
+            val lang = try {
+                Locale.getDefault().language.lowercase(Locale.ROOT).trim()
+            } catch (_: Throwable) {
+                "es"
+            }
+            return if (lang.length in 2..3) lang else "es"
+        }
+
+        fun formatRealAndroidDeviceModel(
+            manufacturerRaw: String?,
+            modelRaw: String?,
+            deviceNameRaw: String?,
+            isTelevision: Boolean = false
+        ): String {
+            val brand = formatManufacturer(manufacturerRaw)
+            val model = sanitizeIdentityToken(modelRaw)
+            val friendly = sanitizeIdentityToken(deviceNameRaw)
+
+            val hardwareModel = when {
+                brand.equals("Amazon", ignoreCase = true) && model.startsWith("AFT", ignoreCase = true) ->
+                    "Amazon Fire TV ($model)"
+                model.isEmpty() ->
+                    brand.ifEmpty { if (isTelevision) "Android TV" else "Android" }
+                brand.isNotEmpty() && !model.startsWith(brand, ignoreCase = true) ->
+                    "$brand $model"
+                else -> model
+            }
+
+            val friendlyLower = friendly.lowercase(Locale.ROOT)
+            val hasUsefulFriendlyName = friendly.isNotEmpty() &&
+                friendlyLower !in IGNORED_GENERIC_DEVICE_NAMES &&
+                !friendly.equals(model, ignoreCase = true) &&
+                !friendly.equals(hardwareModel, ignoreCase = true)
+
+            val startsWithBrandName = brand.isNotEmpty() && friendly.startsWith("$brand ", ignoreCase = true)
+            val combined = if (!hasUsefulFriendlyName) {
+                hardwareModel
+            } else if (startsWithBrandName || MARKETING_MODEL_KEYWORDS_REGEX.containsMatchIn(friendly)) {
+                if (brand.isNotEmpty() && !friendly.startsWith(brand, ignoreCase = true)) {
+                    "$brand $friendly"
+                } else {
+                    friendly
+                }
+            } else if (!hardwareModel.contains(friendly, ignoreCase = true)) {
+                "$hardwareModel ($friendly)"
+            } else {
+                hardwareModel
+            }
+
+            return combined.take(64).trim().ifEmpty { if (isTelevision) "Android TV" else "Android" }
+        }
+
+        fun formatRealAndroidSystemVersion(releaseRaw: String?, sdkInt: Int): String {
+            val rel = sanitizeIdentityToken(releaseRaw)
+            return when {
+                rel.isEmpty() -> if (sdkInt > 0) "Android (SDK $sdkInt)" else "Android"
+                rel.startsWith("Android", ignoreCase = true) -> rel.take(32).trim()
+                else -> "Android $rel".take(32).trim()
+            }
+        }
+
+        private fun formatManufacturer(raw: String?): String {
+            val clean = sanitizeIdentityToken(raw)
+            if (clean.isEmpty()) return ""
+            val upper = clean.uppercase(Locale.ROOT)
+            if (upper in UPPERCASE_BRANDS) return upper
+            return clean.replaceFirstChar { ch ->
+                if (ch.isLowerCase()) ch.titlecase(Locale.ROOT) else ch.toString()
+            }
+        }
+
+        private fun sanitizeIdentityToken(raw: String?): String {
+            if (raw.isNullOrBlank()) return ""
+            return raw
+                .replace(Regex("[\\r\\n\\t\\p{Cntrl}]+"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -54,6 +174,7 @@ class TelegramEngine(private val context: Context) {
 
     // Pre-cached fileId for bot episode messages: "chatId:msgId" → Pair(fileId, mimeType)
     val fileIdCache = ConcurrentHashMap<String, Pair<Int, String>>()
+    val fileSizeCache = ConcurrentHashMap<String, Long>()
 
     // Per-fileId lock to serialize concurrent DownloadFile range requests and avoid TDLib Error 200
     private val downloadLocks = ConcurrentHashMap<Int, Any>()
@@ -202,11 +323,15 @@ class TelegramEngine(private val context: Context) {
                 ensureDirectoriesExist()
                 val dbPath = File(context.filesDir, "tdlib_data").absolutePath
                 val cachePath = File(context.cacheDir, "tdlib_files").absolutePath
+                val realDeviceModel = resolveDeviceModel(context)
+                val realSystemVersion = resolveSystemVersion()
+                val realLangCode = resolveSystemLanguageCode()
+                Log.i(TAG, "📱 TDLib device identity: model='$realDeviceModel', os='$realSystemVersion', lang='$realLangCode'")
                 client?.send(TdApi.SetTdlibParameters(
                     false, dbPath, cachePath, null,
                     true, true, true, true,
                     API_ID, API_HASH,
-                    "es", "Samsung S24 Ultra", "Android 14", "11.1.3"
+                    realLangCode, realDeviceModel, realSystemVersion, "11.1.3"
                 )) {}
             }
             is TdApi.AuthorizationStateWaitPhoneNumber -> _authState.value = AuthState.WaitPhone
@@ -326,6 +451,7 @@ class TelegramEngine(private val context: Context) {
             val info = extractVideoInfo(msg) ?: return
             val cacheKey = "${msg.chatId}:${msg.id}"
             fileIdCache[cacheKey] = Pair(info.fileId, info.mimeType)
+            if (info.fileSize > 0L) fileSizeCache[cacheKey] = info.fileSize
             // (Removed buggy DownloadFile pre-warm that saturated Android TV storage and CPU)
         }
     }
@@ -843,7 +969,10 @@ class TelegramEngine(private val context: Context) {
     suspend fun resolveFileIdForMessage(chatId: Long, msgId: Long): Pair<Int, Long>? = withContext(Dispatchers.IO) {
         val cacheKey = "$chatId:$msgId"
         fileIdCache[cacheKey]?.let { pair ->
-            return@withContext Pair(pair.first, 0L)
+            val cachedSize = fileSizeCache[cacheKey] ?: 0L
+            val actualSize = if (cachedSize > 0L) cachedSize else resolveFileSizeForFileId(pair.first)
+            if (actualSize > 0L) fileSizeCache[cacheKey] = actualSize
+            return@withContext Pair(pair.first, actualSize)
         }
         val deferred = CompletableDeferred<Pair<Int, Long>?>()
         client?.send(TdApi.GetMessage(chatId, msgId)) { result ->
@@ -851,6 +980,7 @@ class TelegramEngine(private val context: Context) {
                 val info = extractVideoInfo(result)
                 if (info != null && info.fileId > 0) {
                     fileIdCache[cacheKey] = Pair(info.fileId, info.mimeType)
+            if (info.fileSize > 0L) fileSizeCache[cacheKey] = info.fileSize
                     deferred.complete(Pair(info.fileId, info.fileSize))
                 } else {
                     deferred.complete(null)
@@ -860,6 +990,21 @@ class TelegramEngine(private val context: Context) {
             }
         }
         withTimeoutOrNull(5000) { deferred.await() }
+    }
+
+    suspend fun resolveFileSizeForFileId(fileId: Int): Long = withContext(Dispatchers.IO) {
+        if (fileId <= 0) return@withContext 0L
+        fileStates[fileId]?.value?.expectedSize?.takeIf { it > 0L }?.let { return@withContext it }
+        val deferred = CompletableDeferred<Long>()
+        client?.send(TdApi.GetFile(fileId)) { res ->
+            if (res is TdApi.File) {
+                val sz = if (res.size > 0L) res.size else res.expectedSize
+                deferred.complete(sz.coerceAtLeast(0L))
+            } else {
+                deferred.complete(0L)
+            }
+        } ?: deferred.complete(0L)
+        withTimeoutOrNull(2500) { deferred.await() } ?: 0L
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
