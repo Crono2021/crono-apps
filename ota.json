@@ -1,9 +1,9 @@
 {
-    "versionCode": 58,
-    "versionName": "1.4.5",
-    "apkUrl": "https://cineflixapp.duckdns.org/cineflix.apk",
-    "sha256": "32e46b3f1a0c8a9a0945810ff966f80df6348dbf3caf738a44925b1d73163106",
-    "changelog": "- Añadidas Salas de Cine\n(Watch Party para ver películas con tus amigos)",
-    "mandatory": false,
-    "minVersionCode": 1
+  "versionCode": 59,
+  "versionName": "1.4.6",
+  "apkUrl": "https://cineflixapp.duckdns.org/cineflix.apk",
+  "sha256": "a4c37db0582bb5cd0828db5c82d9ced5e8b29de7f81a68131adeb210087cf4fa",
+  "changelog": "- Nuevo sistema de envío a TV (Chromecast, Android TV y Smart TVs DLNA como Samsung Tizen, LG webOS, etc.)\n- Transcodificación inteligente en el móvil: reproduce películas MKV, HEVC o Dolby en televisores antiguos sin sobrecalentar el teléfono\n- Control desde el móvil al emitir: cambio de pista de audio, selector de subtítulos y barra de progreso sincronizada con el mando de la TV\n- Los subtítulos ahora comienzan desactivados por defecto tanto en el móvil como al enviar a la TV",
+  "mandatory": false,
+  "minVersionCode": 1
 }
