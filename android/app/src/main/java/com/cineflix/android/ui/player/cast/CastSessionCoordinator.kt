@@ -13,21 +13,15 @@ import com.cineflix.android.TelegramEngine
 import com.cineflix.android.ui.player.FilePart
 import com.cineflix.android.ui.player.LocalStreamServer
 import com.cineflix.android.ui.player.PlayerActivity
+import com.cineflix.android.util.StorageAndRamHygiene
 import com.google.android.gms.cast.MediaStatus
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import kotlinx.coroutines.*
 import org.json.JSONObject
-import java.net.URL
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
+import java.net.HttpURLConnection
 import java.util.concurrent.CopyOnWriteArraySet
-import javax.net.ssl.HostnameVerifier
-import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
 
 /**
  * Process-wide coordinator that owns the active Smart TV / Chromecast session, `LocalStreamServer`,
@@ -64,8 +58,26 @@ object CastSessionCoordinator {
         val introStartMs: String,
         val introEndMs: String,
         val introDbCreditsMs: String,
-        val storedSevenZip: Boolean
-    )
+        val storedSevenZip: Boolean,
+        val isLiveTv: Boolean = false,
+        val isPremiereLocked: Boolean = false,
+        val liveTvChannelId: String = "",
+        val liveTvChannelLabel: String = "",
+        val liveTvProgramTitle: String = "",
+        val liveTvItemId: String = "",
+        val liveTvTmdbId: Int = 0,
+        val liveTvYear: String = "",
+        val liveTvMediaType: String = "movie",
+        val liveTvCleanTitle: String = "",
+        val liveTvPosterPath: String = "",
+        val liveTvPayload: String = "",
+        val liveTvRawItemJson: String = "",
+        val liveTvTunedAtMs: Long = 0L,
+        val liveTvBaseOffsetSec: Long = 0L
+    ) {
+        val isLiveBroadcastLocked: Boolean
+            get() = isLiveTv || isPremiereLocked
+    }
 
     data class CastTrackOption(
         val ordinal: Int,
@@ -106,7 +118,8 @@ object CastSessionCoordinator {
         val isPlaying: Boolean,
         val isLiveTranscode: Boolean,
         val positionMs: Long,
-        val durationMs: Long
+        val durationMs: Long,
+        val isLiveTv: Boolean = false
     )
 
     sealed class AutoContinueCastTarget {
@@ -130,7 +143,10 @@ object CastSessionCoordinator {
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e(TAG, "Unhandled coroutine exception in CastSessionCoordinator", throwable)
+    }
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() + coroutineExceptionHandler)
     private val stateObservers = CopyOnWriteArraySet<StateObserver>()
 
     val dlnaController = DlnaCastController()
@@ -282,10 +298,16 @@ object CastSessionCoordinator {
                 if (durationMs > 0L) {
                     this@CastSessionCoordinator.durationMs = durationMs
                 }
+                val resolvedDur = this@CastSessionCoordinator.durationMs
                 val ui = playerUiListener
-                if (ui != null) {
-                    // PlayerActivity is visible: stop cast service & let PlayerActivity trigger next episode or finish
-                    activeStreamServer?.stopLiveTranscode()
+                val ctx = appContext
+                if (ctx != null) {
+                    stopCastingCompletely(ctx, markFinished = true, notifyAttachedPlayerToClose = false)
+                } else {
+                    val srv = activeStreamServer
+                    activeStreamServer = null
+                    activeMedia = null
+                    savedTrackState = SavedTrackSelectionState()
                     castMode = CastMode.NONE
                     activeDlnaDevice = null
                     activeCastDeviceId = null
@@ -294,13 +316,9 @@ object CastSessionCoordinator {
                     isPlaying = false
                     stopBackgroundJobsAndService()
                     broadcastSnapshot()
-                    ui.onDlnaPlaybackEndedNaturally(device, finalPositionMs, this@CastSessionCoordinator.durationMs)
-                } else {
-                    // PlayerActivity is detached (user is in catalog or another app): clean up & mark finished!
-                    appContext?.let { ctx ->
-                        stopCastingCompletely(ctx, markFinished = true, notifyAttachedPlayerToClose = false)
-                    }
+                    scope.launch { runCatching { srv?.stop() } }
                 }
+                ui?.onDlnaPlaybackEndedNaturally(device, finalPositionMs, resolvedDur)
             }
 
             override fun onPlaybackStopped(device: DlnaDevice, lastPositionMs: Long) {
@@ -352,24 +370,31 @@ object CastSessionCoordinator {
 
     fun getSnapshot(): CastUiSnapshot {
         val active = isCastingActive
+        val media = activeMedia
+        val liveTitle = if (media?.isLiveBroadcastLocked == true && media.liveTvProgramTitle.isNotBlank()) {
+            media.liveTvProgramTitle
+        } else {
+            media?.title?.ifBlank { "Cineflix" } ?: "Cineflix"
+        }
         return CastUiSnapshot(
             isActive = active,
             mode = castMode,
             tvName = activeCastTvName,
             deviceId = activeCastDeviceId,
-            movieTitle = activeMedia?.title?.ifBlank { "Cineflix" } ?: "Cineflix",
+            movieTitle = liveTitle,
             subtitleText = statusSubtitle,
             isConnecting = isConnecting,
             isPlaying = isPlaying,
             isLiveTranscode = castMode == CastMode.DLNA && dlnaController.isCurrentSessionLiveTranscode,
             positionMs = if (active) getEffectivePositionMs(appContext) else 0L,
-            durationMs = if (active) getEffectiveDurationMs(appContext) else 0L
+            durationMs = if (active) getEffectiveDurationMs(appContext) else 0L,
+            isLiveTv = active && (media?.isLiveBroadcastLocked == true)
         )
     }
 
     private fun broadcastSnapshot() {
-        val snap = getSnapshot()
         mainHandler.post {
+            val snap = getSnapshot()
             for (obs in stateObservers) {
                 try {
                     obs.onCastStateChanged(snap)
@@ -491,7 +516,12 @@ object CastSessionCoordinator {
         googleCastAnchorPosMs = safeStart
         googleCastLastTickWallMs = System.currentTimeMillis()
         lastGoogleCastSeekAtMs = 0L
-        durationMs = knownDurationMs.coerceAtLeast(0L)
+        val effectiveDur = if (knownDurationMs > 0L) knownDurationMs else streamServer.getKnownDurationMs()
+        durationMs = effectiveDur.coerceAtLeast(0L)
+        if (effectiveDur > 0L) {
+            streamServer.updateKnownDurationMs(effectiveDur)
+        }
+        bindStreamServerCallbacks(streamServer)
         isConnecting = true
         isPlaying = false
         castStartedAtWallMs = System.currentTimeMillis()
@@ -579,11 +609,27 @@ object CastSessionCoordinator {
                 pos
             }
             CastMode.GOOGLE_CAST -> {
-                val rmc = getGoogleCastRemoteMediaClient(context)
                 val now = System.currentTimeMillis()
                 val seekSettle = lastGoogleCastSeekAtMs > 0L && (now - lastGoogleCastSeekAtMs) < 3500L
-                val hasMediaStatus = rmc?.mediaStatus != null
-                val approx = if (hasMediaStatus) (rmc?.approximateStreamPosition ?: -1L) else -1L
+                val rmc = getGoogleCastRemoteMediaClient(context)
+                val approx = if (rmc != null) {
+                    try {
+                        if (rmc.mediaStatus != null) rmc.approximateStreamPosition else -1L
+                    } catch (_: Throwable) {
+                        -1L
+                    }
+                } else {
+                    -1L
+                }
+                val rmcPlaying = if (rmc != null) {
+                    try {
+                        rmc.isPlaying
+                    } catch (_: Throwable) {
+                        isPlaying
+                    }
+                } else {
+                    isPlaying
+                }
 
                 if (approx > 0L) {
                     val isStalePreSeek = seekSettle &&
@@ -594,7 +640,7 @@ object CastSessionCoordinator {
                         googleCastAnchorPosMs = approx
                         googleCastLastTickWallMs = now
                     }
-                } else if (rmc?.isPlaying == true && !seekSettle && googleCastLastTickWallMs > 0L) {
+                } else if (rmcPlaying && !seekSettle && googleCastLastTickWallMs > 0L) {
                     val delta = (now - googleCastLastTickWallMs).coerceIn(0L, 3000L)
                     if (delta > 0L) {
                         googleCastAnchorPosMs += delta
@@ -625,7 +671,16 @@ object CastSessionCoordinator {
                 }
             }
             CastMode.GOOGLE_CAST -> {
-                val d = getGoogleCastRemoteMediaClient(context)?.streamDuration ?: 0L
+                val rmc = getGoogleCastRemoteMediaClient(context)
+                val d = if (rmc != null) {
+                    try {
+                        rmc.streamDuration
+                    } catch (_: Throwable) {
+                        0L
+                    }
+                } else {
+                    0L
+                }
                 if (d > 0L) {
                     durationMs = d
                     d
@@ -638,8 +693,11 @@ object CastSessionCoordinator {
     }
 
     private fun getGoogleCastRemoteMediaClient(context: Context?): RemoteMediaClient? {
+        // RemoteMediaClient methods (getMediaStatus, getApproximateStreamPosition, isPlaying, getStreamDuration)
+        // strictly enforce Preconditions.checkMainThread("Must be called from the main thread.").
+        // Never return a RemoteMediaClient instance to a non-main thread!
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            return attachedRmc
+            return null
         }
         val ctx = context ?: appContext ?: return attachedRmc
         return try {
@@ -651,6 +709,28 @@ object CastSessionCoordinator {
 
     fun togglePlayPause(context: Context) {
         mainHandler.post {
+            val media = activeMedia
+            if (media?.isLiveBroadcastLocked == true) {
+                val msg = if (media.isPremiereLocked) {
+                    "🔒 El Peliculón en directo: reproducción sincronizada para todos"
+                } else {
+                    "📺 Emisión en directo: no se puede pausar"
+                }
+                android.widget.Toast.makeText(context.applicationContext, msg, android.widget.Toast.LENGTH_SHORT).show()
+                when (castMode) {
+                    CastMode.DLNA -> {
+                        if (!isPlaying) dlnaController.resume()
+                    }
+                    CastMode.GOOGLE_CAST -> {
+                        val rmc = getGoogleCastRemoteMediaClient(context)
+                        if (rmc != null && rmc.isPaused) {
+                            try { rmc.play() } catch (_: Throwable) {}
+                        }
+                    }
+                    CastMode.NONE -> {}
+                }
+                return@post
+            }
             when (castMode) {
                 CastMode.DLNA -> {
                     dlnaController.togglePlayPause()
@@ -708,7 +788,7 @@ object CastSessionCoordinator {
         stopBackgroundJobsAndService()
         broadcastSnapshot()
 
-        if (media != null && media.phone.isNotEmpty() && media.contentId.isNotEmpty() && resumePos > 0L) {
+        if (media != null && !media.isLiveBroadcastLocked && media.phone.isNotEmpty() && media.contentId.isNotEmpty() && resumePos > 0L) {
             scope.launch {
                 sendProgressPingDirect(media.phone, media.contentId, media.season, media.episode, resumePos, dur)
             }
@@ -762,6 +842,11 @@ object CastSessionCoordinator {
         currentPositionMs = 0L
         durationMs = 0L
 
+        val oldServerIds = buildSet {
+            val fid = oldServer?.getActiveFileId() ?: -1
+            if (fid > 0) add(fid)
+            oldServer?.getActiveMultipartParts()?.forEach { if (it.fileId > 0) add(it.fileId) }
+        }
         try {
             oldServer?.stop()
         } catch (_: Throwable) {}
@@ -770,9 +855,9 @@ object CastSessionCoordinator {
             if (newFileId > 0) add(newFileId)
             newParts?.forEach { if (it.fileId > 0) add(it.fileId) }
         }
-        cleanupTdlibFiles(appCtx, oldMedia, protectedIds, optimize = false)
+        cleanupTdlibFiles(appCtx, oldMedia, protectedIds, optimize = false, extraFileIds = oldServerIds)
 
-        if (oldMedia != null && oldMedia.phone.isNotEmpty() && oldMedia.contentId.isNotEmpty() && finalPos > 0L) {
+        if (oldMedia != null && !oldMedia.isLiveBroadcastLocked && oldMedia.phone.isNotEmpty() && oldMedia.contentId.isNotEmpty() && finalPos > 0L) {
             scope.launch {
                 sendProgressPingDirect(oldMedia.phone, oldMedia.contentId, oldMedia.season, oldMedia.episode, finalPos, finalDur)
             }
@@ -794,6 +879,11 @@ object CastSessionCoordinator {
         appContext = appCtx
         val media = activeMedia
         val server = activeStreamServer
+        val serverIds = buildSet {
+            val fid = server?.getActiveFileId() ?: -1
+            if (fid > 0) add(fid)
+            server?.getActiveMultipartParts()?.forEach { if (it.fileId > 0) add(it.fileId) }
+        }
         val finalDur = getEffectiveDurationMs(appCtx)
         val rawPos = getEffectivePositionMs(appCtx)
         val finalPos = if (markFinished && finalDur > 0L) finalDur else rawPos
@@ -832,8 +922,8 @@ object CastSessionCoordinator {
             try {
                 server?.stop()
             } catch (_: Throwable) {}
-            cleanupTdlibFiles(appCtx, media, emptySet(), optimize = true)
-            if (media != null && media.phone.isNotEmpty() && media.contentId.isNotEmpty() && finalPos > 0L) {
+            cleanupTdlibFiles(appCtx, media, emptySet(), optimize = true, extraFileIds = serverIds)
+            if (media != null && !media.isLiveBroadcastLocked && media.phone.isNotEmpty() && media.contentId.isNotEmpty() && finalPos > 0L) {
                 sendProgressPingDirect(media.phone, media.contentId, media.season, media.episode, finalPos, finalDur)
             }
         }
@@ -849,7 +939,7 @@ object CastSessionCoordinator {
 
     fun triggerImmediateProgressSync() {
         val media = activeMedia ?: return
-        if (media.phone.isEmpty() || media.contentId.isEmpty()) return
+        if (media.isLiveBroadcastLocked || media.phone.isEmpty() || media.contentId.isEmpty()) return
         val pos = getEffectivePositionMs(appContext)
         val dur = getEffectiveDurationMs(appContext)
         if (pos <= 0L) return
@@ -881,6 +971,23 @@ object CastSessionCoordinator {
                 putExtra(PlayerActivity.EXTRA_INTRO_START_MS, media.introStartMs)
                 putExtra(PlayerActivity.EXTRA_INTRO_END_MS, media.introEndMs)
                 putExtra(PlayerActivity.EXTRA_INTRODB_CREDITS_MS, media.introDbCreditsMs)
+                if (media.isLiveBroadcastLocked) {
+                    putExtra(PlayerActivity.EXTRA_IS_LIVE_TV, true)
+                    putExtra(PlayerActivity.EXTRA_IS_PREMIERE_LOCKED, media.isPremiereLocked)
+                    putExtra(PlayerActivity.EXTRA_LIVE_TV_CHANNEL_ID, media.liveTvChannelId)
+                    putExtra(PlayerActivity.EXTRA_LIVE_TV_CHANNEL_LABEL, media.liveTvChannelLabel)
+                    putExtra(PlayerActivity.EXTRA_LIVE_TV_PROGRAM_TITLE, media.liveTvProgramTitle)
+                    putExtra(PlayerActivity.EXTRA_LIVE_TV_ITEM_ID, media.liveTvItemId)
+                    putExtra(PlayerActivity.EXTRA_LIVE_TV_POSTER_PATH, media.liveTvPosterPath)
+                    putExtra(PlayerActivity.EXTRA_LIVE_TV_PAYLOAD, media.liveTvPayload)
+                    putExtra(PlayerActivity.EXTRA_LIVE_TV_RAW_ITEM_JSON, media.liveTvRawItemJson)
+                    putExtra(PlayerActivity.EXTRA_LIVE_TV_TUNED_AT_MS, media.liveTvTunedAtMs)
+                    putExtra(PlayerActivity.EXTRA_LIVE_TV_BASE_OFFSET_SEC, media.liveTvBaseOffsetSec)
+                    if (media.liveTvTmdbId > 0) putExtra(PlayerActivity.EXTRA_XRAY_TMDB_ID, media.liveTvTmdbId)
+                    if (media.liveTvYear.isNotBlank()) putExtra(PlayerActivity.EXTRA_XRAY_YEAR, media.liveTvYear)
+                    if (media.liveTvMediaType.isNotBlank()) putExtra(PlayerActivity.EXTRA_XRAY_MEDIA_TYPE, media.liveTvMediaType)
+                    if (media.liveTvCleanTitle.isNotBlank()) putExtra(PlayerActivity.EXTRA_XRAY_CLEAN_TITLE, media.liveTvCleanTitle)
+                }
             }
         }
     }
@@ -904,7 +1011,7 @@ object CastSessionCoordinator {
                     delay(30_000L)
                     if (!isCastingActive) break
                     val media = activeMedia ?: continue
-                    if (media.phone.isNotEmpty() && media.contentId.isNotEmpty()) {
+                    if (!media.isLiveBroadcastLocked && media.phone.isNotEmpty() && media.contentId.isNotEmpty()) {
                         val pos = getEffectivePositionMs(context)
                         val dur = getEffectiveDurationMs(context)
                         sendProgressPingDirect(media.phone, media.contentId, media.season, media.episode, pos, dur)
@@ -931,6 +1038,9 @@ object CastSessionCoordinator {
                         rmc.addProgressListener(rmcProgressListener, 1000L)
                     } catch (_: Throwable) {}
                 }
+                if (activeMedia?.isLiveBroadcastLocked == true && rmc.isPaused) {
+                    try { rmc.play() } catch (_: Throwable) {}
+                }
                 isConnecting = false
                 isPlaying = rmc.isPlaying || rmc.isBuffering
                 statusSubtitle = when {
@@ -941,6 +1051,19 @@ object CastSessionCoordinator {
                 }
                 getEffectivePositionMs(context)
                 getEffectiveDurationMs(context)
+
+                // Seamlessly advance Google Cast WebVTT subtitle track slot when new cues are harvested
+                // or playback approaches the end of the previous VTT window (0ms video interruption!)
+                val server = activeStreamServer
+                if (server != null && rmc.isPlaying) {
+                    val nextSubSlot = server.pollNextGoogleCastSubtitleSlotIfNeeded(currentPositionMs)
+                    if (nextSubSlot > 0L) {
+                        try {
+                            rmc.setActiveMediaTracks(longArrayOf(nextSubSlot))
+                            Log.i(TAG, "💬 Auto-advanced Google Cast VTT subtitle slot -> #$nextSubSlot at pos=${currentPositionMs}ms")
+                        } catch (_: Throwable) {}
+                    }
+                }
 
                 // Detect natural playback completion on Chromecast / Android TV
                 if (rmc.playerState == MediaStatus.PLAYER_STATE_IDLE &&
@@ -981,21 +1104,33 @@ object CastSessionCoordinator {
         context: Context,
         media: CastMediaMetadata?,
         protectedFileIds: Set<Int>,
-        optimize: Boolean
+        optimize: Boolean,
+        extraFileIds: Set<Int> = emptySet()
     ) {
-        if (media == null) return
         try {
             val engine = TelegramEngine.getInstance(context)
-            if (media.fileId > 0 && !protectedFileIds.contains(media.fileId)) {
-                engine.cancelAndDeleteVideo(media.fileId)
-            }
-            media.multipartParts?.forEach { part ->
-                if (part.fileId > 0 && !protectedFileIds.contains(part.fileId)) {
-                    engine.cancelAndDeleteVideo(part.fileId)
+            val idsToPurge = buildSet {
+                if (media != null) {
+                    if (media.fileId > 0 && !protectedFileIds.contains(media.fileId)) {
+                        add(media.fileId)
+                    }
+                    media.multipartParts?.forEach { part ->
+                        if (part.fileId > 0 && !protectedFileIds.contains(part.fileId)) {
+                            add(part.fileId)
+                        }
+                    }
+                }
+                extraFileIds.forEach { fid ->
+                    if (fid > 0 && !protectedFileIds.contains(fid)) {
+                        add(fid)
+                    }
                 }
             }
             if (optimize) {
-                engine.optimizeStorage(30L * 1024L * 1024L, immunityDelaySec = 0)
+                engine.purgeAllStreamingCaches(idsToPurge)
+                StorageAndRamHygiene.cleanEphemeralCacheArtifacts(context.cacheDir)
+            } else {
+                engine.releaseSpecificVideoFiles(idsToPurge)
             }
         } catch (e: Throwable) {
             Log.w(TAG, "TDLib cleanup warning: ${e.message}")
@@ -1064,20 +1199,9 @@ object CastSessionCoordinator {
         val isFinished = durationMs > 0L && currentPosition >= (durationMs - 5000L)
 
         withContext(Dispatchers.IO) {
+            var conn: HttpURLConnection? = null
             try {
-                val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
-                    override fun getAcceptedIssuers(): Array<X509Certificate>? = null
-                    override fun checkClientTrusted(certs: Array<X509Certificate>, authType: String) {}
-                    override fun checkServerTrusted(certs: Array<X509Certificate>, authType: String) {}
-                })
-                val sc = SSLContext.getInstance("SSL")
-                sc.init(null, trustAllCerts, SecureRandom())
-                HttpsURLConnection.setDefaultSSLSocketFactory(sc.socketFactory)
-                val allHostsValid = HostnameVerifier { _, _ -> true }
-
-                val url = URL("https://cineflixapp.duckdns.org/api/progress")
-                val conn = url.openConnection() as HttpsURLConnection
-                conn.hostnameVerifier = allHostsValid
+                conn = StorageAndRamHygiene.openCompatUrlConnection("https://cineflixapp.duckdns.org/api/progress")
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 conn.setRequestProperty("x-user-phone", phone)
@@ -1101,9 +1225,10 @@ object CastSessionCoordinator {
                 }
                 val responseCode = conn.responseCode
                 Log.d("PROGRESS", "Cast POST contentId=$contentId position=$progressSeconds response=$responseCode")
-                conn.disconnect()
             } catch (e: Exception) {
                 Log.e("PROGRESS", "Cast POST error: ${e.message}")
+            } finally {
+                try { conn?.disconnect() } catch (_: Exception) {}
             }
         }
     }

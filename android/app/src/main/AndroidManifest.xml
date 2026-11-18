@@ -67,11 +67,12 @@
             </intent-filter>
         </activity>
 
-        <!-- Fullscreen video player (TVGram approach - file:// direct) -->
+        <!-- Fullscreen video player + Native Picture-in-Picture Mini-TV -->
         <activity
             android:name=".ui.player.PlayerActivity"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale"
-            android:launchMode="singleTop"
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|locale|uiMode"
+            android:launchMode="singleTask"
             android:screenOrientation="landscape"
             android:theme="@style/Theme.AppCompat.NoActionBar"
             android:exported="false" />

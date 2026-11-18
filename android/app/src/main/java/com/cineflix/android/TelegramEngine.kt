@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.withLock
 import org.drinkless.tdlib.Client
 import org.drinkless.tdlib.TdApi
 import java.io.File
@@ -46,12 +47,7 @@ class TelegramEngine(private val context: Context) {
             }
 
         fun resolveDeviceModel(context: Context): String {
-            val isTv = try {
-                val uiMode = context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
-                uiMode?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
-            } catch (_: Throwable) {
-                false
-            }
+            val isTv = com.cineflix.android.util.StorageAndRamHygiene.isTelevision(context)
             val deviceName = try {
                 Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
             } catch (_: Throwable) {
@@ -148,18 +144,216 @@ class TelegramEngine(private val context: Context) {
                 .replace(Regex("\\s+"), " ")
                 .trim()
         }
+
+        internal fun normalizePhoneInput(raw: String?): String {
+            if (raw.isNullOrBlank()) return ""
+            var cleaned = raw
+                .replace(Regex("[\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069]"), "")
+                .replace(Regex("[\\s\\-().]+"), "")
+                .trim()
+            if (cleaned.startsWith("+34+")) {
+                cleaned = cleaned.substring(3)
+            }
+            if (cleaned.startsWith("+3400") && cleaned.length >= 12) {
+                cleaned = "+" + cleaned.substring(5)
+            }
+            if (cleaned.startsWith("00")) {
+                cleaned = "+" + cleaned.substring(2)
+            }
+            val hasPlus = cleaned.startsWith("+")
+            val digits = cleaned.filter { it.isDigit() }
+            if (digits.length !in 7..15) return ""
+            // User typed "34612345678" after prefilled "+34" -> "+3434612345678" (impossible in Spain's closed 9-digit plan)
+            if (Regex("^3434[6789]\\d{8}$").matches(digits)) {
+                return "+" + digits.substring(2)
+            }
+            // Common Spanish TV input case: user cleared "+34" and typed 9-digit mobile (6xx/7xx)
+            if (!hasPlus && digits.length == 9 && (digits.startsWith("6") || digits.startsWith("7"))) {
+                return "+34$digits"
+            }
+            return "+$digits"
+        }
+
+        internal const val MAX_SET_PARAMS_RECOVERY_ATTEMPTS = 2
+        private const val PREF_SESSION_AUTHENTICATED = "tdlib_session_authenticated"
+
+        internal fun sanitizeVerificationCode(raw: String?): String {
+            if (raw.isNullOrBlank()) return ""
+            val clean = raw
+                .replace(Regex("[\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069]+"), "")
+                .trim()
+            if (clean.isEmpty()) return ""
+            // Preserve single spaces between alphabetic words for AuthenticationCodeTypeSmsPhrase
+            if (Regex("[A-Za-z\\u00C0-\\u024F]+\\s+[A-Za-z\\u00C0-\\u024F]+").containsMatchIn(clean)) {
+                return clean.replace(Regex("\\s+"), " ").trim()
+            }
+            return clean.replace(Regex("[\\s\\-]+"), "").trim()
+        }
+
+        internal fun isFirebaseAuthCodeType(type: TdApi.AuthenticationCodeType?): Boolean {
+            return type is TdApi.AuthenticationCodeTypeFirebaseAndroid ||
+                type is TdApi.AuthenticationCodeTypeFirebaseIos
+        }
+
+        internal sealed class CodeInfoDecision {
+            data class TryFirebaseFallback(val normalizedPhone: String) : CodeInfoDecision()
+            data class RejectUnsupportedDelivery(val reason: String, val normalizedPhone: String) : CodeInfoDecision()
+            data class AcceptWaitCode(val waitCode: AuthState.WaitCode, val normalizedPhone: String) : CodeInfoDecision()
+        }
+
+        internal fun classifyAuthenticationCodeInfo(
+            codeInfo: TdApi.AuthenticationCodeInfo?,
+            firebaseFallbackAlreadyAttempted: Boolean
+        ): CodeInfoDecision {
+            val normalizedPhone = normalizePhoneInput(codeInfo?.phoneNumber)
+            val currentType = codeInfo?.type
+            val nextType = codeInfo?.nextType
+            val hasUsableNextType = nextType != null && !isFirebaseAuthCodeType(nextType)
+
+            if (isFirebaseAuthCodeType(currentType)) {
+                return if (!firebaseFallbackAlreadyAttempted && hasUsableNextType) {
+                    CodeInfoDecision.TryFirebaseFallback(normalizedPhone)
+                } else {
+                    CodeInfoDecision.RejectUnsupportedDelivery(
+                        reason = "SEND_CODE_UNAVAILABLE: Telegram requiere vincular escaneando el Código QR del panel izquierdo desde tu móvil (Ajustes > Dispositivos > Vincular dispositivo).",
+                        normalizedPhone = normalizedPhone
+                    )
+                }
+            }
+
+            val (deliveryType, codeLength, deliveryHint) = when (currentType) {
+                is TdApi.AuthenticationCodeTypeTelegramMessage ->
+                    Triple("app", currentType.length.coerceAtLeast(0), "")
+                is TdApi.AuthenticationCodeTypeSms ->
+                    Triple("sms", currentType.length.coerceAtLeast(0), "")
+                is TdApi.AuthenticationCodeTypeSmsWord ->
+                    Triple("sms_word", 0, currentType.firstLetter?.trim().orEmpty())
+                is TdApi.AuthenticationCodeTypeSmsPhrase ->
+                    Triple("sms_phrase", 0, currentType.firstWord?.trim().orEmpty())
+                is TdApi.AuthenticationCodeTypeCall ->
+                    Triple("call", currentType.length.coerceAtLeast(0), "")
+                is TdApi.AuthenticationCodeTypeMissedCall ->
+                    Triple("missed_call", currentType.length.coerceAtLeast(0), currentType.phoneNumberPrefix?.trim().orEmpty())
+                is TdApi.AuthenticationCodeTypeFlashCall ->
+                    Triple("flash_call", 0, currentType.pattern?.trim().orEmpty())
+                is TdApi.AuthenticationCodeTypeFragment ->
+                    Triple("fragment", currentType.length.coerceAtLeast(0), currentType.url?.trim().orEmpty())
+                else ->
+                    Triple("app", 5, "")
+            }
+
+            return CodeInfoDecision.AcceptWaitCode(
+                waitCode = AuthState.WaitCode(
+                    deliveryType = deliveryType,
+                    codeLength = codeLength,
+                    deliveryHint = deliveryHint,
+                    hasNextType = hasUsableNextType
+                ),
+                normalizedPhone = normalizedPhone
+            )
+        }
+
+        internal fun buildSafePhoneAuthSettings(): TdApi.PhoneNumberAuthenticationSettings {
+            return TdApi.PhoneNumberAuthenticationSettings(
+                /* allowFlashCall = */ false,
+                /* allowMissedCall = */ false,
+                /* isCurrentPhoneNumber = */ false,
+                /* hasUnknownPhoneNumber = */ false,
+                /* allowSmsRetrieverApi = */ false,
+                /* firebaseAuthenticationSettings = */ null,
+                /* authenticationTokens = */ emptyArray()
+            )
+        }
+
+        internal fun hasProtectedAuthenticatedSession(
+            dbDir: File,
+            isMarkedAuthenticated: Boolean,
+            savedUserPhone: String?
+        ): Boolean {
+            if (!isMarkedAuthenticated && savedUserPhone.isNullOrBlank()) return false
+            if (!dbDir.exists() || !dbDir.isDirectory) return false
+            return dbDir.listFiles()?.any { f ->
+                f.isFile && f.length() > 0L && f.name.lowercase(Locale.ROOT).startsWith("td.binlog")
+            } == true
+        }
+
+        internal fun isTransientAuthQueryConflict(errorMsg: String?): Boolean {
+            if (errorMsg.isNullOrBlank()) return false
+            val lower = errorMsg.lowercase(Locale.ROOT)
+            return lower.contains("another authorization query has started") ||
+                lower.contains("unexpected") ||
+                lower.contains("auth_restart")
+        }
+
+        internal fun isFloodWaitError(errorMsg: String?): Boolean {
+            if (errorMsg.isNullOrBlank()) return false
+            val lower = errorMsg.lowercase(Locale.ROOT)
+            return lower.contains("flood_wait") ||
+                lower.contains("phone_password_flood") ||
+                lower.contains("too many requests") ||
+                lower.contains("wait of ")
+        }
+
+        internal fun nextAlternateTdlibDbDirName(currentDirName: String?): String {
+            return if (currentDirName == "tdlib_data_alt") "tdlib_data" else "tdlib_data_alt"
+        }
     }
+
+    private data class SetParamsFailure(val gen: Int, val code: Int, val message: String)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var client: Client? = null
+    private val authMutex = kotlinx.coroutines.sync.Mutex()
+    private val clientGeneration = java.util.concurrent.atomic.AtomicInteger(0)
+    private val setParamsRecoveryAttempts = java.util.concurrent.atomic.AtomicInteger(0)
+    private val setParamsFailureFlow = MutableStateFlow<SetParamsFailure?>(null)
+    private val firebaseFallbackPendingGen = java.util.concurrent.atomic.AtomicInteger(0)
+    private val authStateEventSeq = java.util.concurrent.atomic.AtomicLong(0L)
+    private val closedSignals = ConcurrentHashMap<Int, CompletableDeferred<Unit>>()
+    @Volatile private var activeDbDirName: String = run {
+        try {
+            val saved = context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+                .getString("tdlib_active_db_dir", "tdlib_data")
+                ?.trim()
+                .orEmpty()
+            if (saved == "tdlib_data" || saved == "tdlib_data_alt") saved else "tdlib_data"
+        } catch (_: Throwable) {
+            "tdlib_data"
+        }
+    }
+    @Volatile private var lastSubmittedPhone: String = ""
+    @Volatile private var lastWaitCodeHasNextType: Boolean = false
+    @Volatile private var firebaseFallbackAttempted: Boolean = false
+    @Volatile private var lastCodeDeliveryState: AuthState.WaitCode = AuthState.WaitCode()
+    @Volatile private var lastPasswordHint: String = ""
+
+    fun getLastSubmittedPhone(): String = lastSubmittedPhone
+    fun getLastPasswordHint(): String = lastPasswordHint
+
+    fun getCodeDeliveryInfoJson(): String {
+        val st = (_authState.value as? AuthState.WaitCode) ?: lastCodeDeliveryState
+        return org.json.JSONObject().apply {
+            put("deliveryType", st.deliveryType)
+            put("codeLength", st.codeLength)
+            put("deliveryHint", st.deliveryHint)
+            put("hasNextType", st.hasNextType)
+        }.toString()
+    }
 
     // ── Auth State ────────────────────────────────────────────────────────────
     sealed class AuthState {
         object Unknown : AuthState()
         object WaitPhone : AuthState()
-        object WaitCode : AuthState()
+        data class WaitCode(
+            val deliveryType: String = "app",
+            val codeLength: Int = 5,
+            val deliveryHint: String = "",
+            val hasNextType: Boolean = false
+        ) : AuthState()
+        data class WaitEmailCode(val emailPattern: String) : AuthState()
         object WaitPassword : AuthState()
         data class WaitQrCode(val link: String) : AuthState()
+        data class AuthRejected(val reason: String) : AuthState()
         object Ready : AuthState()
         object LoggingOut : AuthState()
         data class Error(val message: String) : AuthState()
@@ -175,43 +369,95 @@ class TelegramEngine(private val context: Context) {
     // Pre-cached fileId for bot episode messages: "chatId:msgId" → Pair(fileId, mimeType)
     val fileIdCache = ConcurrentHashMap<String, Pair<Int, String>>()
     val fileSizeCache = ConcurrentHashMap<String, Long>()
+    private val botChatMutex = kotlinx.coroutines.sync.Mutex()
 
     // Per-fileId lock to serialize concurrent DownloadFile range requests and avoid TDLib Error 200
     private val downloadLocks = ConcurrentHashMap<Int, Any>()
+    private val streamingSessionGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    private val activeStreamOwners = ConcurrentHashMap.newKeySet<String>()
 
-    private val boundedVideoCache = BoundedVideoCache(object : BoundedVideoCache.Backend {
-        override fun purge(fileId: Int): Boolean {
-            val started = android.os.SystemClock.elapsedRealtime()
-            val ok = cancelAndDeleteVideoSync(fileId)
-            val duration = android.os.SystemClock.elapsedRealtime() - started
-            logStreamStorage("purge fileId=$fileId ok=$ok durationMs=$duration")
-            com.cineflix.android.util.ErrorLogCollector.log(TAG, "Cache purge fileId=$fileId ok=$ok in ${duration}ms")
-            return ok
+    fun onStreamOwnerStarted(ownerToken: String) {
+        if (ownerToken.isNotEmpty()) {
+            activeStreamOwners.add(ownerToken)
         }
-        override fun cached(fileId: Int, offset: Long, count: Long) = readFilePartSync(fileId, offset, count)
-        override fun download(fileId: Int, offset: Long, count: Long) = downloadRangeAndRead(fileId, offset, count)
-    })
+        streamingSessionGeneration.incrementAndGet()
+    }
 
-    fun readBoundedVideoRange(fileId: Int, offset: Long, count: Long): ByteArray? =
-        boundedVideoCache.read(fileId, offset, count)
+    fun onStreamOwnerStopped(ownerToken: String) {
+        if (ownerToken.isNotEmpty()) {
+            activeStreamOwners.remove(ownerToken)
+        }
+    }
+
+    fun hasActiveStreamOwners(): Boolean = activeStreamOwners.isNotEmpty()
+
+    private val boundedVideoCache = BoundedVideoCache(
+        backend = object : BoundedVideoCache.Backend {
+            override fun purge(fileId: Int): Boolean {
+                val started = android.os.SystemClock.elapsedRealtime()
+                val ok = cancelAndDeleteVideoSync(fileId)
+                val duration = android.os.SystemClock.elapsedRealtime() - started
+                logStreamStorage("purge fileId=$fileId ok=$ok durationMs=$duration")
+                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Cache purge fileId=$fileId ok=$ok in ${duration}ms")
+                return ok
+            }
+            override fun cached(fileId: Int, offset: Long, count: Long) = readFilePartSync(fileId, offset, count)
+            override fun download(fileId: Int, offset: Long, count: Long) = downloadRangeAndRead(fileId, offset, count)
+        },
+        limitBytes = run {
+            val isTv = com.cineflix.android.util.StorageAndRamHygiene.isTelevision(context)
+            val usable = try { context.cacheDir.usableSpace } catch (_: Throwable) { 0L }
+            when {
+                isTv || usable < 2_000_000_000L -> 32L * 1024L * 1024L
+                usable < 4_000_000_000L -> 48L * 1024L * 1024L
+                else -> 64L * 1024L * 1024L
+            }
+        }
+    )
+
+    private fun cacheMessageFileMeta(cacheKey: String, fileId: Int, mimeType: String, fileSize: Long) {
+        if (fileIdCache.size >= 300) {
+            val iterator = fileIdCache.keys.iterator()
+            var removed = 0
+            while (iterator.hasNext() && removed < 100) {
+                val k = iterator.next()
+                fileIdCache.remove(k)
+                fileSizeCache.remove(k)
+                removed++
+            }
+        }
+        fileIdCache[cacheKey] = Pair(fileId, mimeType)
+        if (fileSize > 0L) {
+            fileSizeCache[cacheKey] = fileSize
+        }
+    }
+
+    fun readBoundedVideoRange(
+        fileId: Int,
+        offset: Long,
+        count: Long,
+        isCancelled: (() -> Boolean)? = null
+    ): ByteArray? = boundedVideoCache.read(fileId, offset, count, isCancelled)
 
     /** Allocated blocks, not apparent length: TDLib can create sparse multi-GB files. */
     fun logStreamStorage(event: String) {
-        try {
-            val root = File(context.cacheDir, "tdlib_files")
-            var allocated = 0L
-            var logical = 0L
-            var files = 0
-            root.walkTopDown().filter { it.isFile }.forEach {
-                val stat = android.system.Os.stat(it.absolutePath)
-                allocated += stat.st_blocks * 512L
-                logical += stat.st_size
-                files++
+        scope.launch(Dispatchers.IO) {
+            try {
+                val root = File(context.cacheDir, "tdlib_files")
+                var allocated = 0L
+                var logical = 0L
+                var files = 0
+                root.walkTopDown().filter { it.isFile }.forEach {
+                    val stat = android.system.Os.stat(it.absolutePath)
+                    allocated += stat.st_blocks * 512L
+                    logical += stat.st_size
+                    files++
+                }
+                Log.i("StreamStorage", "$event cacheAllocatedBytes=$allocated cacheLogicalBytes=$logical files=$files freeBytes=${context.cacheDir.usableSpace}")
+                com.cineflix.android.util.ErrorLogCollector.log("StreamStorage", "$event alloc=${allocated / (1024 * 1024)}MB free=${context.cacheDir.usableSpace / (1024 * 1024)}MB")
+            } catch (e: Exception) {
+                Log.w("StreamStorage", "Storage measurement failed: ${e.message}")
             }
-            Log.i("StreamStorage", "$event cacheAllocatedBytes=$allocated cacheLogicalBytes=$logical files=$files freeBytes=${context.cacheDir.usableSpace}")
-            com.cineflix.android.util.ErrorLogCollector.log("StreamStorage", "$event alloc=${allocated / (1024 * 1024)}MB free=${context.cacheDir.usableSpace / (1024 * 1024)}MB")
-        } catch (e: Exception) {
-            Log.w("StreamStorage", "Storage measurement failed: ${e.message}")
         }
     }
 
@@ -259,8 +505,49 @@ class TelegramEngine(private val context: Context) {
 
     // ── Init ─────────────────────────────────────────────────────────────────
     init {
+        cleanInactiveTdlibDbDirs()
         ensureDirectoriesExist()
         initClient()
+    }
+
+    private fun persistActiveDbDirName(name: String) {
+        activeDbDirName = name
+        runCatching {
+            context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .putString("tdlib_active_db_dir", name)
+                .apply()
+        }
+    }
+
+    private fun persistSessionAuthenticatedFlag(authenticated: Boolean) {
+        runCatching {
+            val prefs = context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+            val editor = prefs.edit().putBoolean(PREF_SESSION_AUTHENTICATED, authenticated)
+            if (!authenticated && prefs.getString("tg_session", "").isNullOrBlank()) {
+                editor.remove("user_phone")
+            }
+            editor.apply()
+        }
+    }
+
+    private fun isDbDirProtectedByAuthenticatedSession(dbDir: File): Boolean {
+        val prefs = runCatching {
+            context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+        }.getOrNull()
+        val isMarkedAuth = prefs?.getBoolean(PREF_SESSION_AUTHENTICATED, false) == true
+        val savedPhone = prefs?.getString("user_phone", null)
+        return hasProtectedAuthenticatedSession(dbDir, isMarkedAuth, savedPhone)
+    }
+
+    private fun cleanInactiveTdlibDbDirs() {
+        runCatching {
+            val inactive = nextAlternateTdlibDbDirName(activeDbDirName)
+            val staleDir = File(context.filesDir, inactive)
+            if (staleDir.exists() && !isDbDirProtectedByAuthenticatedSession(staleDir)) {
+                staleDir.deleteRecursively()
+            }
+        }
     }
 
     /**
@@ -269,7 +556,7 @@ class TelegramEngine(private val context: Context) {
      */
     fun ensureDirectoriesExist() {
         try {
-            val dbDir = File(context.filesDir, "tdlib_data")
+            val dbDir = File(context.filesDir, activeDbDirName)
             if (!dbDir.exists()) dbDir.mkdirs()
             dbDir.setReadable(true, false)
             dbDir.setWritable(true, false)
@@ -295,90 +582,299 @@ class TelegramEngine(private val context: Context) {
     }
 
     private fun initClient() {
-        Log.i(TAG, "Initializing TDLib client...")
+        val gen = clientGeneration.incrementAndGet()
+        setParamsFailureFlow.value = null
+        firebaseFallbackPendingGen.set(0)
+        closedSignals[gen] = CompletableDeferred()
+        Log.i(TAG, "Initializing TDLib client (gen=$gen, db=$activeDbDirName)...")
         try {
-            Client.execute(TdApi.SetLogVerbosityLevel(1))
+            Client.execute(TdApi.SetLogVerbosityLevel(0))
+            Client.execute(TdApi.SetLogStream(TdApi.LogStreamEmpty()))
         } catch (_: Exception) {}
+        com.cineflix.android.util.StorageAndRamHygiene.cleanTdlibLogFiles(context.filesDir)
         client = Client.create(
-            { result -> handleResult(result) },
+            { result ->
+                if (result is TdApi.UpdateAuthorizationState && result.authorizationState is TdApi.AuthorizationStateClosed) {
+                    closedSignals.remove(gen)?.complete(Unit)
+                }
+                if (gen == clientGeneration.get()) {
+                    handleResult(result, gen)
+                }
+            },
             { error -> Log.e(TAG, "TDLib Error: ${error.message}", error) },
             { error -> Log.e(TAG, "TDLib Default Error: ${error.message}", error) }
         )
     }
 
+    private suspend fun recoverFromSetTdlibParametersFailure(failedGen: Int, errCode: Int, errMessage: String) {
+        authMutex.withLock {
+            recoverFromSetTdlibParametersFailureLocked(failedGen, errCode, errMessage)
+        }
+    }
+
+    private suspend fun recoverFromSetTdlibParametersFailureLocked(failedGen: Int, errCode: Int, errMessage: String) {
+        if (failedGen != clientGeneration.get() || _authState.value !is AuthState.Unknown) {
+            return
+        }
+
+        val attempt = setParamsRecoveryAttempts.incrementAndGet()
+        if (attempt > MAX_SET_PARAMS_RECOVERY_ATTEMPTS) {
+            Log.e(TAG, "❌ SetTdlibParameters exhausted $MAX_SET_PARAMS_RECOVERY_ATTEMPTS recovery attempts ($errCode: $errMessage)")
+            _authState.value = AuthState.Error(
+                "Error inicializando almacenamiento de Telegram ($errMessage). Reinicia la aplicación."
+            )
+            authStateEventSeq.incrementAndGet()
+            return
+        }
+
+        val prevDirName = activeDbDirName
+        val prevDirFile = File(context.filesDir, prevDirName)
+        val isProtectedSession = isDbDirProtectedByAuthenticatedSession(prevDirFile)
+
+        val oldClient = client
+        val oldSig = closedSignals[failedGen]
+        clientGeneration.incrementAndGet() // Detach late callbacks from failedGen
+        client = null
+        runCatching { oldClient?.send(TdApi.Close()) {} }
+
+        val closedInTime = if (oldClient != null && oldSig != null) {
+            withTimeoutOrNull(3_500L) { oldSig.await() } != null
+        } else {
+            delay(200L)
+            true
+        }
+
+        if (isProtectedSession) {
+            // NEVER delete or rotate away from an existing authenticated td.binlog!
+            Log.w(TAG, "⚠️ SetTdlibParameters failed on protected authenticated session ($prevDirName, attempt=$attempt); retrying safely without deleting td.binlog")
+            if (!closedInTime && oldSig != null) {
+                withTimeoutOrNull(2_500L) { oldSig.await() }
+            }
+            delay(250L)
+            com.cineflix.android.util.StorageAndRamHygiene.cleanTdlibLogFiles(context.filesDir)
+            ensureDirectoriesExist()
+            initClient()
+            return
+        }
+
+        if (closedInTime) {
+            runCatching {
+                if (prevDirFile.exists()) {
+                    prevDirFile.listFiles()?.forEach { f -> runCatching { f.deleteRecursively() } }
+                }
+                ensureDirectoriesExist()
+            }
+        } else {
+            val altDir = nextAlternateTdlibDbDirName(prevDirName)
+            Log.w(TAG, "⚠️ SetTdlibParameters lock held on unauthenticated $prevDirName; rotating to $altDir (attempt=$attempt)")
+            persistActiveDbDirName(altDir)
+            runCatching {
+                val altFile = File(context.filesDir, altDir)
+                if (altFile.exists() && !isDbDirProtectedByAuthenticatedSession(altFile)) {
+                    altFile.listFiles()?.forEach { f -> runCatching { f.deleteRecursively() } }
+                }
+                ensureDirectoriesExist()
+            }
+            oldSig?.invokeOnCompletion {
+                if (!isDbDirProtectedByAuthenticatedSession(prevDirFile)) {
+                    runCatching { prevDirFile.deleteRecursively() }
+                }
+            }
+        }
+        initClient()
+    }
+
     // ── TDLib Event Handler ───────────────────────────────────────────────────
-    private fun handleResult(result: TdApi.Object) {
+    private fun handleResult(result: TdApi.Object, gen: Int) {
         when (result) {
-            is TdApi.UpdateAuthorizationState -> handleAuthState(result.authorizationState)
+            is TdApi.UpdateAuthorizationState -> handleAuthState(result.authorizationState, gen)
             is TdApi.UpdateFile               -> handleUpdateFile(result.file)
             is TdApi.UpdateNewMessage         -> handleNewMessage(result.message)
             else -> { /* ignore */ }
         }
     }
 
-    private fun handleAuthState(state: TdApi.AuthorizationState) {
-        Log.i(TAG, "Auth state: ${state.javaClass.simpleName}")
+    private fun handleAuthState(state: TdApi.AuthorizationState, gen: Int) {
+        Log.i(TAG, "Auth state (gen=$gen): ${state.javaClass.simpleName}")
         when (state) {
             is TdApi.AuthorizationStateWaitTdlibParameters -> {
                 ensureDirectoriesExist()
-                val dbPath = File(context.filesDir, "tdlib_data").absolutePath
+                val dbPath = File(context.filesDir, activeDbDirName).absolutePath
                 val cachePath = File(context.cacheDir, "tdlib_files").absolutePath
                 val realDeviceModel = resolveDeviceModel(context)
                 val realSystemVersion = resolveSystemVersion()
                 val realLangCode = resolveSystemLanguageCode()
                 Log.i(TAG, "📱 TDLib device identity: model='$realDeviceModel', os='$realSystemVersion', lang='$realLangCode'")
+                // Zero-SQLite-bloat mode: auth session lives in td.binlog (~32 KB), while personal
+                // Telegram chats/groups/channels/messages are NEVER persisted into a growing db.sqlite!
                 client?.send(TdApi.SetTdlibParameters(
                     false, dbPath, cachePath, null,
-                    true, true, true, true,
+                    false, false, false, false,
                     API_ID, API_HASH,
                     realLangCode, realDeviceModel, realSystemVersion, "11.1.3"
-                )) {}
+                )) { res ->
+                    if (res is TdApi.Error && gen == clientGeneration.get()) {
+                        val errMsg = res.message ?: "SetTdlibParameters error"
+                        Log.e(TAG, "❌ SetTdlibParameters failed (code=${res.code}): $errMsg")
+                        setParamsFailureFlow.value = SetParamsFailure(gen, res.code, errMsg)
+                        scope.launch {
+                            recoverFromSetTdlibParametersFailure(gen, res.code, errMsg)
+                        }
+                    }
+                }
             }
-            is TdApi.AuthorizationStateWaitPhoneNumber -> _authState.value = AuthState.WaitPhone
+            is TdApi.AuthorizationStateWaitPhoneNumber -> {
+                setParamsRecoveryAttempts.set(0)
+                firebaseFallbackAttempted = false
+                firebaseFallbackPendingGen.set(0)
+                persistSessionAuthenticatedFlag(false)
+                _authState.value = AuthState.WaitPhone
+                authStateEventSeq.incrementAndGet()
+            }
             is TdApi.AuthorizationStateWaitOtherDeviceConfirmation -> {
+                setParamsRecoveryAttempts.set(0)
+                firebaseFallbackPendingGen.set(0)
                 _authState.value = AuthState.WaitQrCode(state.link)
+                authStateEventSeq.incrementAndGet()
             }
-            is TdApi.AuthorizationStateWaitCode        -> _authState.value = AuthState.WaitCode
-            is TdApi.AuthorizationStateWaitPassword    -> _authState.value = AuthState.WaitPassword
-            is TdApi.AuthorizationStateReady           -> {
+            is TdApi.AuthorizationStateWaitCode -> {
+                setParamsRecoveryAttempts.set(0)
+                when (val decision = classifyAuthenticationCodeInfo(state.codeInfo, firebaseFallbackAttempted)) {
+                    is CodeInfoDecision.TryFirebaseFallback -> {
+                        firebaseFallbackAttempted = true
+                        firebaseFallbackPendingGen.set(gen)
+                        if (decision.normalizedPhone.isNotEmpty()) {
+                            lastSubmittedPhone = decision.normalizedPhone
+                        }
+                        Log.w(TAG, "⚠️ TDLib received Firebase code type (${state.codeInfo?.type?.javaClass?.simpleName}); requesting nextType fallback...")
+                        val activeClient = client
+                        if (activeClient == null) {
+                            firebaseFallbackPendingGen.set(0)
+                            _authState.value = AuthState.AuthRejected(
+                                "SEND_CODE_UNAVAILABLE: Telegram requiere vincular escaneando el Código QR del panel izquierdo desde tu móvil (Ajustes > Dispositivos > Vincular dispositivo)."
+                            )
+                            authStateEventSeq.incrementAndGet()
+                        } else {
+                            activeClient.send(
+                                TdApi.ResendAuthenticationCode(
+                                    TdApi.ResendCodeReasonVerificationFailed("PLAY_SERVICES_NOT_AVAILABLE")
+                                )
+                            ) { res ->
+                                if (res is TdApi.Error && gen == clientGeneration.get()) {
+                                    if (firebaseFallbackPendingGen.compareAndSet(gen, 0)) {
+                                        Log.w(TAG, "⚠️ Firebase nextType fallback rejected (${res.code}): ${res.message}")
+                                        _authState.value = AuthState.AuthRejected(
+                                            "SEND_CODE_UNAVAILABLE: Telegram requiere vincular escaneando el Código QR del panel izquierdo desde tu móvil (Ajustes > Dispositivos > Vincular dispositivo)."
+                                        )
+                                        authStateEventSeq.incrementAndGet()
+                                    }
+                                }
+                            }
+                            scope.launch {
+                                delay(6_000L)
+                                if (gen == clientGeneration.get() && firebaseFallbackPendingGen.compareAndSet(gen, 0)) {
+                                    _authState.value = AuthState.AuthRejected(
+                                        "SEND_CODE_UNAVAILABLE: Telegram requiere vincular escaneando el Código QR del panel izquierdo desde tu móvil (Ajustes > Dispositivos > Vincular dispositivo)."
+                                    )
+                                    authStateEventSeq.incrementAndGet()
+                                }
+                            }
+                        }
+                    }
+                    is CodeInfoDecision.RejectUnsupportedDelivery -> {
+                        firebaseFallbackPendingGen.set(0)
+                        if (decision.normalizedPhone.isNotEmpty()) {
+                            lastSubmittedPhone = decision.normalizedPhone
+                        }
+                        lastWaitCodeHasNextType = false
+                        Log.w(TAG, "⚠️ Rejecting undeliverable Firebase code state (${state.codeInfo?.type?.javaClass?.simpleName}) -> guiding user to QR")
+                        _authState.value = AuthState.AuthRejected(decision.reason)
+                        authStateEventSeq.incrementAndGet()
+                    }
+                    is CodeInfoDecision.AcceptWaitCode -> {
+                        firebaseFallbackPendingGen.set(0)
+                        if (decision.normalizedPhone.isNotEmpty()) {
+                            lastSubmittedPhone = decision.normalizedPhone
+                        }
+                        lastWaitCodeHasNextType = decision.waitCode.hasNextType
+                        lastCodeDeliveryState = decision.waitCode
+                        Log.i(TAG, "📩 WaitCode deliveryType=${decision.waitCode.deliveryType} len=${decision.waitCode.codeLength} hasNextType=${decision.waitCode.hasNextType}")
+                        _authState.value = decision.waitCode
+                        authStateEventSeq.incrementAndGet()
+                    }
+                }
+            }
+            is TdApi.AuthorizationStateWaitEmailCode -> {
+                setParamsRecoveryAttempts.set(0)
+                firebaseFallbackPendingGen.set(0)
+                val pattern = state.codeInfo?.emailAddressPattern?.trim().orEmpty()
+                _authState.value = AuthState.WaitEmailCode(pattern)
+                authStateEventSeq.incrementAndGet()
+            }
+            is TdApi.AuthorizationStateWaitPassword -> {
+                setParamsRecoveryAttempts.set(0)
+                firebaseFallbackPendingGen.set(0)
+                lastPasswordHint = state.passwordHint?.trim().orEmpty()
+                _authState.value = AuthState.WaitPassword
+                authStateEventSeq.incrementAndGet()
+            }
+            is TdApi.AuthorizationStateWaitRegistration -> {
+                setParamsRecoveryAttempts.set(0)
+                firebaseFallbackPendingGen.set(0)
+                _authState.value = AuthState.AuthRejected(
+                    "PHONE_UNREGISTERED: Este número no tiene cuenta de Telegram registrada. Revisa el prefijo (+34...) e inténtalo de nuevo."
+                )
+                authStateEventSeq.incrementAndGet()
+            }
+            is TdApi.AuthorizationStateWaitEmailAddress,
+            is TdApi.AuthorizationStateWaitPremiumPurchase -> {
+                setParamsRecoveryAttempts.set(0)
+                firebaseFallbackPendingGen.set(0)
+                _authState.value = AuthState.AuthRejected(
+                    "SETUP_EMAIL_REQUIRED: Telegram requiere vincular escaneando el Código QR del panel izquierdo desde tu móvil (Ajustes > Dispositivos > Vincular dispositivo)."
+                )
+                authStateEventSeq.incrementAndGet()
+            }
+            is TdApi.AuthorizationStateReady -> {
+                setParamsRecoveryAttempts.set(0)
+                cachedBotChatId = null
+                lastSubmittedPhone = ""
+                lastWaitCodeHasNextType = false
+                firebaseFallbackAttempted = false
+                firebaseFallbackPendingGen.set(0)
+                lastCodeDeliveryState = AuthState.WaitCode()
+                lastPasswordHint = ""
+                persistSessionAuthenticatedFlag(true)
                 _authState.value = AuthState.Ready
-                
-                // Disable TDLib auto-downloads completely to save bandwidth and disk space
+                authStateEventSeq.incrementAndGet()
+
+                // Disable TDLib auto-downloads & background notification tracking completely
                 val emptySettings = TdApi.AutoDownloadSettings().apply { isAutoDownloadEnabled = false }
                 client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeWiFi())) {}
                 client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeMobile())) {}
                 client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeMobileRoaming())) {}
                 client?.send(TdApi.SetAutoDownloadSettings(emptySettings, TdApi.NetworkTypeOther())) {}
+                client?.send(TdApi.SetOption("storage_max_files_size", TdApi.OptionValueInteger(32L * 1024L * 1024L))) {}
+                client?.send(TdApi.SetOption("notification_group_count_max", TdApi.OptionValueInteger(0))) {}
 
-                // Cleanup stray caches at boot to rescue TV storage (delete file contents, NOT directories)
-                try {
-                    val cacheBase = File(context.cacheDir, "tdlib_files")
-                    val subdirs = listOf("temp", "videos", "documents", "thumbnails")
-                    for (sub in subdirs) {
-                        val d = File(cacheBase, sub)
-                        if (d.exists() && d.isDirectory) {
-                            d.listFiles()?.forEach { file ->
-                                try { file.delete() } catch (_: Exception) {}
-                            }
-                        } else {
-                            d.mkdirs()
-                        }
-                    }
-                    
-                    // Clean legacy files directory (to reclaim space from old versions)
-                    val legacyVideos = java.io.File(context.filesDir, "tdlib_data/videos")
-                    if (legacyVideos.exists()) legacyVideos.deleteRecursively()
-                    val legacyDocs = java.io.File(context.filesDir, "tdlib_data/documents")
-                    if (legacyDocs.exists()) legacyDocs.deleteRecursively()
-                    val legacyPhotos = java.io.File(context.filesDir, "tdlib_data/profile_photos")
-                    if (legacyPhotos.exists()) legacyPhotos.deleteRecursively()
-
-                    ensureDirectoriesExist()
-                    optimizeStorage(30L * 1024 * 1024, immunityDelaySec = 0)
-                } catch (_: Exception) {}
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        com.cineflix.android.util.StorageAndRamHygiene.cleanTdlibDatabaseBloat(context.filesDir)
+                        com.cineflix.android.util.StorageAndRamHygiene.cleanTdlibTempFiles(context.cacheDir)
+                        ensureDirectoriesExist()
+                        optimizeStorage(0L, immunityDelaySec = 0)
+                    } catch (_: Exception) {}
+                }
             }
-            is TdApi.AuthorizationStateLoggingOut      -> _authState.value = AuthState.LoggingOut
-            is TdApi.AuthorizationStateClosed          -> {
+            is TdApi.AuthorizationStateLoggingOut,
+            is TdApi.AuthorizationStateClosing -> {
+                firebaseFallbackPendingGen.set(0)
+                cachedBotChatId = null
+                _authState.value = AuthState.LoggingOut
+            }
+            is TdApi.AuthorizationStateClosed -> {
+                firebaseFallbackPendingGen.set(0)
+                cachedBotChatId = null
                 client = null
                 _authState.value = AuthState.Unknown
                 initClient()
@@ -395,16 +891,17 @@ class TelegramEngine(private val context: Context) {
                 deferred.complete(p)
             }
         }
-        
-        // Update FileState flow so StreamProxyServer can safely read bytes
-        val flow = fileStates.getOrPut(file.id) { kotlinx.coroutines.flow.MutableStateFlow(null) }
-        flow.value = FileState(
-            path = file.local?.path ?: "",
-            downloadedPrefixSize = file.local?.downloadedPrefixSize ?: 0L,
-            downloadedSize = file.local?.downloadedSize ?: 0L,
-            expectedSize = file.expectedSize.toLong(),
-            isCompleted = file.local?.isDownloadingCompleted == true
-        )
+
+        // Only update FileState if an active caller explicitly subscribed to this fileId
+        fileStates[file.id]?.let { flow ->
+            flow.value = FileState(
+                path = file.local?.path ?: "",
+                downloadedPrefixSize = file.local?.downloadedPrefixSize ?: 0L,
+                downloadedSize = file.local?.downloadedSize ?: 0L,
+                expectedSize = file.expectedSize.toLong(),
+                isCompleted = file.local?.isDownloadingCompleted == true
+            )
+        }
     }
 
     private fun handleNewMessage(msg: TdApi.Message) {
@@ -446,13 +943,11 @@ class TelegramEngine(private val context: Context) {
             }
         }
 
-        // Pre-cache fileId for instant playback
+        // Pre-cache fileId for instant playback (bounded to max 300 entries in RAM)
         if (isVideo) {
             val info = extractVideoInfo(msg) ?: return
             val cacheKey = "${msg.chatId}:${msg.id}"
-            fileIdCache[cacheKey] = Pair(info.fileId, info.mimeType)
-            if (info.fileSize > 0L) fileSizeCache[cacheKey] = info.fileSize
-            // (Removed buggy DownloadFile pre-warm that saturated Android TV storage and CPU)
+            cacheMessageFileMeta(cacheKey, info.fileId, info.mimeType, info.fileSize)
         }
     }
 
@@ -498,81 +993,522 @@ class TelegramEngine(private val context: Context) {
         } catch (e: Exception) { null }
     }
 
-    // ── Auth Operations ───────────────────────────────────────────────────────
+    // ── Auth Operations (Serialized & Self-Healing) ──────────────────────────
 
-    fun requestQrLogin(onError: (String) -> Unit) {
-        val current = _authState.value
-        if (current is AuthState.WaitCode || current is AuthState.WaitPassword || current is AuthState.Ready) {
-            Log.w(TAG, "requestQrLogin ignored because authState is already $current")
-            return
+    private suspend fun awaitNonUnknownAuthState(timeoutMs: Long = 8_000L): AuthState {
+        val cur = _authState.value
+        if (cur !is AuthState.Unknown && cur !is AuthState.LoggingOut) return cur
+        return withTimeoutOrNull(timeoutMs) {
+            authState.first { it !is AuthState.Unknown && it !is AuthState.LoggingOut }
+        } ?: _authState.value
+    }
+
+    private suspend fun awaitFreshClientWaitPhoneOrReadyLocked(timeoutMs: Long = 8_000L): AuthState? {
+        val deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs
+        while (true) {
+            val cur = _authState.value
+            if (cur is AuthState.WaitPhone || cur is AuthState.Ready || cur is AuthState.Error) {
+                return cur
+            }
+            val activeGen = clientGeneration.get()
+            val pendingFail = setParamsFailureFlow.value
+            if (pendingFail != null && pendingFail.gen == activeGen) {
+                setParamsFailureFlow.value = null
+                recoverFromSetTdlibParametersFailureLocked(pendingFail.gen, pendingFail.code, pendingFail.message)
+                continue
+            }
+            val remaining = deadline - android.os.SystemClock.elapsedRealtime()
+            if (remaining <= 0L) return _authState.value
+            withTimeoutOrNull(remaining.coerceAtMost(250L)) {
+                merge(
+                    authState.filter { it is AuthState.WaitPhone || it is AuthState.Ready || it is AuthState.Error },
+                    setParamsFailureFlow.filterNotNull().filter { it.gen == activeGen }
+                ).first()
+            }
         }
-        client?.send(TdApi.RequestQrCodeAuthentication(LongArray(0))) { result ->
-            if (result is TdApi.Error) onError(result.message)
+    }
+
+    /**
+     * Resets an unauthenticated TDLib session back to AuthState.WaitPhone.
+     * Safe against stalled MTProto queries ("Another authorization query has started"), SetTdlibParameters
+     * inline lock recovery (zero authMutex deadlock), and strictly preserves authenticated td.binlog*.
+     */
+    private suspend fun resetUnauthenticatedClientLocked(): Boolean {
+        if (_authState.value is AuthState.Ready) return false
+        Log.i(TAG, "Resetting unauthenticated TDLib client (current=${_authState.value})...")
+        lastWaitCodeHasNextType = false
+        firebaseFallbackAttempted = false
+        firebaseFallbackPendingGen.set(0)
+        lastCodeDeliveryState = AuthState.WaitCode()
+        lastPasswordHint = ""
+
+        val currentDbDir = File(context.filesDir, activeDbDirName)
+        val isProtectedSession = isDbDirProtectedByAuthenticatedSession(currentDbDir)
+
+        val oldClient = client
+        if (oldClient != null && !isProtectedSession) {
+            val destroyOk = CompletableDeferred<Boolean>()
+            oldClient.send(TdApi.Destroy()) { res ->
+                destroyOk.complete(res !is TdApi.Error)
+            }
+            val accepted = withTimeoutOrNull(2_500L) { destroyOk.await() } == true
+            if (accepted) {
+                val reached = awaitFreshClientWaitPhoneOrReadyLocked(5_500L)
+                if (reached is AuthState.WaitPhone) {
+                    return true
+                }
+                if (reached is AuthState.Ready) {
+                    return false
+                }
+            }
+        }
+
+        if (_authState.value is AuthState.Ready) return false
+
+        // Hard fallback when Destroy() was rejected ("Another authorization query has started"), timed out, or session is protected
+        Log.w(TAG, "Recreating TDLib client safely (protectedSession=$isProtectedSession)...")
+        val oldGen = clientGeneration.get()
+        val oldClosedSignal = closedSignals[oldGen]
+        clientGeneration.incrementAndGet() // Silence any late state mutations from oldClient
+        client = null
+        _authState.value = AuthState.Unknown
+        setParamsRecoveryAttempts.set(0)
+        runCatching { oldClient?.send(TdApi.Close()) {} }
+
+        val closedCleanly = if (oldClient != null && oldClosedSignal != null) {
+            withTimeoutOrNull(3_500L) { oldClosedSignal.await() } != null
+        } else {
+            delay(200L)
+            true
+        }
+
+        if (isProtectedSession) {
+            // NEVER delete or rotate away from an existing authenticated td.binlog!
+            if (!closedCleanly && oldClosedSignal != null) {
+                withTimeoutOrNull(2_500L) { oldClosedSignal.await() }
+            }
+            delay(200L)
+            com.cineflix.android.util.StorageAndRamHygiene.cleanTdlibLogFiles(context.filesDir)
+            ensureDirectoriesExist()
+            initClient()
+            val freshProtected = awaitFreshClientWaitPhoneOrReadyLocked(8_000L)
+            return freshProtected is AuthState.WaitPhone
+        }
+
+        if (closedCleanly) {
+            try {
+                val dbDir = File(context.filesDir, activeDbDirName)
+                if (dbDir.exists() && !isDbDirProtectedByAuthenticatedSession(dbDir)) {
+                    dbDir.listFiles()?.forEach { f -> runCatching { f.deleteRecursively() } }
+                }
+                ensureDirectoriesExist()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed cleaning unauthenticated $activeDbDirName: ${e.message}")
+            }
+        } else {
+            // oldClient C++ thread is still holding flock on td.binlog; switch to alternate DB directory
+            // so the new Client never collides on td.binlog lock, and delete old dir once Close finishes.
+            val lockedDirName = activeDbDirName
+            val lockedDirFile = File(context.filesDir, lockedDirName)
+            val nextDirName = nextAlternateTdlibDbDirName(lockedDirName)
+            Log.w(TAG, "Old TDLib client gen=$oldGen still closing; rotating DB dir $lockedDirName -> $nextDirName")
+            persistActiveDbDirName(nextDirName)
+            runCatching {
+                val nextDir = File(context.filesDir, nextDirName)
+                if (nextDir.exists() && !isDbDirProtectedByAuthenticatedSession(nextDir)) {
+                    nextDir.listFiles()?.forEach { f -> runCatching { f.deleteRecursively() } }
+                }
+                ensureDirectoriesExist()
+            }
+            oldClosedSignal?.invokeOnCompletion {
+                if (!isDbDirProtectedByAuthenticatedSession(lockedDirFile)) {
+                    runCatching { lockedDirFile.deleteRecursively() }
+                }
+            }
+        }
+
+        initClient()
+        val freshState = awaitFreshClientWaitPhoneOrReadyLocked(8_000L)
+        return freshState is AuthState.WaitPhone
+    }
+
+    private suspend fun executeAuthFunctionAndAwaitLocked(
+        request: TdApi.Function<*>,
+        timeoutMs: Long = 18_000L,
+        mapTargetState: (AuthState) -> String?
+    ): Result<String> = coroutineScope {
+        val activeClient = client ?: return@coroutineScope Result.failure(
+            IllegalStateException("Cliente TDLib reiniciándose. Inténtalo de nuevo.")
+        )
+        val outcome = CompletableDeferred<Result<String>>()
+
+        val stateWatcher = launch {
+            authState.collect { st ->
+                if (st is AuthState.AuthRejected) {
+                    if (outcome.complete(Result.failure(IllegalStateException(st.reason)))) {
+                        cancel()
+                    }
+                    return@collect
+                }
+                if (st is AuthState.Error) {
+                    if (outcome.complete(Result.failure(IllegalStateException(st.message)))) {
+                        cancel()
+                    }
+                    return@collect
+                }
+                val mapped = mapTargetState(st)
+                if (mapped != null) {
+                    if (outcome.complete(Result.success(mapped))) {
+                        cancel()
+                    }
+                }
+            }
+        }
+
+        activeClient.send(request) { res ->
+            if (res is TdApi.Error) {
+                outcome.complete(Result.failure(IllegalStateException(res.message ?: "Error de Telegram")))
+            }
+        }
+
+        val finalRes = withTimeoutOrNull(timeoutMs) {
+            outcome.await()
+        } ?: Result.failure(IllegalStateException("TIMEOUT: Tiempo de espera agotado conectando con Telegram."))
+
+        stateWatcher.cancel()
+
+        // If TDLib landed in AuthRejected (e.g. WaitRegistration / WaitEmailAddress / Firebase), clean up back to WaitPhone
+        if (_authState.value is AuthState.AuthRejected) {
+            resetUnauthenticatedClientLocked()
+        }
+        finalRes
+    }
+
+    fun formatCurrentAuthStateString(): String {
+        return when (val s = _authState.value) {
+            is AuthState.Ready         -> "READY"
+            is AuthState.WaitPhone     -> "WAIT_PHONE"
+            is AuthState.WaitCode      -> "WAIT_CODE"
+            is AuthState.WaitEmailCode -> "WAIT_EMAIL_CODE|${s.emailPattern}"
+            is AuthState.WaitPassword  -> "WAIT_PASSWORD"
+            is AuthState.WaitQrCode    -> "WAIT_QR|${s.link}"
+            is AuthState.AuthRejected  -> "AUTH_REJECTED|${s.reason}"
+            is AuthState.Error         -> "ERROR: ${s.message}"
+            else                       -> "UNKNOWN"
+        }
+    }
+
+    suspend fun resetAuthSessionSuspend(): Result<String> {
+        awaitNonUnknownAuthState(8_000L)
+        return authMutex.withLock {
+            val cur = awaitNonUnknownAuthState(2_500L)
+            if (cur is AuthState.Ready) return@withLock Result.success("READY")
+            lastSubmittedPhone = ""
+            if (cur is AuthState.WaitPhone) return@withLock Result.success("WAIT_PHONE")
+            val ok = resetUnauthenticatedClientLocked()
+            if (ok || _authState.value is AuthState.WaitPhone) {
+                Result.success("WAIT_PHONE")
+            } else {
+                Result.success(formatCurrentAuthStateString())
+            }
+        }
+    }
+
+    suspend fun requestQrLoginSuspend(forceReset: Boolean = false): Result<String> {
+        awaitNonUnknownAuthState(8_000L)
+        return authMutex.withLock {
+            val cur = awaitNonUnknownAuthState(2_500L)
+            when (cur) {
+                is AuthState.Ready -> return@withLock Result.success("READY")
+                is AuthState.WaitPassword -> return@withLock Result.success("WAIT_PASSWORD")
+                is AuthState.WaitQrCode -> {
+                    if (!forceReset && cur.link.isNotBlank()) {
+                        // Already in WaitQrCode with a live token — return immediately without colliding in TDLib!
+                        return@withLock Result.success("WAIT_QR|${cur.link}")
+                    }
+                    resetUnauthenticatedClientLocked()
+                }
+                is AuthState.WaitCode,
+                is AuthState.WaitEmailCode -> {
+                    if (!forceReset) {
+                        return@withLock Result.success(formatCurrentAuthStateString())
+                    }
+                    resetUnauthenticatedClientLocked()
+                }
+                is AuthState.AuthRejected,
+                is AuthState.Error -> {
+                    resetUnauthenticatedClientLocked()
+                }
+                else -> {}
+            }
+
+            if (_authState.value !is AuthState.WaitPhone) {
+                val resetOk = resetUnauthenticatedClientLocked()
+                if (_authState.value is AuthState.Ready) return@withLock Result.success("READY")
+                if (!resetOk && _authState.value !is AuthState.WaitPhone) {
+                    return@withLock Result.failure(IllegalStateException("No se pudo iniciar la sesión QR. Revisa tu conexión."))
+                }
+            }
+
+            val firstTry = executeAuthFunctionAndAwaitLocked(
+                request = TdApi.RequestQrCodeAuthentication(LongArray(0)),
+                timeoutMs = 15_000L
+            ) { st ->
+                when (st) {
+                    is AuthState.WaitQrCode   -> if (st.link.isNotBlank()) "WAIT_QR|${st.link}" else null
+                    is AuthState.Ready        -> "READY"
+                    is AuthState.WaitPassword -> "WAIT_PASSWORD"
+                    else -> null
+                }
+            }
+
+            if (firstTry.isFailure && isTransientAuthQueryConflict(firstTry.exceptionOrNull()?.message)) {
+                val curAfter = _authState.value
+                if (curAfter is AuthState.WaitQrCode && curAfter.link.isNotBlank()) {
+                    return@withLock Result.success("WAIT_QR|${curAfter.link}")
+                }
+                Log.w(TAG, "QR request hit transient conflict (${firstTry.exceptionOrNull()?.message}), self-healing...")
+                if (resetUnauthenticatedClientLocked()) {
+                    return@withLock executeAuthFunctionAndAwaitLocked(
+                        request = TdApi.RequestQrCodeAuthentication(LongArray(0)),
+                        timeoutMs = 15_000L
+                    ) { st ->
+                        when (st) {
+                            is AuthState.WaitQrCode   -> if (st.link.isNotBlank()) "WAIT_QR|${st.link}" else null
+                            is AuthState.Ready        -> "READY"
+                            is AuthState.WaitPassword -> "WAIT_PASSWORD"
+                            else -> null
+                        }
+                    }
+                }
+            }
+            firstTry
+        }
+    }
+
+    suspend fun loginWithPhoneSuspend(rawPhone: String): Result<String> {
+        val normalizedPhone = normalizePhoneInput(rawPhone)
+        if (normalizedPhone.isEmpty()) {
+            return Result.failure(
+                IllegalArgumentException("PHONE_NUMBER_INVALID: Introduce tu número completo con prefijo internacional (ej: +34 612 345 678).")
+            )
+        }
+
+        awaitNonUnknownAuthState(8_000L)
+        return authMutex.withLock {
+            val cur = awaitNonUnknownAuthState(2_500L)
+            if (cur is AuthState.Ready) {
+                return@withLock Result.success("READY")
+            }
+
+            // Same phone already in WaitCode AND TDLib offers a nextType (e.g. SMS fallback): try ResendAuthenticationCode first
+            if (cur is AuthState.WaitCode && normalizedPhone == lastSubmittedPhone && lastWaitCodeHasNextType) {
+                Log.i(TAG, "Resending authentication code via nextType for $normalizedPhone...")
+                val seqBeforeResend = authStateEventSeq.get()
+                val resendDone = CompletableDeferred<TdApi.Object?>()
+                client?.send(TdApi.ResendAuthenticationCode(TdApi.ResendCodeReasonUserRequest())) { res ->
+                    resendDone.complete(res)
+                }
+                val resendRes = withTimeoutOrNull(10_000L) { resendDone.await() }
+                if (resendRes is TdApi.Ok) {
+                    val waitDeadline = android.os.SystemClock.elapsedRealtime() + 7_500L
+                    while (android.os.SystemClock.elapsedRealtime() < waitDeadline) {
+                        if (authStateEventSeq.get() > seqBeforeResend && firebaseFallbackPendingGen.get() == 0) {
+                            break
+                        }
+                        delay(60L)
+                    }
+                    if (_authState.value is AuthState.AuthRejected) {
+                        val reason = (_authState.value as AuthState.AuthRejected).reason
+                        resetUnauthenticatedClientLocked()
+                        return@withLock Result.failure(IllegalStateException(reason))
+                    }
+                    val updated = formatCurrentAuthStateString()
+                    return@withLock Result.success(if (updated == "UNKNOWN") "WAIT_CODE" else updated)
+                }
+                val resendErrMsg = (resendRes as? TdApi.Error)?.message
+                if (isFloodWaitError(resendErrMsg)) {
+                    // Keep existing WaitCode session alive so previously sent app code stays valid!
+                    return@withLock Result.failure(IllegalStateException(resendErrMsg ?: "FLOOD_WAIT_60"))
+                }
+                Log.w(TAG, "ResendAuthenticationCode failed ($resendErrMsg), resetting to send fresh code...")
+            }
+
+            // If TDLib is in WaitQrCode, WaitCode (different phone or no nextType), WaitEmailCode, WaitPassword, or AuthRejected -> clean reset!
+            if (_authState.value !is AuthState.WaitPhone) {
+                val resetOk = resetUnauthenticatedClientLocked()
+                if (!resetOk && _authState.value !is AuthState.WaitPhone) {
+                    if (_authState.value is AuthState.Ready) return@withLock Result.success("READY")
+                    return@withLock Result.failure(
+                        IllegalStateException("Error preparando la conexión con Telegram. Revisa tu internet e inténtalo de nuevo.")
+                    )
+                }
+            }
+
+            suspend fun attemptSetPhone(): Result<String> {
+                firebaseFallbackAttempted = false
+                return executeAuthFunctionAndAwaitLocked(
+                    request = TdApi.SetAuthenticationPhoneNumber(normalizedPhone, buildSafePhoneAuthSettings()),
+                    timeoutMs = 20_000L
+                ) { st ->
+                    when (st) {
+                        is AuthState.WaitCode      -> "WAIT_CODE"
+                        is AuthState.WaitEmailCode -> "WAIT_EMAIL_CODE|${st.emailPattern}"
+                        is AuthState.WaitPassword  -> "WAIT_PASSWORD"
+                        is AuthState.Ready         -> "READY"
+                        else -> null
+                    }
+                }
+            }
+
+            var attempt = attemptSetPhone()
+            if (attempt.isFailure && isTransientAuthQueryConflict(attempt.exceptionOrNull()?.message)) {
+                Log.w(TAG, "SetAuthenticationPhoneNumber hit transient conflict (${attempt.exceptionOrNull()?.message}), self-healing...")
+                if (resetUnauthenticatedClientLocked()) {
+                    attempt = attemptSetPhone()
+                }
+            }
+
+            if (attempt.isSuccess) {
+                lastSubmittedPhone = normalizedPhone
+            }
+            attempt
+        }
+    }
+
+    suspend fun signInWithCodeSuspend(rawCode: String): Result<String> {
+        val cleanCode = sanitizeVerificationCode(rawCode)
+        if (cleanCode.isEmpty()) {
+            return Result.failure(IllegalArgumentException("PHONE_CODE_INVALID: Introduce el código recibido."))
+        }
+
+        awaitNonUnknownAuthState(4_000L)
+        return authMutex.withLock {
+            val cur = awaitNonUnknownAuthState(2_000L)
+            when (cur) {
+                is AuthState.Ready -> return@withLock Result.success("READY")
+                is AuthState.WaitPassword -> return@withLock Result.success("WAIT_PASSWORD")
+                is AuthState.WaitEmailCode -> {
+                    return@withLock executeAuthFunctionAndAwaitLocked(
+                        request = TdApi.CheckAuthenticationEmailCode(TdApi.EmailAddressAuthenticationCode(cleanCode)),
+                        timeoutMs = 18_000L
+                    ) { st ->
+                        when (st) {
+                            is AuthState.Ready        -> "READY"
+                            is AuthState.WaitPassword -> "WAIT_PASSWORD"
+                            is AuthState.WaitCode     -> "WAIT_CODE"
+                            else -> null
+                        }
+                    }
+                }
+                is AuthState.WaitCode -> {
+                    return@withLock executeAuthFunctionAndAwaitLocked(
+                        request = TdApi.CheckAuthenticationCode(cleanCode),
+                        timeoutMs = 18_000L
+                    ) { st ->
+                        when (st) {
+                            is AuthState.Ready        -> "READY"
+                            is AuthState.WaitPassword -> "WAIT_PASSWORD"
+                            else -> null
+                        }
+                    }
+                }
+                else -> {
+                    return@withLock Result.failure(
+                        IllegalStateException("CHECKAUTHENTICATIONCODE UNEXPECTED: La sesión de verificación cambió o expiró. Pulsa Reenviar o Cambiar número.")
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun signInWithPasswordSuspend(password: String): Result<String> {
+        if (password.isEmpty()) {
+            return Result.failure(IllegalArgumentException("PASSWORD_HASH_INVALID: Introduce tu contraseña 2FA."))
+        }
+        awaitNonUnknownAuthState(4_000L)
+        return authMutex.withLock {
+            val cur = awaitNonUnknownAuthState(2_000L)
+            if (cur is AuthState.Ready) {
+                return@withLock Result.success("READY")
+            }
+            if (cur !is AuthState.WaitPassword) {
+                return@withLock Result.failure(
+                    IllegalStateException("La sesión cambió antes de verificar la contraseña. Vuelve atrás e inténtalo de nuevo.")
+                )
+            }
+            executeAuthFunctionAndAwaitLocked(
+                request = TdApi.CheckAuthenticationPassword(password),
+                timeoutMs = 18_000L
+            ) { st ->
+                when (st) {
+                    is AuthState.Ready -> "READY"
+                    else -> null
+                }
+            }
+        }
+    }
+
+    // Legacy callback wrappers preserved for compatibility
+    fun requestQrLogin(onError: (String) -> Unit) {
+        scope.launch {
+            requestQrLoginSuspend(forceReset = false).onFailure { onError(it.message ?: "Error QR") }
         }
     }
 
     fun sendPhone(phone: String, onError: (String) -> Unit) {
-        val current = _authState.value
-        if (current is AuthState.WaitQrCode) {
-            // TDLib cannot transition from WaitOtherDeviceConfirmation to phone auth.
-            // Close() preserves the DB so the new client goes BACK to QR state.
-            // Destroy() wipes everything — since user isn't logged in yet, nothing is lost.
-            Log.i(TAG, "Destroying TDLib session to cancel QR and switch to phone login...")
-            val oldClient = client
-            scope.launch {
-                oldClient?.send(TdApi.Destroy()) {}
-                // Destroy → AuthorizationStateClosed → client=null + initClient()
-                // New client with empty DB → WaitTdlibParameters → WaitPhoneNumber
-                val reached = withTimeoutOrNull(10000) {
-                    authState.first { it is AuthState.WaitPhone }
-                }
-                if (reached != null) {
-                    val freshClient = client
-                    Log.i(TAG, "Fresh client ready after Destroy, sending phone number...")
-                    freshClient?.send(TdApi.SetAuthenticationPhoneNumber(phone, null)) { result ->
-                        if (result is TdApi.Error) onError(result.message)
-                    }
-                } else {
-                    Log.e(TAG, "Timeout waiting for fresh client after Destroy")
-                    onError("Error reiniciando sesión. Cierra la app y ábrela de nuevo.")
-                }
-            }
-        } else if (current is AuthState.WaitCode) {
-            Log.i(TAG, "Already in WaitCode; calling ResendAuthenticationCode instead of SetAuthenticationPhoneNumber...")
-            client?.send(TdApi.ResendAuthenticationCode()) { result ->
-                if (result is TdApi.Error) onError(result.message)
-            }
-        } else {
-            client?.send(TdApi.SetAuthenticationPhoneNumber(phone, null)) { result ->
-                if (result is TdApi.Error) onError(result.message)
-            }
+        scope.launch {
+            loginWithPhoneSuspend(phone).onFailure { onError(it.message ?: "Error enviando teléfono") }
         }
     }
 
     fun sendCode(code: String, onError: (String) -> Unit) {
-        val current = _authState.value
-        if (current is AuthState.Ready || current is AuthState.WaitPassword) {
-            Log.i(TAG, "sendCode skipped because authState is already $current")
-            return
-        }
-        if (current !is AuthState.WaitCode) {
-            Log.w(TAG, "sendCode called while authState is $current (expected WaitCode)")
-            onError("Call to checkAuthenticationCode unexpected")
-            return
-        }
-        client?.send(TdApi.CheckAuthenticationCode(code)) { result ->
-            if (result is TdApi.Error) onError(result.message)
+        scope.launch {
+            signInWithCodeSuspend(code).onFailure { onError(it.message ?: "Error verificando código") }
         }
     }
 
     fun sendPassword(password: String, onError: (String) -> Unit) {
-        client?.send(TdApi.CheckAuthenticationPassword(password)) { result ->
-            if (result is TdApi.Error) onError(result.message)
+        scope.launch {
+            signInWithPasswordSuspend(password).onFailure { onError(it.message ?: "Error verificando contraseña") }
         }
     }
 
+    suspend fun logoutSuspend(): String = authMutex.withLock {
+        lastSubmittedPhone = ""
+        lastWaitCodeHasNextType = false
+        firebaseFallbackAttempted = false
+        lastCodeDeliveryState = AuthState.WaitCode()
+        lastPasswordHint = ""
+        cachedBotChatId = null
+        persistSessionAuthenticatedFlag(false)
+        runCatching {
+            context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .remove("user_phone")
+                .remove("tg_session")
+                .putBoolean(PREF_SESSION_AUTHENTICATED, false)
+                .apply()
+        }
+        val c = client ?: return@withLock "WAIT_PHONE"
+        val done = CompletableDeferred<TdApi.Object?>()
+        c.send(TdApi.LogOut()) { res -> done.complete(res) }
+        val logOutRes = withTimeoutOrNull(5_000L) { done.await() }
+        if (logOutRes is TdApi.Error) {
+            resetUnauthenticatedClientLocked()
+        } else {
+            withTimeoutOrNull(6_000L) {
+                authState.first { it is AuthState.WaitPhone }
+            }
+        }
+        "WAIT_PHONE"
+    }
+
     fun logout(onDone: () -> Unit) {
-        client?.send(TdApi.LogOut()) { onDone() }
+        scope.launch {
+            logoutSuspend()
+            onDone()
+        }
     }
 
     fun getMe(onResult: (TdApi.User?) -> Unit) {
@@ -962,34 +1898,179 @@ class TelegramEngine(private val context: Context) {
         }
     }
 
+    suspend fun isFileIdValid(fileId: Int): Boolean = withContext(Dispatchers.IO) {
+        if (fileId <= 0) return@withContext false
+        val c = client ?: return@withContext false
+        val deferred = CompletableDeferred<Boolean>()
+        c.send(TdApi.GetFile(fileId)) { res ->
+            deferred.complete(res is TdApi.File)
+        }
+        withTimeoutOrNull(2000) { deferred.await() } ?: false
+    }
+
+    private suspend fun ensureChatKnownInSession(chatId: Long, botChatId: Long?) {
+        if (chatId == 0L || chatId == botChatId) return
+        val c = client ?: return
+        val alreadyKnown = withTimeoutOrNull(1200) {
+            val d = CompletableDeferred<Boolean>()
+            c.send(TdApi.GetChat(chatId)) { res -> d.complete(res is TdApi.Chat) }
+            d.await()
+        } == true
+        if (alreadyKnown) return
+        withTimeoutOrNull(4000) {
+            val d = CompletableDeferred<Unit>()
+            c.send(TdApi.GetChats(null, 60)) { d.complete(Unit) }
+            d.await()
+        }
+    }
+
+    /**
+     * Ensures [fileId] is valid in the current TDLib in-memory FileManager, transparently
+     * re-resolving from `(chatId, msgId)` on Telegram's server if `fileId <= 0` or stale.
+     */
+    suspend fun ensureValidFileId(
+        fileId: Int,
+        chatId: Long,
+        msgId: Long,
+        fallbackSize: Long = 0L
+    ): Pair<Int, Long>? = withContext(Dispatchers.IO) {
+        if (fileId > 0 && isFileIdValid(fileId)) {
+            val sz = if (fallbackSize > 0L) fallbackSize else resolveFileSizeForFileId(fileId)
+            return@withContext Pair(fileId, sz)
+        }
+        if (msgId != 0L) {
+            return@withContext resolveFileIdForMessage(chatId, msgId)
+        }
+        null
+    }
+
+    /**
+     * Ensures every part in a multipart / `7z-copy` archive has a live TDLib `fileId` in the
+     * current session, batch-recovering stale part `fileId`s from Telegram's server via `GetMessages`
+     * whenever per-part `msgId`s are available.
+     */
+    suspend fun ensureValidMultipartParts(
+        parts: List<com.cineflix.android.ui.player.FilePart>,
+        chatId: Long
+    ): List<com.cineflix.android.ui.player.FilePart>? = withContext(Dispatchers.IO) {
+        if (parts.isEmpty()) return@withContext emptyList()
+        val staleIndices = ArrayList<Int>()
+        for (i in parts.indices) {
+            val p = parts[i]
+            if (p.fileId <= 0 || !isFileIdValid(p.fileId)) {
+                staleIndices.add(i)
+            }
+        }
+        if (staleIndices.isEmpty()) return@withContext parts
+
+        val botChat = getBotChatId()
+        val effectiveChatId = if (chatId != 0L) chatId else (botChat ?: return@withContext null)
+        ensureChatKnownInSession(effectiveChatId, botChat)
+        val c = client ?: return@withContext null
+
+        val batchMsgIds = staleIndices
+            .map { parts[it].msgId }
+            .filter { it != 0L }
+            .distinct()
+            .toLongArray()
+
+        val resolvedByMsgId = HashMap<Long, Pair<Int, Long>>()
+        if (batchMsgIds.isNotEmpty()) {
+            val batchDeferred = CompletableDeferred<Unit>()
+            c.send(TdApi.GetMessages(effectiveChatId, batchMsgIds)) { result ->
+                if (result is TdApi.Messages) {
+                    for (msg in result.messages) {
+                        if (msg == null) continue
+                        val info = extractVideoInfo(msg)
+                        if (info != null && info.fileId > 0) {
+                            cacheMessageFileMeta("$effectiveChatId:${msg.id}", info.fileId, info.mimeType, info.fileSize)
+                            resolvedByMsgId[msg.id] = Pair(info.fileId, info.fileSize)
+                        }
+                    }
+                }
+                batchDeferred.complete(Unit)
+            }
+            withTimeoutOrNull(7000) { batchDeferred.await() }
+        }
+
+        val updated = ArrayList<com.cineflix.android.ui.player.FilePart>(parts.size)
+        for (i in parts.indices) {
+            val orig = parts[i]
+            if (i !in staleIndices) {
+                updated.add(orig)
+                continue
+            }
+            val recovered = resolvedByMsgId[orig.msgId]
+                ?: (if (orig.msgId != 0L) resolveFileIdForMessage(effectiveChatId, orig.msgId) else null)
+            if (recovered == null || recovered.first <= 0) {
+                Log.e(TAG, "Failed to recover stale multipart part #$i (msgId=${orig.msgId}, oldFileId=${orig.fileId})")
+                return@withContext null
+            }
+            val sz = if (orig.size > 0L) orig.size else recovered.second
+            if (sz <= 0L) return@withContext null
+            updated.add(com.cineflix.android.ui.player.FilePart(recovered.first, sz, orig.msgId))
+        }
+        updated
+    }
+
     /**
      * Resolves the real TDLib fileId and fileSize for a given chatId and msgId.
-     * Checks in-memory cache first, then queries TDLib directly via GetMessage.
+     * Checks in-memory cache first, then queries TDLib via GetMessage and server-backed GetMessages.
      */
     suspend fun resolveFileIdForMessage(chatId: Long, msgId: Long): Pair<Int, Long>? = withContext(Dispatchers.IO) {
-        val cacheKey = "$chatId:$msgId"
+        if (msgId == 0L) return@withContext null
+        val botChat = getBotChatId()
+        val effectiveChatId = if (chatId != 0L) chatId else (botChat ?: return@withContext null)
+        ensureChatKnownInSession(effectiveChatId, botChat)
+        val cacheKey = "$effectiveChatId:$msgId"
+
         fileIdCache[cacheKey]?.let { pair ->
-            val cachedSize = fileSizeCache[cacheKey] ?: 0L
-            val actualSize = if (cachedSize > 0L) cachedSize else resolveFileSizeForFileId(pair.first)
-            if (actualSize > 0L) fileSizeCache[cacheKey] = actualSize
-            return@withContext Pair(pair.first, actualSize)
+            if (isFileIdValid(pair.first)) {
+                val cachedSize = fileSizeCache[cacheKey] ?: 0L
+                val actualSize = if (cachedSize > 0L) cachedSize else resolveFileSizeForFileId(pair.first)
+                if (actualSize > 0L) fileSizeCache[cacheKey] = actualSize
+                return@withContext Pair(pair.first, actualSize)
+            } else {
+                fileIdCache.remove(cacheKey)
+                fileSizeCache.remove(cacheKey)
+            }
         }
-        val deferred = CompletableDeferred<Pair<Int, Long>?>()
-        client?.send(TdApi.GetMessage(chatId, msgId)) { result ->
+
+        val c = client ?: return@withContext null
+        val localDeferred = CompletableDeferred<Pair<Int, Long>?>()
+        c.send(TdApi.GetMessage(effectiveChatId, msgId)) { result ->
             if (result is TdApi.Message) {
                 val info = extractVideoInfo(result)
                 if (info != null && info.fileId > 0) {
-                    fileIdCache[cacheKey] = Pair(info.fileId, info.mimeType)
-            if (info.fileSize > 0L) fileSizeCache[cacheKey] = info.fileSize
-                    deferred.complete(Pair(info.fileId, info.fileSize))
+                    cacheMessageFileMeta(cacheKey, info.fileId, info.mimeType, info.fileSize)
+                    localDeferred.complete(Pair(info.fileId, info.fileSize))
                 } else {
-                    deferred.complete(null)
+                    localDeferred.complete(null)
                 }
             } else {
-                deferred.complete(null)
+                localDeferred.complete(null)
             }
         }
-        withTimeoutOrNull(5000) { deferred.await() }
+        val fromLocal = withTimeoutOrNull(2500) { localDeferred.await() }
+        if (fromLocal != null) return@withContext fromLocal
+
+        // Server-backed fallback (essential when useMessageDatabase = false)
+        val serverDeferred = CompletableDeferred<Pair<Int, Long>?>()
+        c.send(TdApi.GetMessages(effectiveChatId, longArrayOf(msgId))) { result ->
+            if (result is TdApi.Messages && result.messages.isNotEmpty()) {
+                val msg = result.messages.firstOrNull { it != null }
+                val info = msg?.let { extractVideoInfo(it) }
+                if (info != null && info.fileId > 0) {
+                    cacheMessageFileMeta(cacheKey, info.fileId, info.mimeType, info.fileSize)
+                    serverDeferred.complete(Pair(info.fileId, info.fileSize))
+                } else {
+                    serverDeferred.complete(null)
+                }
+            } else {
+                serverDeferred.complete(null)
+            }
+        }
+        withTimeoutOrNull(6000) { serverDeferred.await() }
     }
 
     suspend fun resolveFileSizeForFileId(fileId: Int): Long = withContext(Dispatchers.IO) {
@@ -1011,25 +2092,47 @@ class TelegramEngine(private val context: Context) {
 
     /**
      * Fetch up to [limit] video messages from the bot chat newer than [minId].
-     * Used by AndroidBridge.getVideoMessages as a reliable fallback via TDLib GetChatHistory.
+     * Paginates up to 3 slices because TDLib's `GetChatHistory` may return only in-memory messages
+     * on the first call before fetching older messages from Telegram's server.
      */
     suspend fun getVideoMessagesHistory(limit: Int = 50, minId: Long = 0L): List<VideoInfo> =
         withContext(Dispatchers.IO) {
             val chatId = getBotChatId() ?: return@withContext emptyList()
-            val collected = mutableListOf<VideoInfo>()
-            val deferred = CompletableDeferred<Unit>()
-            client?.send(TdApi.GetChatHistory(chatId, 0L, 0, limit.coerceAtLeast(10), false)) { result ->
-                if (result is TdApi.Messages) {
-                    for (msg in result.messages) {
-                        if (msg.id <= minId) continue
-                        val info = extractVideoInfo(msg) ?: continue
-                        collected.add(info)
+            val c = client ?: return@withContext emptyList()
+            val targetLimit = limit.coerceIn(10, 260)
+            val byMsgId = LinkedHashMap<Long, VideoInfo>()
+            var fromMsgId = 0L
+            var pages = 0
+
+            while (pages < 4 && byMsgId.size < targetLimit) {
+                pages++
+                val pageDeferred = CompletableDeferred<Array<TdApi.Message>?>()
+                c.send(TdApi.GetChatHistory(chatId, fromMsgId, 0, (targetLimit - byMsgId.size).coerceAtLeast(20), false)) { result ->
+                    if (result is TdApi.Messages) {
+                        pageDeferred.complete(result.messages)
+                    } else {
+                        pageDeferred.complete(null)
                     }
                 }
-                deferred.complete(Unit)
+                val batch = withTimeoutOrNull(8_000) { pageDeferred.await() } ?: break
+                if (batch.isEmpty()) break
+
+                var reachedMinId = false
+                for (msg in batch) {
+                    if (msg.id <= minId) {
+                        reachedMinId = true
+                        continue
+                    }
+                    val info = extractVideoInfo(msg)
+                    if (info != null) {
+                        byMsgId[info.msgId] = info
+                    }
+                }
+                val oldestId = batch.last().id
+                if (reachedMinId || oldestId <= 0L || oldestId == fromMsgId) break
+                fromMsgId = oldestId
             }
-            withTimeoutOrNull(10_000) { deferred.await() }
-            collected.sortedBy { it.msgId }
+            byMsgId.values.sortedBy { it.msgId }
         }
 
     @Volatile
@@ -1039,7 +2142,16 @@ class TelegramEngine(private val context: Context) {
         if (_authState.value is AuthState.Ready) return true
         Log.i(TAG, "TDLib not ready yet (current: ${_authState.value}), waiting for Ready state...")
         val reached = withTimeoutOrNull(15_000) {
-            authState.first { it is AuthState.Ready || it is AuthState.WaitPhone || it is AuthState.WaitQrCode }
+            authState.first {
+                it is AuthState.Ready ||
+                it is AuthState.WaitPhone ||
+                it is AuthState.WaitQrCode ||
+                it is AuthState.WaitCode ||
+                it is AuthState.WaitEmailCode ||
+                it is AuthState.WaitPassword ||
+                it is AuthState.AuthRejected ||
+                it is AuthState.Error
+            }
         }
         return reached is AuthState.Ready
     }
@@ -1050,50 +2162,63 @@ class TelegramEngine(private val context: Context) {
             return null
         }
         cachedBotChatId?.let { return it }
-        val savedId = context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE).getLong("bot_chat_id", 0L)
-        if (savedId != 0L) {
-            cachedBotChatId = savedId
-            return savedId
-        }
-        val c = client ?: run {
-            Log.e(TAG, "TDLib client is null when getting bot chatId")
-            return null
-        }
-        val resolvedId = withTimeoutOrNull(12_000) {
-            suspendCancellableCoroutine<Long?> { cont ->
-                try {
-                    c.send(TdApi.SearchPublicChat(BOT_USERNAME)) { result ->
-                        val id = if (result is TdApi.Chat) result.id else null
-                        if (id != null) {
-                            cachedBotChatId = id
-                            context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-                                .edit().putLong("bot_chat_id", id).apply()
-                            Log.i(TAG, "Resolved and cached bot chatId: $id")
-                            if (cont.isActive) cont.resume(id) {}
-                        } else {
-                            if (result is TdApi.Error) {
-                                Log.w(TAG, "SearchPublicChat failed (${result.code} - ${result.message}), trying SearchChatsOnServer...")
-                            }
-                            c.send(TdApi.SearchChatsOnServer(BOT_USERNAME, 5)) { searchRes ->
-                                val fallbackId = if (searchRes is TdApi.Chats && searchRes.chatIds.isNotEmpty()) {
-                                    searchRes.chatIds[0]
-                                } else null
-                                if (fallbackId != null) {
-                                    cachedBotChatId = fallbackId
-                                    context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-                                        .edit().putLong("bot_chat_id", fallbackId).apply()
-                                    Log.i(TAG, "Resolved bot chatId via SearchChatsOnServer: $fallbackId")
-                                }
-                                if (cont.isActive) cont.resume(fallbackId) {}
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (cont.isActive) cont.resume(null) {}
+
+        return botChatMutex.withLock {
+            cachedBotChatId?.let { return@withLock it }
+            val c = client ?: run {
+                Log.e(TAG, "TDLib client is null when getting bot chatId")
+                return@withLock null
+            }
+
+            val savedId = context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE).getLong("bot_chat_id", 0L)
+            if (savedId != 0L) {
+                val knownInSession = withTimeoutOrNull(1500) {
+                    val d = CompletableDeferred<Boolean>()
+                    c.send(TdApi.GetChat(savedId)) { res -> d.complete(res is TdApi.Chat) }
+                    d.await()
+                } == true
+                if (knownInSession) {
+                    cachedBotChatId = savedId
+                    return@withLock savedId
                 }
             }
+
+            val resolvedId = withTimeoutOrNull(12_000) {
+                suspendCancellableCoroutine<Long?> { cont ->
+                    try {
+                        c.send(TdApi.SearchPublicChat(BOT_USERNAME)) { result ->
+                            val id = if (result is TdApi.Chat) result.id else null
+                            if (id != null) {
+                                cachedBotChatId = id
+                                context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+                                    .edit().putLong("bot_chat_id", id).apply()
+                                Log.i(TAG, "Resolved and cached bot chatId: $id")
+                                if (cont.isActive) cont.resume(id) {}
+                            } else {
+                                if (result is TdApi.Error) {
+                                    Log.w(TAG, "SearchPublicChat failed (${result.code} - ${result.message}), trying SearchChatsOnServer...")
+                                }
+                                c.send(TdApi.SearchChatsOnServer(BOT_USERNAME, 5)) { searchRes ->
+                                    val fallbackId = if (searchRes is TdApi.Chats && searchRes.chatIds.isNotEmpty()) {
+                                        searchRes.chatIds[0]
+                                    } else null
+                                    if (fallbackId != null) {
+                                        cachedBotChatId = fallbackId
+                                        context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+                                            .edit().putLong("bot_chat_id", fallbackId).apply()
+                                        Log.i(TAG, "Resolved bot chatId via SearchChatsOnServer: $fallbackId")
+                                    }
+                                    if (cont.isActive) cont.resume(fallbackId) {}
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        if (cont.isActive) cont.resume(null) {}
+                    }
+                }
+            }
+            resolvedId
         }
-        return resolvedId
     }
 
     /** Public version for AndroidBridge (same logic, exposed outside package) */
@@ -1105,8 +2230,76 @@ class TelegramEngine(private val context: Context) {
      * Stop downloading and forcefully delete the file chunk from TDLib cache to free TV storage.
      */
     fun cancelAndDeleteVideo(fileId: Int) {
+        if (fileId <= 0) return
         scope.launch(Dispatchers.IO) {
-            Log.i(TAG, "Cleaning up TDLib cache fileId=$fileId ok=${boundedVideoCache.release(fileId)}")
+            val ok = boundedVideoCache.release(fileId)
+            filePathEmitters.remove(fileId)
+            fileStates.remove(fileId)
+            Log.i(TAG, "Cleaning up TDLib cache fileId=$fileId ok=$ok")
+        }
+    }
+
+    /**
+     * Releases a specific set of old `fileId`s without disturbing any newly started stream's
+     * `BoundedVideoCache` window or `tdlib_files` directory. Safe during channel zaps and movie switches.
+     */
+    fun releaseSpecificVideoFiles(fileIds: Collection<Int>) {
+        val ids = fileIds.filter { it > 0 }.toSet()
+        if (ids.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            for (fid in ids) {
+                boundedVideoCache.release(fid)
+                filePathEmitters.remove(fid)
+                fileStates.remove(fid)
+            }
+        }
+    }
+
+    /**
+     * Releases all active streaming caches, transient RAM maps, and wipes `tdlib_files` on disk
+     * sequentially after confirming TDLib has cancelled and closed every open file handle —
+     * while aborting the global folder wipe if a new stream started concurrently!
+     */
+    fun purgeAllStreamingCaches(extraFileIds: Collection<Int> = emptyList()) {
+        val genAtRequest = streamingSessionGeneration.get()
+        val snapshotIds = LinkedHashSet<Int>().apply {
+            extraFileIds.forEach { if (it > 0) add(it) }
+            filePathEmitters.keys.forEach { if (it > 0) add(it) }
+            fileStates.keys.forEach { if (it > 0) add(it) }
+        }
+        scope.launch(Dispatchers.IO) {
+            try {
+                for (fid in snapshotIds) {
+                    boundedVideoCache.release(fid)
+                    filePathEmitters.remove(fid)
+                    fileStates.remove(fid)
+                }
+                if (streamingSessionGeneration.get() != genAtRequest || hasActiveStreamOwners()) {
+                    Log.d(TAG, "purgeAllStreamingCaches: new stream active, skipped global tdlib_files wipe after releasing ${snapshotIds.size} old file(s)")
+                    return@launch
+                }
+                boundedVideoCache.releaseAll()
+                var wipedGlobal = false
+                synchronized(boundedVideoCache) {
+                    if (streamingSessionGeneration.get() == genAtRequest && !hasActiveStreamOwners()) {
+                        filePathEmitters.clear()
+                        fileStates.clear()
+                        if (downloadLocks.size > 16) {
+                            downloadLocks.clear()
+                        }
+                        com.cineflix.android.util.StorageAndRamHygiene.cleanTdlibTempFiles(context.cacheDir)
+                        com.cineflix.android.util.StorageAndRamHygiene.cleanTdlibLogFiles(context.filesDir)
+                        ensureDirectoriesExist()
+                        wipedGlobal = true
+                    }
+                }
+                if (wipedGlobal) {
+                    optimizeStorage(0L, immunityDelaySec = 0)
+                    logStreamStorage("post-playback-zero-purge")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "purgeAllStreamingCaches warning: ${e.message}")
+            }
         }
     }
 
@@ -1114,10 +2307,10 @@ class TelegramEngine(private val context: Context) {
      * Synchronous version: cancel download + delete file and WAIT for TDLib
      * to confirm both operations. This ensures the file descriptor is closed
      * and disk space is actually freed before returning.
-     * Used by StreamProxyServer's rolling GC during playback.
      */
-    fun cancelAndDeleteVideoSync(fileId: Int, timeoutMs: Long = 3000): Boolean {
-        synchronized(downloadLocks.getOrPut(fileId) { Any() }) {
+    fun cancelAndDeleteVideoSync(fileId: Int, timeoutMs: Long = 5000): Boolean {
+        val lock = downloadLocks.getOrPut(fileId) { Any() }
+        val ok = synchronized(lock) {
             val c = client ?: return false
             val deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs
             fun request(action: TdApi.Function<*>): TdApi.Object? {
@@ -1129,23 +2322,53 @@ class TelegramEngine(private val context: Context) {
                 return result
             }
             try {
-                // Sequence matters: completion of callbacks alone is not proof of success.
-                if (request(TdApi.CancelDownloadFile(fileId, false)) !is TdApi.Ok) return false
-                if (request(TdApi.DeleteFile(fileId)) !is TdApi.Ok) return false
-                val file = request(TdApi.GetFile(fileId)) as? TdApi.File ?: return false
-                return file.local.downloadedSize == 0L && !file.local.isDownloadingActive
+                // Fast-path: if file has never been downloaded and is not active, nothing is on disk to purge!
+                val initial = request(TdApi.GetFile(fileId)) as? TdApi.File
+                if (initial != null &&
+                    !initial.local.isDownloadingActive &&
+                    initial.local.downloadedSize == 0L &&
+                    initial.local.path.isNullOrEmpty()
+                ) {
+                    return@synchronized true
+                }
+
+                // Cancel any active range download (ignore Error if already idle)
+                request(TdApi.CancelDownloadFile(fileId, false))
+
+                // Delete local cached file (tolerate Error if local path is already empty)
+                val delRes = request(TdApi.DeleteFile(fileId))
+                if (delRes == null) return@synchronized false
+
+                // TDLib unlinks asynchronously on its disk thread; poll GetFile briefly until 0 bytes confirmed
+                var confirmed = false
+                while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                    val file = request(TdApi.GetFile(fileId)) as? TdApi.File ?: break
+                    val localPath = file.local?.path.orEmpty()
+                    val goneFromDisk = localPath.isEmpty() || !java.io.File(localPath).exists()
+                    if (!file.local.isDownloadingActive && (file.local.downloadedSize == 0L || goneFromDisk)) {
+                        confirmed = true
+                        break
+                    }
+                    Thread.sleep(45L)
+                }
+                confirmed
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
-                return false
+                false
             }
         }
+        if (ok) {
+            filePathEmitters.remove(fileId)
+            fileStates.remove(fileId)
+        }
+        return ok
     }
 
     /**
      * Ask TDLib's native C++ engine to optimize disk usage by removing old cached chunks.
      * Safe to call during or after playback as it does not abort active downloads.
      */
-    fun optimizeStorage(maxSizeBytes: Long = 30L * 1024L * 1024L, immunityDelaySec: Int = 300) {
+    fun optimizeStorage(maxSizeBytes: Long = 0L, immunityDelaySec: Int = 0) {
         val req = TdApi.OptimizeStorage(
             maxSizeBytes,
             0,            // ttl: 0 = eligible for deletion regardless of age
@@ -1158,7 +2381,7 @@ class TelegramEngine(private val context: Context) {
             0
         )
         client?.send(req) { result ->
-            Log.d(TAG, "🧹 TDLib optimizeStorage completed (immunity=${immunityDelaySec}s): ${result.javaClass.simpleName}")
+            Log.d(TAG, "🧹 TDLib optimizeStorage completed (max=${maxSizeBytes}B, immunity=${immunityDelaySec}s): ${result.javaClass.simpleName}")
         }
     }
 
@@ -1179,6 +2402,11 @@ class TelegramEngine(private val context: Context) {
     ) {
         scope.launch(Dispatchers.IO) {
             try {
+                if (!ensureReady()) {
+                    Log.e(TAG, "Cannot send log to bot: TDLib not ready")
+                    onComplete?.invoke(false, "TDLib no está listo")
+                    return@launch
+                }
                 val c = client
                 if (c == null) {
                     Log.e(TAG, "Cannot send log to bot: TDLib client is null")
@@ -1192,41 +2420,59 @@ class TelegramEngine(private val context: Context) {
                     onComplete?.invoke(false, "No se pudo encontrar el bot @$BOT_USERNAME")
                     return@launch
                 }
-                
-                Log.i(TAG, "📤 Enviando log document (${logFile.name}, ${logFile.length()} bytes) a chatId=$chatId")
-                val inputFile = TdApi.InputFileLocal(logFile.absolutePath)
-                val formattedCaption = TdApi.FormattedText(caption, emptyArray())
-                val docContent = TdApi.InputMessageDocument(inputFile, null, false, formattedCaption)
 
-                val deferred = CompletableDeferred<Pair<Boolean, String?>>()
-                c.send(TdApi.SendMessage(chatId, null, null, null, null, docContent)) { res ->
-                    if (res is TdApi.Error) {
-                        Log.e(TAG, "Error sending log document to bot: ${res.code} - ${res.message}")
-                        // Fallback a texto
-                        try {
-                            val textContent = logFile.readText()
-                            val snippet = if (textContent.length > 3000) textContent.takeLast(3000) else textContent
-                            val fallbackText = TdApi.FormattedText("$caption\n\n```\n$snippet\n```", emptyArray())
-                            c.send(TdApi.SendMessage(chatId, null, null, null, null, 
-                                TdApi.InputMessageText(fallbackText, null, false)
-                            )) { textRes ->
-                                if (textRes is TdApi.Error) {
-                                    deferred.complete(Pair(false, textRes.message))
-                                } else {
-                                    deferred.complete(Pair(true, null))
-                                }
-                            }
-                        } catch (e: Exception) {
-                            deferred.complete(Pair(false, res.message))
-                        }
-                    } else {
-                        Log.i(TAG, "Log document enviado correctamente al bot")
-                        deferred.complete(Pair(true, null))
+                // Ensure chat is initialized in TDLib's in-memory ChatManager (useChatInfoDatabase = false)
+                withTimeoutOrNull(2500L) {
+                    val initDef = CompletableDeferred<Unit>()
+                    c.send(TdApi.CreatePrivateChat(chatId, false)) {
+                        c.send(TdApi.OpenChat(chatId)) { initDef.complete(Unit) }
                     }
+                    initDef.await()
                 }
-                
-                val outcome = withTimeoutOrNull(25_000) { deferred.await() } ?: Pair(false, "Timeout esperando confirmación del envío")
-                onComplete?.invoke(outcome.first, outcome.second)
+
+                // 1. Send instant plain-text summary first so it arrives in <200ms with zero file-upload delay
+                val textSummaryOk = runCatching {
+                    val fullTxt = if (logFile.exists()) logFile.readText() else ""
+                    val tailSnippet = if (fullTxt.length > 2600) fullTxt.takeLast(2600) else fullTxt
+                    val bodyStr = if (tailSnippet.isNotBlank()) "$caption\n\n$tailSnippet" else caption
+                    val msgBody = TdApi.InputMessageText(
+                        TdApi.FormattedText(bodyStr.take(3950), emptyArray()),
+                        null,
+                        false
+                    )
+                    val txtDef = CompletableDeferred<Boolean>()
+                    c.send(TdApi.SendMessage(chatId, null, null, null, null, msgBody)) { tRes ->
+                        txtDef.complete(tRes !is TdApi.Error)
+                    }
+                    withTimeoutOrNull(10_000L) { txtDef.await() } == true
+                }.getOrDefault(false)
+
+                // 2. Also attach full .txt document (logFile is kept alive for 3 min by ErrorLogCollector)
+                var docQueuedOk = false
+                var lastErr: String? = null
+                if (logFile.exists() && logFile.length() > 0L) {
+                    Log.i(TAG, "📤 Enviando log document (${logFile.name}, ${logFile.length()} bytes) a chatId=$chatId")
+                    val inputFile = TdApi.InputFileLocal(logFile.absolutePath)
+                    val formattedCaption = TdApi.FormattedText(caption.take(950), emptyArray())
+                    val docContent = TdApi.InputMessageDocument(inputFile, null, false, formattedCaption)
+
+                    val deferred = CompletableDeferred<Pair<Boolean, String?>>()
+                    c.send(TdApi.SendMessage(chatId, null, null, null, null, docContent)) { res ->
+                        if (res is TdApi.Error) {
+                            Log.e(TAG, "Error sending log document to bot: ${res.code} - ${res.message}")
+                            deferred.complete(Pair(false, res.message))
+                        } else {
+                            Log.i(TAG, "Log document encolado en TDLib para envío al bot")
+                            deferred.complete(Pair(true, null))
+                        }
+                    }
+                    val docOutcome = withTimeoutOrNull(15_000L) { deferred.await() }
+                        ?: Pair(false, "Timeout esperando confirmación del envío")
+                    docQueuedOk = docOutcome.first
+                    lastErr = docOutcome.second
+                }
+
+                onComplete?.invoke(textSummaryOk || docQueuedOk, if (textSummaryOk || docQueuedOk) null else lastErr)
             } catch (e: Exception) {
                 Log.e(TAG, "Exception enviando log al bot: ${e.message}", e)
                 onComplete?.invoke(false, e.message)

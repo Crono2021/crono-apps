@@ -2068,6 +2068,125 @@ class DlnaAndStreamServerTest {
         }
     }
 
+    @Test
+    fun channelMixingMatrixSupportsAllInputChannelCountsIncluding5Point1And7Point1() {
+        for (inputCh in 1..16) {
+            val matrix = com.cineflix.android.ui.player.CineflixRenderersFactory.createStereoDownmixMatrix(inputCh)
+            assertEquals("Expected inputChannelCount=$inputCh", inputCh, matrix.inputChannelCount)
+            assertEquals("Expected 2ch stereo output for inputCh=$inputCh", 2, matrix.outputChannelCount)
+            assertFalse("Matrix must not be zero for inputCh=$inputCh", matrix.isZero)
+            if (inputCh == 2) {
+                assertTrue("2ch->2ch matrix must be identity", matrix.isIdentity)
+            }
+            if (inputCh == 6) {
+                // 5.1 center channel (index 2) must mix equally into Left (0) and Right (1)
+                assertTrue(matrix.getMixingCoefficient(2, 0) > 0.3f)
+                assertEquals(matrix.getMixingCoefficient(2, 0), matrix.getMixingCoefficient(2, 1), 0.0001f)
+            }
+        }
+    }
+
+    @Test
+    fun boundedVideoCacheSkipsBackendDownloadWhenRequestIsAlreadyCancelled() {
+        val downloadCalls = AtomicInteger(0)
+        val purgeCalls = AtomicInteger(0)
+        val backend = object : com.cineflix.android.BoundedVideoCache.Backend {
+            override fun cached(fileId: Int, offset: Long, count: Long): ByteArray? = null
+            override fun download(fileId: Int, offset: Long, count: Long): ByteArray? {
+                downloadCalls.incrementAndGet()
+                return ByteArray(count.toInt())
+            }
+            override fun purge(fileId: Int): Boolean {
+                purgeCalls.incrementAndGet()
+                return true
+            }
+        }
+        val cache = com.cineflix.android.BoundedVideoCache(backend, limitBytes = 64L * 1024L * 1024L)
+        val cancelledResult = cache.read(fileId = 1326, offset = 524288L, count = 2097152L) { true }
+        assertNull("Cancelled read must return null immediately", cancelledResult)
+        assertEquals("Cancelled read must not invoke backend.download", 0, downloadCalls.get())
+        assertEquals("Cancelled read must not invoke backend.purge", 0, purgeCalls.get())
+
+        val activeResult = cache.read(fileId = 1326, offset = 524288L, count = 2097152L) { false }
+        assertNotNull("Active read must return bytes", activeResult)
+        assertEquals(2097152, activeResult!!.size)
+        assertEquals(1, downloadCalls.get())
+    }
+
+    @Test
+    fun clusterBlockSwapperSwapsMidClusterAudioBlocksBeforeNextClusterHeader() {
+        val out = java.io.ByteArrayOutputStream()
+        // Simulate 120 bytes of unaligned mid-frame video payload at the start of a mid-cluster HTTP Range slice
+        val videoTail = ByteArray(120) { ((it * 37 + 11) and 0x7F).toByte() }
+        out.write(videoTail)
+
+        // Followed by 3 mid-cluster SimpleBlocks BEFORE the next <Cluster> header:
+        // Block 1: Audio Track #2 (0x82, Spanish Dub) -> must become 0x83
+        val block1Offset = out.size()
+        out.write(byteArrayOf(0xA3.toByte(), 0x88.toByte(), 0x82.toByte(), 0x00, 0x10, 0x80.toByte(), 0x11, 0x22, 0x33, 0x44))
+        // Block 2: Audio Track #3 (0x83, Original VO) -> must become 0x82
+        val block2Offset = out.size()
+        out.write(byteArrayOf(0xA3.toByte(), 0x88.toByte(), 0x83.toByte(), 0x00, 0x30, 0x80.toByte(), 0x55, 0x66, 0x77, 0x78))
+        // Block 3: Video Track #1 (0x81) -> must remain 0x81
+        val block3Offset = out.size()
+        out.write(byteArrayOf(0xA3.toByte(), 0x88.toByte(), 0x81.toByte(), 0x00, 0x50, 0x80.toByte(), 0x01, 0x02, 0x03, 0x04))
+
+        // Followed by the next <Cluster> (1F 43 B6 75) + Timecode (E7) + SimpleBlock Track #3 (0x83)
+        out.write(byteArrayOf(0x1F, 0x43, 0xB6.toByte(), 0x75, 0x01, 0x00, 0x00, 0x20))
+        out.write(byteArrayOf(0xE7.toByte(), 0x82.toByte(), 0x03, 0xE8.toByte()))
+        val nextClusterBlockOffset = out.size()
+        out.write(byteArrayOf(0xA3.toByte(), 0x88.toByte(), 0x83.toByte(), 0x00, 0x00, 0x80.toByte(), 0x09, 0x09, 0x09, 0x09))
+
+        val midClusterSlice = out.toByteArray()
+        val swapper = MatroskaEbmlTrackPatcher.ClusterBlockSwapper(
+            tracksElementEnd = 4096L,
+            firstClusterOffset = 8192L,
+            trackA = 3,
+            trackB = 2
+        )
+
+        val patched = swapper.patchSliceIfNeeded(
+            sourceBuffer = midClusterSlice,
+            sliceOffset = 0,
+            sliceLength = midClusterSlice.size,
+            rangeGlobalStart = 859_389_312L
+        )
+        assertNotNull("Mid-cluster slice must be patched", patched)
+        // Verify mid-cluster SimpleBlocks BEFORE the <Cluster> header were swapped!
+        assertEquals(0x83.toByte(), patched!![block1Offset + 2])
+        assertEquals(0x82.toByte(), patched[block2Offset + 2])
+        assertEquals(0x81.toByte(), patched[block3Offset + 2])
+        // Verify SimpleBlock inside the next <Cluster> was also swapped!
+        assertEquals(0x82.toByte(), patched[nextClusterBlockOffset + 2])
+    }
+
+    @Test
+    fun boundedVideoCacheHitDoesNotTriggerPurgeWhenWindowIsFull() {
+        val purgeCalls = AtomicInteger(0)
+        val cachedChunk = ByteArray(1024) { 0x42 }
+        val backend = object : com.cineflix.android.BoundedVideoCache.Backend {
+            var isCached = false
+            override fun cached(fileId: Int, offset: Long, count: Long): ByteArray? {
+                return if (isCached && offset == 0L && count == 1024L) cachedChunk else null
+            }
+            override fun download(fileId: Int, offset: Long, count: Long): ByteArray? {
+                isCached = true
+                return ByteArray(count.toInt()) { 0x42 }
+            }
+            override fun purge(fileId: Int): Boolean {
+                purgeCalls.incrementAndGet()
+                isCached = false
+                return true
+            }
+        }
+        val cache = com.cineflix.android.BoundedVideoCache(backend, limitBytes = 1024L)
+        assertNotNull(cache.read(1, 0L, 1024L))
+        assertEquals(1, purgeCalls.get())
+        // Window is now 100% full (reservedBytes == 1024 == limitBytes), but offset=0 is cached on disk:
+        assertNotNull(cache.read(1, 0L, 1024L))
+        assertEquals("Disk cache hit must not trigger a purge even when reservedBytes == limitBytes", 1, purgeCalls.get())
+    }
+
     private fun containsSubArray(haystack: ByteArray, needle: ByteArray): Boolean {
         if (needle.isEmpty() || haystack.size < needle.size) return false
         outer@ for (i in 0..(haystack.size - needle.size)) {

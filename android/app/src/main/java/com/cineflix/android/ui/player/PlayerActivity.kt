@@ -27,6 +27,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -51,6 +52,14 @@ import androidx.mediarouter.media.MediaRouter
 import kotlinx.coroutines.*
 
 // Media3
+import android.app.PictureInPictureParams
+import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.util.Rational
+import android.util.TypedValue
+import android.view.Gravity
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -59,18 +68,99 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.cineflix.android.MainActivity
+import com.cineflix.android.util.StorageAndRamHygiene
+import java.lang.ref.WeakReference
 
 private typealias CachedTrackOption = CastSessionCoordinator.CastTrackOption
 
 class PlayerActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
+    private var playerAllocator: DefaultAllocator? = null
     private var proxyServer: StreamProxyServer? = null
     private var localStreamServer: LocalStreamServer? = null
     private var multipartParts: List<FilePart>? = null
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var xrayController: XrayOverlayController? = null
+    private var liveTvSqueezeController: LiveTvSqueezeBackController? = null
+    private lateinit var rootFrame: FrameLayout
+    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e(TAG, "Unhandled coroutine exception in PlayerActivity", throwable)
+    }
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() + coroutineExceptionHandler)
+    private var streamStartupJob: Job? = null
+
+    // Live TV, PiP Mini-TV & Saturday 22:00h "El Peliculón" strict sync state
+    private var isLiveTvMode = false
+    private var hadLiveTvSession = false
+    private var isPremiereSyncLocked = false
+    private var liveTvChannelId = ""
+    private var liveTvChannelLabel = ""
+    private var liveTvProgramDisplayTitle = ""
+    private var liveTvFichaItemId = ""
+    private var liveTvFichaTmdbId = 0
+    private var liveTvFichaYear = ""
+    private var liveTvFichaMediaType = "movie"
+    private var liveTvFichaCleanTitle = ""
+    private var liveTvFichaPosterPath = ""
+    private var liveTvFichaPayload = ""
+    private var liveTvFichaRawJson = ""
+    private var liveTvTunedAtEpochMs = 0L
+    private var liveTvBaseOffsetSec = 0L
+    private var lastPremiereLockToastAtMs = 0L
+    private var lastPremiereAutoResyncAtMs = 0L
+    private var liveTvTopBar: LinearLayout? = null
+    private var tvLiveTvBadgeText: TextView? = null
+    private var tvLiveTvProgramTitle: TextView? = null
+    private var btnLiveFicha: TextView? = null
+    private var btnLiveChPrev: TextView? = null
+    private var btnLiveChNext: TextView? = null
+    private var btnLiveGuide: TextView? = null
+    private var liveTvAutoAdvancePending = false
+    private var liveTvZapPending = false
+    private var isActivityPausedForLifecycle = false
+    private var enteringPipUntilElapsedMs = 0L
+    private var isLiveTvTopBarCompactTwoRow = false
+    private var activePlayerListener: Player.Listener? = null
+    private var isReleasingOrRecoveringPlayer = false
+    private var hasRenderedLiveVideoFrame = false
+    private var mutedPendingInitialLiveSeek = false
+    private var hasSeenDpadInput = false
+
+    private fun isTvOrDpadActive(): Boolean {
+        return StorageAndRamHygiene.isTelevision(this) || hasSeenDpadInput
+    }
+    private var lastPastEofAdvanceSlotKey = ""
+    private var castEndedAndSynced = false
+    private val liveTvAutoAdvanceTimeoutRunnable = Runnable {
+        if (liveTvAutoAdvancePending && !isFinishing && !isDestroyed) {
+            Log.w(TAG, "Live TV 24/7 auto-advance timed out waiting for next slot; finishing cleanly")
+            liveTvAutoAdvancePending = false
+            isLiveTvMode = false
+            hadLiveTvSession = false
+            com.cineflix.android.MainActivity.stopLiveTvFromPlayer(reopenGrid = false)
+            finish()
+        }
+    }
+    private val liveTvZapTimeoutRunnable = Runnable {
+        if (liveTvZapPending && !isFinishing && !isDestroyed) {
+            liveTvZapPending = false
+            if (player?.playbackState == Player.STATE_READY) {
+                loadingSpinner.visibility = View.GONE
+            }
+            Toast.makeText(this, "⚠️ El canal tardó demasiado en responder", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Background idle memory/cache reclamation (e.g. Android TV Home / Standby button)
+    private var releasedWhileBackgrounded = false
+    private val backgroundReleaseHandler = Handler(Looper.getMainLooper())
+    private val backgroundIdleReleaseRunnable = Runnable {
+        releaseHeavyResourcesWhileBackgrounded()
+    }
 
     // UI
     private lateinit var playerView: PlayerView
@@ -89,8 +179,7 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var loadingSpinner: ProgressBar
     private var currentFileId: Int = -1
     private var currentPlayUrl: String? = null
-    private lateinit var castContainer: FrameLayout
-    private lateinit var btnCastUnified: ImageButton
+    private lateinit var btnXrayToggle: TextView
     private lateinit var btnCastBottom: ImageButton
     private lateinit var layoutCastStatusCard: LinearLayout
     private lateinit var tvCastActiveTitle: TextView
@@ -124,8 +213,10 @@ class PlayerActivity : AppCompatActivity() {
     private var introSkipped = false
     private var nextEpisodeTriggered = false
     private var currentEffectiveFileSize: Long = 0L
-    private var lastKnownLocalDurationMs: Long = 0L
+    @Volatile private var lastKnownLocalPositionMs: Long = 0L
+    @Volatile private var lastKnownLocalDurationMs: Long = 0L
     private var ioErrorRetryCount = 0
+    private var decoderErrorRetryCount = 0
     private var lastIoErrorTimeMs = 0L
 
     // Unified Cast (Google Cast + Native DLNA Smart TVs: Samsung Tizen, LG webOS, Sony, Hisense, Roku)
@@ -141,6 +232,7 @@ class PlayerActivity : AppCompatActivity() {
     private var activeCastTvName: String = ""
     private var lastCastPositionMs: Long = 0L
     private var pendingGoogleCastStartMs: Long = 0L
+    private val googleCastLoadGeneration = java.util.concurrent.atomic.AtomicInteger(0)
     private var pendingGoogleCastRouteAfterEnd: MediaRouter.RouteInfo? = null
     private var suppressLocalResumeOnCastEnd = false
     private var unifiedTvDiscovery: UnifiedTvDiscoveryManager? = null
@@ -193,11 +285,269 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_PROGRESS             = "progress"
         const val EXTRA_ATTACH_ACTIVE_CAST   = "attach_active_cast"
 
+        // Live TV PiP, Saturday Premiere Sync & Native X-Ray extras
+        const val EXTRA_IS_LIVE_TV              = "is_live_tv"
+        const val EXTRA_LIVE_TV_CHANNEL_ID      = "live_tv_channel_id"
+        const val EXTRA_LIVE_TV_CHANNEL_LABEL   = "live_tv_channel_label"
+        const val EXTRA_LIVE_TV_PROGRAM_TITLE   = "live_tv_program_title"
+        const val EXTRA_LIVE_TV_ITEM_ID         = "live_tv_item_id"
+        const val EXTRA_LIVE_TV_POSTER_PATH     = "live_tv_poster_path"
+        const val EXTRA_LIVE_TV_PAYLOAD         = "live_tv_payload"
+        const val EXTRA_LIVE_TV_RAW_ITEM_JSON   = "live_tv_raw_item_json"
+        const val EXTRA_LIVE_TV_CONTINUITY_JSON = "live_tv_continuity_json"
+        const val EXTRA_LIVE_TV_UP_NEXT_JSON    = "live_tv_up_next_json"
+        const val EXTRA_LIVE_TV_OTHER_CHANNELS_JSON = "live_tv_other_channels_json"
+        const val EXTRA_LIVE_TV_TUNED_AT_MS     = "live_tv_tuned_at_ms"
+        const val EXTRA_LIVE_TV_BASE_OFFSET_SEC = "live_tv_base_offset_sec"
+        const val EXTRA_IS_PREMIERE_LOCKED      = "is_premiere_locked"
+        const val EXTRA_LIVE_TV_EXPAND_FROM_PIP = "live_tv_expand_from_pip"
+        const val EXTRA_EXPAND_EXISTING_PIP     = "expand_existing_pip"
+        const val EXTRA_XRAY_TMDB_ID            = "xray_tmdb_id"
+        const val EXTRA_XRAY_YEAR               = "xray_year"
+        const val EXTRA_XRAY_MEDIA_TYPE         = "xray_media_type"
+        const val EXTRA_XRAY_CLEAN_TITLE        = "xray_clean_title"
+        const val EXTRA_IS_KIDS_PROFILE         = "is_kids_profile"
+
         private const val TAG = "PlayerActivity"
+        private const val BACKGROUND_IDLE_RELEASE_MS = 45_000L
+        private const val LIVE_TV_AUTO_ADVANCE_TIMEOUT_MS = 35_000L
+
+        @Volatile private var crashHandlerInstalled = false
+        @Volatile private var activePlayerRef: WeakReference<PlayerActivity>? = null
+        @Volatile private var lastLaunchDispatchedAtElapsedMs: Long = 0L
+
+        internal fun shouldLockSeekForPlayback(
+            isLiveTvMode: Boolean,
+            isPremiereSyncLocked: Boolean
+        ): Boolean = isLiveTvMode || isPremiereSyncLocked
+
+        internal fun shouldLockPauseForPlayback(
+            isLiveTvMode: Boolean,
+            isPremiereSyncLocked: Boolean
+        ): Boolean = isLiveTvMode || isPremiereSyncLocked
+
+        internal data class LiveTvFichaSnapshot(
+            val channelId: String,
+            val channelLabel: String,
+            val isPremiereLocked: Boolean,
+            val programDisplayTitle: String,
+            val itemId: String,
+            val tmdbId: Int,
+            val year: String,
+            val mediaType: String,
+            val cleanTitle: String,
+            val posterPath: String,
+            val payload: String,
+            val rawItemJson: String
+        )
+
+        internal fun applyNativeZapTargetToFichaState(
+            previousChannelId: String,
+            previousChannelLabel: String,
+            target: MainActivity.Companion.NativeZapTarget
+        ): LiveTvFichaSnapshot {
+            val resolvedChId = target.channelId.ifBlank { previousChannelId }
+            val resolvedChLabel = target.channelLabel.ifBlank { previousChannelLabel }
+            val resolvedPremiere = target.isPremiereLocked ||
+                resolvedChId.equals("ch_premiere_sabado", ignoreCase = true)
+            val resolvedMediaType = target.mediaType.trim().lowercase().let {
+                if (it == "tv" || it == "movie") it else "movie"
+            }
+            val resolvedYear = target.year.trim().takeIf { it != "null" }.orEmpty()
+            val resolvedCleanTitle = target.cleanTitle.trim().takeIf { it != "null" }.orEmpty()
+            val resolvedDispTitle = formatLiveTvProgramDisplayTitle(
+                explicitProgramTitle = target.programTitle,
+                cleanTitle = resolvedCleanTitle,
+                year = resolvedYear,
+                mediaType = resolvedMediaType
+            )
+            return LiveTvFichaSnapshot(
+                channelId = resolvedChId,
+                channelLabel = resolvedChLabel,
+                isPremiereLocked = resolvedPremiere,
+                programDisplayTitle = resolvedDispTitle,
+                itemId = target.itemId.trim().takeIf { it != "null" }.orEmpty(),
+                tmdbId = target.tmdbId.coerceAtLeast(0),
+                year = resolvedYear,
+                mediaType = resolvedMediaType,
+                cleanTitle = resolvedCleanTitle,
+                posterPath = target.posterPath.trim().takeIf { it != "null" }.orEmpty(),
+                payload = target.payload.trim().takeIf { it != "null" }.orEmpty(),
+                rawItemJson = target.rawItemJson.trim().takeIf { it != "null" }.orEmpty()
+            )
+        }
+
+        internal fun formatLiveTvProgramDisplayTitle(
+            explicitProgramTitle: String? = null,
+            cleanTitle: String? = null,
+            rawTitle: String? = null,
+            year: String? = null,
+            mediaType: String? = null,
+            season: String? = null,
+            episode: String? = null
+        ): String {
+            val safeYear = year?.trim()?.takeIf { it.matches(Regex("\\d{4}")) }
+                ?: XrayOverlayController.extractYearFromTitle(rawTitle.orEmpty()).takeIf { it.matches(Regex("\\d{4}")) }
+
+            val explicit = explicitProgramTitle?.trim().orEmpty()
+            if (explicit.isNotEmpty() && explicit != "null") {
+                return if (safeYear != null && !explicit.contains("($safeYear)")) {
+                    val epSplitIdx = explicit.indexOf(" · T")
+                    if (epSplitIdx > 0) {
+                        explicit.substring(0, epSplitIdx).trimEnd() + " ($safeYear)" + explicit.substring(epSplitIdx)
+                    } else {
+                        "$explicit ($safeYear)"
+                    }
+                } else {
+                    explicit
+                }
+            }
+
+            val baseCandidate = cleanTitle?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+                ?: XrayOverlayController.sanitizeLookupTitle(rawTitle.orEmpty()).ifBlank { rawTitle.orEmpty().trim() }
+            if (baseCandidate.isEmpty()) return ""
+
+            var built = baseCandidate.replace(Regex("\\s*\\(\\d{4}\\)\\s*$"), "").trim()
+            if (built.isEmpty()) built = baseCandidate
+            if (safeYear != null && !built.contains("($safeYear)")) {
+                built = "$built ($safeYear)"
+            }
+            val isTv = mediaType.equals("tv", ignoreCase = true)
+            val sNum = season?.trim()?.toIntOrNull() ?: 0
+            val eNum = episode?.trim()?.toIntOrNull() ?: 0
+            if (isTv && sNum > 0 && eNum > 0 && !Regex("\\b(?:T\\d+[·.]?E\\d+|\\d+x\\d+)\\b", RegexOption.IGNORE_CASE).containsMatchIn(built)) {
+                built = "$built · T${sNum}·E${eNum}"
+            }
+            return built
+        }
+
+        internal fun shouldIgnoreDuplicateNewIntent(
+            attachOnly: Boolean,
+            newFileId: Int,
+            currentFileId: Int,
+            sameMultipart: Boolean,
+            sameLiveMode: Boolean,
+            sameLiveChannel: Boolean,
+            releasedWhileBackgrounded: Boolean,
+            liveTvAutoAdvancePending: Boolean,
+            liveTvZapPending: Boolean
+        ): Boolean {
+            if (attachOnly) return true
+            return newFileId > 0 &&
+                newFileId == currentFileId &&
+                sameMultipart &&
+                sameLiveMode &&
+                sameLiveChannel &&
+                !releasedWhileBackgrounded &&
+                !liveTvAutoAdvancePending &&
+                !liveTvZapPending
+        }
+
+        fun markLaunchDispatched() {
+            lastLaunchDispatchedAtElapsedMs = android.os.SystemClock.elapsedRealtime()
+        }
+
+        fun isPlaybackOrLaunchActive(): Boolean {
+            val nowElapsed = android.os.SystemClock.elapsedRealtime()
+            if (lastLaunchDispatchedAtElapsedMs > 0L && (nowElapsed - lastLaunchDispatchedAtElapsedMs) in 0L..5_000L) {
+                return true
+            }
+            val instance = activePlayerRef?.get() ?: return false
+            return !instance.isFinishing &&
+                !instance.isDestroyed &&
+                !instance.isCleanedUp &&
+                !instance.releasedWhileBackgrounded
+        }
+
+        fun canExpandActiveLiveTvPip(expectedChannelId: String = ""): Boolean {
+            val instance = activePlayerRef?.get() ?: return false
+            if (instance.isFinishing || instance.isDestroyed || instance.isCleanedUp || instance.releasedWhileBackgrounded) {
+                return false
+            }
+            if (!instance.isLiveTvMode || instance.isAnyCastActive()) return false
+            if (expectedChannelId.isNotBlank() &&
+                instance.liveTvChannelId.isNotBlank() &&
+                !instance.liveTvChannelId.equals(expectedChannelId, ignoreCase = true)
+            ) {
+                return false
+            }
+            return instance.isInPipModeCompat()
+        }
+
+        fun finishActiveLiveTvInstanceIfAny() {
+            val instance = activePlayerRef?.get() ?: return
+            Handler(Looper.getMainLooper()).post {
+                if (!instance.isFinishing && !instance.isDestroyed && (instance.isLiveTvMode || instance.hadLiveTvSession)) {
+                    instance.liveTvAutoAdvancePending = false
+                    instance.liveTvZapPending = false
+                    instance.backgroundReleaseHandler.removeCallbacks(instance.liveTvAutoAdvanceTimeoutRunnable)
+                    instance.backgroundReleaseHandler.removeCallbacks(instance.liveTvZapTimeoutRunnable)
+                    instance.isLiveTvMode = false
+                    instance.hadLiveTvSession = false
+                    instance.finish()
+                }
+            }
+        }
+
+        /**
+         * When `PlayerActivity` is already docked in a 16:9 Picture-in-Picture window over `#cf-livetv-view`
+         * and the user zaps to another Live TV channel (without clicking "Volver al directo" to expand),
+         * switches the stream directly in-process on the existing PiP instance so Android WindowManager
+         * never yanks the user out of the guide or spawns a duplicate Activity!
+         */
+        fun dispatchNewIntentToActivePipIfStayInPip(newIntent: Intent): Boolean {
+            val instance = activePlayerRef?.get() ?: return false
+            if (instance.isFinishing || instance.isDestroyed || instance.isCleanedUp) return false
+            if (!instance.isInPipModeCompat() || instance.isAnyCastActive()) return false
+            val isLive = newIntent.getBooleanExtra(EXTRA_IS_LIVE_TV, false) ||
+                newIntent.getBooleanExtra(EXTRA_IS_PREMIERE_LOCKED, false)
+            val expandFromPip = newIntent.getBooleanExtra(EXTRA_LIVE_TV_EXPAND_FROM_PIP, false)
+            if (!isLive || expandFromPip) return false
+
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                instance.onNewIntent(newIntent)
+            } else {
+                Handler(Looper.getMainLooper()).post {
+                    if (!instance.isFinishing && !instance.isDestroyed && !instance.isCleanedUp) {
+                        instance.onNewIntent(newIntent)
+                    }
+                }
+            }
+            return true
+        }
+
+        private fun installGlobalCrashHandlerOnce(appContext: Context) {
+            if (crashHandlerInstalled) return
+            crashHandlerInstalled = true
+            val safeAppCtx = appContext.applicationContext
+            val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+                try {
+                    Log.e(TAG, "Uncaught exception in PlayerActivity: ${throwable.message}", throwable)
+                    val active = activePlayerRef?.get()
+                    val extra = mapOf(
+                        "title" to (active?.currentTitle ?: "N/A"),
+                        "fileId" to (active?.currentFileId ?: -1),
+                        "position" to (active?.lastKnownLocalPositionMs?.toString() ?: "0")
+                    )
+                    com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
+                        context = safeAppCtx,
+                        reason = "Crash No Controlado: ${throwable.javaClass.simpleName} - ${throwable.message}",
+                        extraInfo = extra,
+                        throwable = throwable
+                    )
+                    Thread.sleep(1500)
+                } catch (_: Throwable) {
+                    // ignore
+                }
+                defaultHandler?.uncaughtException(thread, throwable)
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        activePlayerRef = WeakReference(this)
 
         // Pantalla completa extrema
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -219,10 +569,11 @@ class PlayerActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (isAnyCastActive()) {
-                    returnToCatalogWhileCasting()
-                } else {
-                    finish()
+                when {
+                    xrayController?.onBackPressed() == true -> return
+                    isAnyCastActive() -> returnToCatalogWhileCasting()
+                    isLiveTvMode && tryEnterLiveTvPictureInPicture() -> return
+                    else -> finish()
                 }
             }
         })
@@ -240,10 +591,13 @@ class PlayerActivity : AppCompatActivity() {
                     require(archive == "" || archive == "7z-copy") { "Formato de archivo no compatible" }
                     if (i == 0) storedSevenZip = archive == "7z-copy"
                     require(storedSevenZip == (archive == "7z-copy")) { "Partes de formatos diferentes" }
-                    require(obj.getInt("fileId") > 0 && obj.getLong("size") > 0) { "Parte no válida" }
-                    require(obj.getLong("size") <= Long.MAX_VALUE - totalPartsSize) { "Tamaño excesivo" }
-                    totalPartsSize += obj.getLong("size")
-                    parts.add(FilePart(obj.getInt("fileId"), obj.getLong("size")))
+                    val partFid = obj.optInt("fileId", 0)
+                    val partSize = obj.getLong("size")
+                    val partMsgId = obj.optLong("msgId", 0L)
+                    require((partFid > 0 || partMsgId != 0L) && partSize > 0) { "Parte no válida" }
+                    require(partSize <= Long.MAX_VALUE - totalPartsSize) { "Tamaño excesivo" }
+                    totalPartsSize += partSize
+                    parts.add(FilePart(partFid, partSize, partMsgId))
                 }
                 if (parts.isNotEmpty()) {
                     multipartParts = parts
@@ -256,11 +610,8 @@ class PlayerActivity : AppCompatActivity() {
                 return
             }
         }
-        var fileId   = intent.getIntExtra(EXTRA_FILE_ID, -1)
-        if (multipartParts != null && multipartParts!!.isNotEmpty()) {
-            fileId = multipartParts!![0].fileId
-        }
-        val fileSize = intent.getLongExtra(EXTRA_FILE_SIZE, 0L)
+        val initialFileId = multipartParts?.firstOrNull()?.fileId ?: intent.getIntExtra(EXTRA_FILE_ID, -1)
+        val initialFileSize = intent.getLongExtra(EXTRA_FILE_SIZE, 0L)
         val mimeType = intent.getStringExtra(EXTRA_MIME_TYPE) ?: "video/mp4"
         val title    = intent.getStringExtra(EXTRA_TITLE) ?: ""
         
@@ -275,16 +626,16 @@ class PlayerActivity : AppCompatActivity() {
         storedSevenZipArchive = storedSevenZip
         currentMimeType = mimeType
         currentTitle = title
-        currentFileId = fileId
+        currentFileId = initialFileId
         forceCastStereoSession = false
         getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
             .edit()
-            .putBoolean("force_software_audio", false)
+            .putBoolean("force_software_audio", true)
             .apply()
 
         val attachRequested = intent.getBooleanExtra(EXTRA_ATTACH_ACTIVE_CAST, false)
         if (CastSessionCoordinator.isCastingActive &&
-            (attachRequested || CastSessionCoordinator.isSameActiveMedia(fileId, multipartParts))
+            (attachRequested || CastSessionCoordinator.isSameActiveMedia(initialFileId, multipartParts))
         ) {
             val activeServer = CastSessionCoordinator.activeStreamServer
             val activeMedia = CastSessionCoordinator.activeMedia
@@ -294,202 +645,237 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
 
-        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            try {
-                Log.e(TAG, "Uncaught exception in PlayerActivity: ${throwable.message}", throwable)
-                val extra = mapOf(
-                    "title" to currentTitle,
-                    "fileId" to currentFileId,
-                    "position" to (player?.currentPosition ?: 0L).toString()
-                )
-                com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
-                    context = applicationContext,
-                    reason = "Crash No Controlado: ${throwable.javaClass.simpleName} - ${throwable.message}",
-                    extraInfo = extra,
-                    throwable = throwable
-                )
-                Thread.sleep(1500)
-            } catch (e: Exception) {
-                // ignore
-            }
-            defaultHandler?.uncaughtException(thread, throwable)
-        }
+        installGlobalCrashHandlerOnce(applicationContext)
 
-        Log.i(TAG, "▶ onCreate: fileId=$fileId fileSize=$fileSize mimeType=$mimeType title=$title contentId=$contentId")
-        // Diagnostic: dump ALL TheIntroDB extras
-        val dbgIntroStart = intent.getStringExtra(EXTRA_INTRO_START_MS) ?: "(null)"
-        val dbgIntroEnd   = intent.getStringExtra(EXTRA_INTRO_END_MS)   ?: "(null)"
-        val dbgCreditsMs  = intent.getStringExtra(EXTRA_INTRODB_CREDITS_MS) ?: "(null)"
-        val dbgCreditsStart = intent.getStringExtra(EXTRA_CREDITS_START) ?: "(null)"
-        var resolvedFileSize = fileSize
-        if (fileId <= 0) {
-            val chatId = intent.getLongExtra(EXTRA_CHAT_ID, 0L)
-            val msgId  = intent.getLongExtra(EXTRA_MSG_ID, 0L)
-            if (chatId != 0L && msgId != 0L) {
-                Log.w(TAG, "⚠️ fileId was <= 0, attempting native TDLib resolution for chatId=$chatId, msgId=$msgId...")
-                val resolved = kotlinx.coroutines.runBlocking {
-                    engine.resolveFileIdForMessage(chatId, msgId)
-                }
-                if (resolved != null && resolved.first > 0) {
-                    fileId = resolved.first
-                    currentFileId = fileId
-                    if (resolvedFileSize <= 0 && resolved.second > 0) {
-                        resolvedFileSize = resolved.second
-                    }
-                    Log.i(TAG, "✅ Successfully resolved fileId=$fileId (size=$resolvedFileSize) from TDLib for msgId=$msgId")
-                }
-            }
-        }
+        Log.i(TAG, "▶ onCreate: fileId=$initialFileId fileSize=$initialFileSize mimeType=$mimeType title=$title contentId=$contentId")
+        val chatId = intent.getLongExtra(EXTRA_CHAT_ID, 0L)
+        val msgId  = intent.getLongExtra(EXTRA_MSG_ID, 0L)
+        val useNodeJsProxy = intent.getBooleanExtra("USE_NODEJS_PROXY", false)
 
-        if (fileId <= 0) {
-            Toast.makeText(this, "Error: fileId inválido ($fileId)", Toast.LENGTH_LONG).show()
-            finish()
-            return
-        }
-
-        if (resolvedFileSize <= 0L && multipartParts.isNullOrEmpty()) {
-            val tdSize = kotlinx.coroutines.runBlocking {
-                engine.resolveFileSizeForFileId(fileId)
-            }
-            if (tdSize > 0L) {
-                resolvedFileSize = tdSize
-                Log.i(TAG, "📏 Resolved exact TDLib file size for fileId=$fileId: $resolvedFileSize bytes")
-            }
-        }
-
-        var effectiveFileSize = resolvedFileSize
-        if (effectiveFileSize <= 0) {
-            effectiveFileSize = 2_000_000_000L
-        }
-        currentEffectiveFileSize = multipartParts?.sumOf { it.size }?.takeIf { it > 0 } ?: effectiveFileSize
         introSkipped = false
         nextEpisodeTriggered = false
+        hasRenderedLiveVideoFrame = false
+        mutedPendingInitialLiveSeek = false
+        loadingSpinner.visibility = View.VISIBLE
 
-        val autoContinueCastTarget: CastSessionCoordinator.AutoContinueCastTarget? =
-            if (CastSessionCoordinator.isCastingActive &&
-                !CastSessionCoordinator.isSameActiveMedia(fileId, multipartParts)
-            ) {
-                Log.i(TAG, "🔄 Switching active TV cast to newly selected catalog movie: title=$title fileId=$fileId")
-                CastSessionCoordinator.prepareForMovieReplacement(this, fileId, multipartParts)
-            } else {
-                null
-            }
-
-        val useNodeJsProxy = intent.getBooleanExtra("USE_NODEJS_PROXY", false)
-        var port = 0
-        
-        val intentPlaybackId = intent.getStringExtra("EXTRA_PLAYBACK_ID")
-        val currentPlaybackId = com.cineflix.android.GramJSStreamManager.currentPlaybackId
-        val playbackId = intentPlaybackId ?: currentPlaybackId
-        val isGramJsActive = false // Always use LocalStreamServer (Oliyo native architecture)
-        
-        val localStreamUrl: String
-        if (useNodeJsProxy) {
-            port = 3000
-            localStreamUrl = "http://127.0.0.1:3000/stream"
-            Log.i(TAG, "- Using NodeJS StreamProxyServer on port 3000")
-        } else if (isGramJsActive) {
-            port = 8080 // Dummy port, not used for casting yet for GramJS
-            localStreamUrl = "tdlib://$fileId"
-            Log.i(TAG, "- Using GramJS memory proxy, completely bypassing TDLib background downloads.")
-        } else {
-            // LocalStreamServer (Arquitectura tipo Oliyo):
-            // Servidor HTTP local embebido que atiende peticiones Range bajo demanda de forma limpia.
-            // NO arrancamos StreamProxyServer ni startDownloadReturnPath para evitar colisiones TDLib
-            // (error 200: Canceled by another downloadFile request).
-            val lss = LocalStreamServer(engine)
-            val lssUrl = lss.start(
-                fileId = fileId,
-                totalSize = currentEffectiveFileSize,
-                mimeType = mimeType,
-                multipartParts = multipartParts,
-                storedSevenZip = storedSevenZip,
-                archiveError = { message -> runOnUiThread {
-                    if (!isFinishing && !isDestroyed) {
-                        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                        finish()
-                    }
-                } }
-            )
-            localStreamServer = lss
-            localStreamUrl = lssUrl
-            port = lss.listeningPort
-            Log.i(TAG, "✨ LocalStreamServer iniciado para reproducción: $localStreamUrl en puerto $port")
-            prewarmMatroskaTrackCatalog(lss)
-        }
-        currentPlayUrl = localStreamUrl
-        val wifiIp = LanNetworkUtils.getBestLanIpv4(this)
-        castStreamUrl = if (wifiIp != null && !isGramJsActive && port > 0) "http://$wifiIp:$port/stream/cast.mp4" else null
-        
+        applySpecialPlaybackModesFromIntent(intent, phone, contentId, season, episode, title)
         setupUnifiedCastEngine()
-
-        // 4. Iniciar ExoPlayer
         initExoPlayer()
-
-        // 5. Apply progress and start tracking (or auto-cast onto already-connected TV)
-        val p = jsProgress?.toFloatOrNull()?.toInt() ?: 0
-        if (autoContinueCastTarget != null) {
-            loadingSpinner.visibility = View.VISIBLE
-            startSeekBarUpdater()
-            if (p > 5) {
-                startNewMovieOnConnectedTv(autoContinueCastTarget, p * 1000L)
-            } else if (phone.isNotEmpty() && contentId.isNotEmpty()) {
-                scope.launch {
-                    val savedProgress = try {
-                        fetchSavedProgress(phone, contentId, season, episode)
-                    } catch (_: Exception) {
-                        0
-                    }
-                    withContext(Dispatchers.Main) {
-                        val resumeMs = if (savedProgress > 5) savedProgress * 1000L else 0L
-                        startNewMovieOnConnectedTv(autoContinueCastTarget, resumeMs)
-                    }
-                }
-            } else {
-                startNewMovieOnConnectedTv(autoContinueCastTarget, 0L)
-            }
-        } else if (p > 5) {
-            val resumeMs = p * 1000L
-            pendingResumePositionMs = resumeMs
-            playUrl(localStreamUrl, resumeMs)
-            Toast.makeText(this@PlayerActivity, "Reanudado en ${p/60}m", Toast.LENGTH_SHORT).show()
-        } else if (phone.isNotEmpty() && contentId.isNotEmpty()) {
-            scope.launch {
-                try {
-                    val savedProgress = fetchSavedProgress(phone, contentId, season, episode)
-                    withContext(Dispatchers.Main) {
-                        if (savedProgress > 5) {
-                            val resumeMs = savedProgress * 1000L
-                            pendingResumePositionMs = resumeMs
-                            playUrl(localStreamUrl, resumeMs)
-                            Toast.makeText(this@PlayerActivity, "Reanudado en ${savedProgress/60}m", Toast.LENGTH_SHORT).show()
-                        } else {
-                            playUrl(localStreamUrl, 0L)
-                        }
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) { playUrl(localStreamUrl, 0L) }
-                }
-            }
-        } else {
-            playUrl(localStreamUrl, 0L)
-        }
-
-        ensureLocalProgressTrackingStarted(phone, contentId, season, episode)
-
         showTitle(title)
         scheduleHideControls()
+
+        val initialPartsSnapshot = multipartParts
+        streamStartupJob?.cancel()
+        streamStartupJob = scope.launch {
+            var resolvedParts = initialPartsSnapshot
+            var resolvedFileId = initialFileId
+            var resolvedFileSize = initialFileSize
+
+            if (!resolvedParts.isNullOrEmpty()) {
+                val validated = engine.ensureValidMultipartParts(resolvedParts, chatId)
+                if (validated == null || validated.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        if (!isFinishing && !isDestroyed) {
+                            Toast.makeText(this@PlayerActivity, "Error: no se pudieron resolver las partes del vídeo", Toast.LENGTH_LONG).show()
+                            finish()
+                        }
+                    }
+                    return@launch
+                }
+                resolvedParts = validated
+                resolvedFileId = validated[0].fileId
+            } else {
+                val verified = engine.ensureValidFileId(resolvedFileId, chatId, msgId, resolvedFileSize)
+                if (verified != null && verified.first > 0) {
+                    resolvedFileId = verified.first
+                    if (resolvedFileSize <= 0L && verified.second > 0L) {
+                        resolvedFileSize = verified.second
+                    }
+                }
+                if (resolvedFileId > 0 && resolvedFileSize <= 0L) {
+                    val tdSize = engine.resolveFileSizeForFileId(resolvedFileId)
+                    if (tdSize > 0L) {
+                        resolvedFileSize = tdSize
+                        Log.i(TAG, "📏 Resolved exact TDLib file size for fileId=$resolvedFileId: $resolvedFileSize bytes")
+                    }
+                }
+            }
+
+            if (!isActive) return@launch
+            if (resolvedFileId <= 0) {
+                withContext(Dispatchers.Main) {
+                    if (!isFinishing && !isDestroyed) {
+                        Toast.makeText(this@PlayerActivity, "Error: fileId inválido ($resolvedFileId)", Toast.LENGTH_LONG).show()
+                        finish()
+                    }
+                }
+                return@launch
+            }
+
+            withContext(Dispatchers.Main) {
+                if (!isActive || isFinishing || isDestroyed || isCleanedUp) return@withContext
+
+                multipartParts = resolvedParts
+                currentFileId = resolvedFileId
+                val effectiveFileSize = if (resolvedFileSize > 0L) resolvedFileSize else 2_000_000_000L
+                currentEffectiveFileSize = resolvedParts?.sumOf { it.size }?.takeIf { it > 0L } ?: effectiveFileSize
+
+                val autoContinueCastTarget: CastSessionCoordinator.AutoContinueCastTarget? =
+                    if (CastSessionCoordinator.isCastingActive &&
+                        !CastSessionCoordinator.isSameActiveMedia(resolvedFileId, resolvedParts)
+                    ) {
+                        Log.i(TAG, "🔄 Switching active TV cast to newly selected catalog movie: title=$title fileId=$resolvedFileId")
+                        CastSessionCoordinator.prepareForMovieReplacement(this@PlayerActivity, resolvedFileId, resolvedParts)
+                    } else {
+                        null
+                    }
+
+                val ramBudget = StorageAndRamHygiene.resolvePlayerRamBudget(this@PlayerActivity)
+                val port: Int
+                val localStreamUrl: String
+                var inspectedDurMs = 0L
+                if (useNodeJsProxy) {
+                    port = 3000
+                    localStreamUrl = "http://127.0.0.1:3000/stream"
+                    Log.i(TAG, "- Using NodeJS StreamProxyServer on port 3000")
+                } else {
+                    val lss = LocalStreamServer(engine, localPrefetchBufferBytes = ramBudget.localServerPrefetchBytes)
+                    val lssUrl = lss.start(
+                        fileId = resolvedFileId,
+                        totalSize = currentEffectiveFileSize,
+                        mimeType = mimeType,
+                        multipartParts = resolvedParts,
+                        storedSevenZip = storedSevenZip,
+                        archiveError = { message ->
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed) {
+                                    Toast.makeText(this@PlayerActivity, message, Toast.LENGTH_LONG).show()
+                                    finish()
+                                }
+                            }
+                        }
+                    )
+                    localStreamServer = lss
+                    localStreamUrl = lssUrl
+                    port = lss.listeningPort
+                    Log.i(TAG, "✨ LocalStreamServer iniciado para reproducción: $localStreamUrl en puerto $port (localPrefetch=${ramBudget.localServerPrefetchBytes / 1024}KB)")
+                    inspectedDurMs = withTimeoutOrNull(4_500L) {
+                        withContext(Dispatchers.IO) { lss.inspectInitialDurationMs() }
+                    } ?: 0L
+                    if (!isActive || isFinishing || isDestroyed || isCleanedUp) return@withContext
+                    if (inspectedDurMs > 0L) {
+                        lastKnownLocalDurationMs = inspectedDurMs
+                        CastSessionCoordinator.updateKnownDurationMs(inspectedDurMs)
+                    }
+                    val updatedSz = lss.getEffectiveSizeBytes()
+                    if (updatedSz > currentEffectiveFileSize && resolvedParts.isNullOrEmpty()) {
+                        currentEffectiveFileSize = updatedSz
+                    }
+                    prewarmMatroskaTrackCatalog(lss)
+                }
+                currentPlayUrl = localStreamUrl
+                val wifiIp = LanNetworkUtils.getBestLanIpv4(this@PlayerActivity)
+                castStreamUrl = if (wifiIp != null && port > 0) "http://$wifiIp:$port/stream/cast.mp4" else null
+
+                val p = jsProgress?.toFloatOrNull()?.toInt() ?: 0
+                if (autoContinueCastTarget != null) {
+                    loadingSpinner.visibility = View.VISIBLE
+                    startSeekBarUpdater()
+                    if (p > 5) {
+                        startNewMovieOnConnectedTv(autoContinueCastTarget, p * 1000L)
+                    } else if (!isLiveTvMode && phone.isNotEmpty() && contentId.isNotEmpty()) {
+                        scope.launch {
+                            val savedProgress = try {
+                                fetchSavedProgress(phone, contentId, season, episode)
+                            } catch (_: Exception) {
+                                0
+                            }
+                            withContext(Dispatchers.Main) {
+                                if (!isFinishing && !isDestroyed && !isCleanedUp) {
+                                    val resumeMs = if (savedProgress > 5) savedProgress * 1000L else 0L
+                                    startNewMovieOnConnectedTv(autoContinueCastTarget, resumeMs)
+                                }
+                            }
+                        }
+                    } else {
+                        startNewMovieOnConnectedTv(autoContinueCastTarget, 0L)
+                    }
+                } else if (p > 5) {
+                    var resumeMs = p * 1000L
+                    if (isLiveTvMode && inspectedDurMs >= 300_000L) {
+                        val sqz = liveTvSqueezeController
+                        val effEndMs = sqz?.resolveEffectiveBroadcastEndMs(inspectedDurMs) ?: inspectedDurMs
+                        if (resumeMs >= effEndMs - 3_000L) {
+                            val eofKey = "$liveTvChannelId:$resolvedFileId"
+                            if (lastPastEofAdvanceSlotKey != eofKey) {
+                                lastPastEofAdvanceSlotKey = eofKey
+                                val realDurSec = (inspectedDurMs / 1000L).toInt()
+                                Log.i(TAG, "⏭ Live TV offset ${resumeMs}ms >= effectiveEnd ${effEndMs}ms; reporting real duration (${realDurSec}s) & advancing slot")
+                                com.cineflix.android.util.ErrorLogCollector.log("Player", "Live TV offset ${resumeMs}ms >= ${effEndMs}ms; reporting ${realDurSec}s and advancing")
+                                withTimeoutOrNull(1_800L) {
+                                    withContext(Dispatchers.IO) { sqz?.reportTimingBlockingIo(realDurSec) }
+                                }
+                                if (!isActive || isFinishing || isDestroyed || isCleanedUp) return@withContext
+                                triggerLiveTvNextProgram()
+                                return@withContext
+                            } else {
+                                resumeMs = (resumeMs % inspectedDurMs).coerceIn(0L, (effEndMs - 20_000L).coerceAtLeast(0L))
+                            }
+                        }
+                    }
+                    pendingResumePositionMs = resumeMs
+                    playUrl(localStreamUrl, resumeMs)
+                    if (!isLiveTvMode) {
+                        Toast.makeText(this@PlayerActivity, "Reanudado en ${p / 60}m", Toast.LENGTH_SHORT).show()
+                    }
+                } else if (!isLiveTvMode && phone.isNotEmpty() && contentId.isNotEmpty()) {
+                    scope.launch {
+                        try {
+                            val savedProgress = fetchSavedProgress(phone, contentId, season, episode)
+                            withContext(Dispatchers.Main) {
+                                if (!isFinishing && !isDestroyed && !isCleanedUp) {
+                                    if (savedProgress > 5) {
+                                        val resumeMs = savedProgress * 1000L
+                                        pendingResumePositionMs = resumeMs
+                                        playUrl(localStreamUrl, resumeMs)
+                                        Toast.makeText(this@PlayerActivity, "Reanudado en ${savedProgress / 60}m", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        playUrl(localStreamUrl, 0L)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                if (!isFinishing && !isDestroyed && !isCleanedUp) {
+                                    playUrl(localStreamUrl, 0L)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    playUrl(localStreamUrl, 0L)
+                }
+
+                if (!isLiveTvMode) {
+                    ensureLocalProgressTrackingStarted(phone, contentId, season, episode)
+                }
+            }
+        }
     }
 
     private fun bindViews() {
         playerView = findViewById(R.id.video_surface)
+        rootFrame = playerView.parent as FrameLayout
         tvVideoTitle = findViewById(R.id.tv_video_title)
         tvTimeCurrent = findViewById(R.id.tv_time_current)
         tvTimeDuration = findViewById(R.id.tv_time_duration)
         seekBar = findViewById(R.id.seek_bar)
         bottomBar = findViewById(R.id.bottom_bar)
         centerControls = findViewById(R.id.center_controls)
+        bottomBar.elevation = dpToPx(16).toFloat()
+        bottomBar.translationZ = dpToPx(16).toFloat()
+        centerControls.elevation = dpToPx(16).toFloat()
+        centerControls.translationZ = dpToPx(16).toFloat()
         btnPlayPause = findViewById(R.id.btn_play_pause)
         btnRewind = findViewById(R.id.btn_rewind)
         btnForward = findViewById(R.id.btn_forward)
@@ -497,8 +883,7 @@ class PlayerActivity : AppCompatActivity() {
         btnTracks = findViewById(R.id.btn_tracks)
         btnReportError = findViewById(R.id.btn_report_error)
         loadingSpinner = findViewById(R.id.loading_spinner)
-        castContainer = findViewById(R.id.cast_button_container)
-        btnCastUnified = findViewById(R.id.btn_cast_unified)
+        btnXrayToggle = findViewById(R.id.btn_xray_toggle)
         btnCastBottom = findViewById(R.id.btn_cast_bottom)
         layoutCastStatusCard = findViewById(R.id.layout_cast_status_card)
         tvCastActiveTitle = findViewById(R.id.tv_cast_active_title)
@@ -509,6 +894,41 @@ class PlayerActivity : AppCompatActivity() {
         layoutNextEpisode = findViewById(R.id.layout_next_episode)
         tvNextEpisodeCountdown = findViewById(R.id.tv_next_episode_countdown)
         layoutSkipIntro = findViewById(R.id.layout_skip_intro)
+
+        applyTvIconFocusHighlight(
+            findViewById(R.id.btn_prev),
+            btnRewind,
+            btnPlayPause,
+            btnForward,
+            findViewById(R.id.btn_next),
+            btnCastBottom,
+            btnTracks,
+            btnResize,
+            btnReportError
+        )
+        btnXrayToggle.setOnFocusChangeListener { v, hasFocus ->
+            v.scaleX = if (hasFocus) 1.07f else 1.0f
+            v.scaleY = if (hasFocus) 1.07f else 1.0f
+            scheduleHideControls()
+        }
+    }
+
+    private fun applyTvIconFocusHighlight(vararg views: View?) {
+        for (view in views) {
+            val v = view ?: continue
+            val origBg = v.background
+            val focusRing = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#597C3AED"))
+                setStroke(dpToPx(2), Color.WHITE)
+            }
+            v.setOnFocusChangeListener { target, hasFocus ->
+                target.background = if (hasFocus) focusRing else origBg
+                target.scaleX = if (hasFocus) 1.14f else 1.0f
+                target.scaleY = if (hasFocus) 1.14f else 1.0f
+                scheduleHideControls()
+            }
+        }
     }
 
     private fun setupListeners() {
@@ -517,7 +937,16 @@ class PlayerActivity : AppCompatActivity() {
         btnForward.setOnClickListener { seekRelative(10000); showControls() }
         btnResize.setOnClickListener { toggleResizeMode() }
         btnTracks.setOnClickListener { showTrackSelectorDialog() }
-        btnCastUnified.setOnClickListener { showUnifiedCastDialog() }
+        btnXrayToggle.setOnClickListener {
+            if (isLiveTvMode || isPremiereSyncLocked || isAnyCastActive()) return@setOnClickListener
+            val p = player
+            if (p != null && (p.isPlaying || p.playWhenReady)) {
+                p.pause()
+                btnPlayPause.setImageResource(android.R.drawable.ic_media_play)
+            }
+            showControls()
+            xrayController?.onUserXrayButtonClicked()
+        }
         btnCastBottom.setOnClickListener { showUnifiedCastDialog() }
         btnCastCardCatalog.setOnClickListener { returnToCatalogWhileCasting() }
         btnCastCardSwitch.setOnClickListener { showUnifiedCastDialog() }
@@ -556,8 +985,8 @@ class PlayerActivity : AppCompatActivity() {
         setupFocusAnimation(btnForward)
         setupFocusAnimation(btnResize)
         setupFocusAnimation(btnTracks)
+        setupFocusAnimation(btnXrayToggle)
         setupFocusAnimation(btnCastBottom)
-        setupFocusAnimation(btnCastUnified)
         setupFocusAnimation(btnReportError)
 
         seekBar.setOnFocusChangeListener { v, hasFocus ->
@@ -571,6 +1000,11 @@ class PlayerActivity : AppCompatActivity() {
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
+                if (isLiveSeekLocked()) {
+                    notifyLiveSeekLockedToast()
+                    updateSeekBar()
+                    return
+                }
                 tvTimeCurrent.text = formatTime(progress.toLong())
                 if (!isSeeking) {
                     // Triggered via D-Pad / keyboard navigation while SeekBar has focus
@@ -578,12 +1012,23 @@ class PlayerActivity : AppCompatActivity() {
                 }
             }
             override fun onStartTrackingTouch(bar: SeekBar) {
+                if (isLiveSeekLocked()) {
+                    notifyLiveSeekLockedToast()
+                    return
+                }
                 isSeeking = true
                 seekDebounceHandler.removeCallbacks(seekDebounceRunnable)
                 pendingSeekTargetMs = null
+                notifyXrayPlaybackState()
                 controlsHandler.removeCallbacksAndMessages(null)
             }
             override fun onStopTrackingTouch(bar: SeekBar) {
+                if (isLiveSeekLocked()) {
+                    isSeeking = false
+                    notifyLiveSeekLockedToast()
+                    updateSeekBar()
+                    return
+                }
                 isSeeking = false
                 val target = bar.progress.toLong()
                 seekDebounceHandler.removeCallbacks(seekDebounceRunnable)
@@ -614,6 +1059,7 @@ class PlayerActivity : AppCompatActivity() {
 
         // Skip Intro button
         layoutSkipIntro.setOnClickListener {
+            if (isLiveSeekLocked()) return@setOnClickListener
             val introEndMs = (intent.getStringExtra(EXTRA_INTRO_END_MS) ?: "").toLongOrNull()
             if (introEndMs != null && introEndMs > 0) {
                 introSkipped = true
@@ -650,29 +1096,57 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
+    private fun releaseLocalExoPlayerAndTrimAllocator() {
+        isReleasingOrRecoveringPlayer = true
+        try {
+            val p = player
+            activePlayerListener?.let { listener ->
+                runCatching { p?.removeListener(listener) }
+            }
+            activePlayerListener = null
+            mutedPendingInitialLiveSeek = false
+            playerView.player = null
+            p?.pause()
+            p?.stop()
+            p?.clearMediaItems()
+            p?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "Exception releasing ExoPlayer: ${e.message}")
+        } finally {
+            player = null
+            isReleasingOrRecoveringPlayer = false
+        }
+        try {
+            playerAllocator?.trim()
+        } catch (_: Exception) {}
+        playerAllocator = null
+    }
+
     private fun initExoPlayer() {
-        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-        val forceSoftwareAudio = prefs.getBoolean("force_software_audio", false)
-
-        // FFmpeg via NextLib: MODE_ON = Decodificadores hardware primero para vídeo fluido y HDR;
-        // fallback automático a software si un códec no está soportado.
-        val mode = DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
-
+        if (player != null || playerAllocator != null) {
+            releaseLocalExoPlayerAndTrimAllocator()
+        }
         val renderersFactory = CineflixRenderersFactory(this) {
-            getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE).getBoolean("force_software_audio", false)
+            getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE).getBoolean("force_software_audio", true)
         }
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT)
 
+        val ramBudget = StorageAndRamHygiene.resolvePlayerRamBudget(this)
+        val allocator = DefaultAllocator(/* trimOnReset = */ true, C.DEFAULT_BUFFER_SEGMENT_SIZE)
+        playerAllocator = allocator
+
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setAllocator(allocator)
             .setBufferDurationsMs(
-                25_000, // minBufferMs (25s: memoria controlada para TVs de 1GB RAM)
-                45_000, // maxBufferMs (45s: margen seguro sin saturar Heap de Java a 149MB)
-                3_500,  // bufferForPlaybackMs (3.5s: elimina las 3 pausas del círculo morado al inicio)
-                5_000   // bufferForPlaybackAfterRebufferMs (5s: reanudación sólida si hay microcorte)
+                ramBudget.minBufferMs,
+                ramBudget.maxBufferMs,
+                ramBudget.bufferForPlaybackMs,
+                ramBudget.bufferForPlaybackAfterRebufferMs
             )
-            .setPrioritizeTimeOverSizeThresholds(true)
+            .setTargetBufferBytes(ramBudget.exoTargetBufferBytes)
+            .setPrioritizeTimeOverSizeThresholds(ramBudget.prioritizeTimeOverSizeThresholds)
             .build()
 
         val p = ExoPlayer.Builder(this)
@@ -693,7 +1167,15 @@ class PlayerActivity : AppCompatActivity() {
         playerView.player = player
         playerView.useController = false
 
-        player?.addListener(object : Player.Listener {
+        val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                hasRenderedLiveVideoFrame = true
+                if (mutedPendingInitialLiveSeek && pendingResumePositionMs == null) {
+                    mutedPendingInitialLiveSeek = false
+                    player?.volume = 1f
+                }
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (isAnyCastActive()) return
                 val stateStr = when (playbackState) {
@@ -706,7 +1188,10 @@ class PlayerActivity : AppCompatActivity() {
                 Log.i("StreamPlayback", "state=$stateStr positionMs=${player?.currentPosition} bufferMs=${player?.totalBufferedDuration}")
                 com.cineflix.android.util.ErrorLogCollector.log("Player", "state=$stateStr pos=${player?.currentPosition}ms buf=${player?.totalBufferedDuration}ms")
                 if (playbackState == Player.STATE_BUFFERING) {
-                    loadingSpinner.visibility = View.VISIBLE
+                    if (!isInPipModeCompat()) {
+                        loadingSpinner.visibility = View.VISIBLE
+                    }
+                    notifyXrayPlaybackState()
                 } else {
                     loadingSpinner.visibility = View.GONE
                     if (playbackState == Player.STATE_READY) {
@@ -717,16 +1202,30 @@ class PlayerActivity : AppCompatActivity() {
                             CastSessionCoordinator.updateKnownDurationMs(dur)
                         }
                         tryApplyPendingResumeSeek()
+                        if (isLivePauseLocked() && !isActivityPausedForLifecycle && !isAnyCastActive() &&
+                            player?.playWhenReady == false && !isFinishing && !isDestroyed
+                        ) {
+                            player?.play()
+                        }
+                        xrayController?.prefetchQuietly()
+                        notifyXrayPlaybackState()
                     }
 
                     if (playbackState == Player.STATE_ENDED) {
+                        xrayController?.hideAllImmediate()
                         val dur = player?.duration ?: 0L
                         val pos = player?.currentPosition ?: 0L
-                        // Only auto-trigger next episode if playback actually reached near the end of the video
-                        if (dur > 30_000L && pos >= dur - 15_000L && !nextEpisodeTriggered) {
+                        val reachedNaturalEnd = pos >= 20_000L &&
+                            (dur <= 0L || dur == C.TIME_UNSET || pos >= dur - 90_000L)
+                        // Only auto-trigger next episode/program if playback actually reached near the end of the video
+                        if (!isLiveTvMode && reachedNaturalEnd && !nextEpisodeTriggered) {
                             nextEpisodeTriggered = true
                             com.cineflix.android.util.ErrorLogCollector.log("Player", "Auto next episode triggered at pos=$pos/$dur")
                             triggerNextEpisode()
+                        } else if (isLiveTvMode && reachedNaturalEnd && !nextEpisodeTriggered) {
+                            nextEpisodeTriggered = true
+                            com.cineflix.android.util.ErrorLogCollector.log("Player", "Live TV slot ended at pos=$pos/$dur; chaining next slot")
+                            triggerLiveTvNextProgram()
                         }
                     }
                 }
@@ -741,6 +1240,39 @@ class PlayerActivity : AppCompatActivity() {
                     scheduleHideControls()
                 } else {
                     btnPlayPause.setImageResource(android.R.drawable.ic_media_play)
+                }
+                notifyXrayPlaybackState()
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (isAnyCastActive() || isReleasingOrRecoveringPlayer) return
+                if (!playWhenReady &&
+                    isLivePauseLocked() &&
+                    !isActivityPausedForLifecycle &&
+                    !liveTvAutoAdvancePending &&
+                    !liveTvZapPending &&
+                    (player?.mediaItemCount ?: 0) > 0 &&
+                    reason != Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM &&
+                    !isFinishing &&
+                    !isDestroyed
+                ) {
+                    // Recover silently from transient audio-focus or system MediaSession pauses without emitting
+                    // false-positive "no se puede pausar" toasts (explicit user pauses already toast in togglePlayPause / keydown)
+                    val delayMs = if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS) 220L else 0L
+                    if (delayMs > 0L) {
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            if (!isFinishing && !isDestroyed && !isAnyCastActive() && !isReleasingOrRecoveringPlayer &&
+                                isLivePauseLocked() && !isActivityPausedForLifecycle &&
+                                !liveTvAutoAdvancePending && !liveTvZapPending &&
+                                (player?.mediaItemCount ?: 0) > 0 &&
+                                player?.playWhenReady == false
+                            ) {
+                                player?.play()
+                            }
+                        }, delayMs)
+                    } else {
+                        player?.play()
+                    }
                 }
             }
 
@@ -777,13 +1309,13 @@ class PlayerActivity : AppCompatActivity() {
                 if (isIoError && ioErrorRetryCount < 3) {
                     ioErrorRetryCount++
                     lastIoErrorTimeMs = now
-                    val currentPos = player?.currentPosition ?: 0L
+                    val currentPos = (player?.currentPosition ?: lastKnownLocalPositionMs).coerceAtLeast(0L)
                     Log.w(TAG, "IO error detected ($ioErrorRetryCount/3). Attempting auto-recovery at position ${currentPos}ms...")
                     Toast.makeText(this@PlayerActivity, "Reconectando con el servidor ($ioErrorRetryCount/3)...", Toast.LENGTH_SHORT).show()
                     loadingSpinner.visibility = View.VISIBLE
 
                     Handler(Looper.getMainLooper()).postDelayed({
-                        if (!isFinishing && !isDestroyed) {
+                        if (!isFinishing && !isDestroyed && !isAnyCastActive()) {
                             if (currentPos > 0) {
                                 try {
                                     player?.seekTo(currentPos)
@@ -799,22 +1331,61 @@ class PlayerActivity : AppCompatActivity() {
                     return
                 }
 
-                // Error definitivo o reintentos agotados: Generar y enviar reporte al bot
+                // Auto-recovery for audio/video decoder, parser, or mid-stream seek errors
+                if (!isIoError && decoderErrorRetryCount < 2) {
+                    decoderErrorRetryCount++
+                    val currentPos = (pendingResumePositionMs ?: player?.currentPosition ?: lastKnownLocalPositionMs).coerceAtLeast(0L)
+                    val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+                    val nextSwPref = if (decoderErrorRetryCount == 1) {
+                        !prefs.getBoolean("force_software_audio", true)
+                    } else {
+                        true
+                    }
+                    Log.w(TAG, "Decoder/parser error (${error.errorCodeName}, retry $decoderErrorRetryCount/2, swAudio=$nextSwPref). Recovering at ${currentPos}ms...")
+                    prefs.edit().putBoolean("force_software_audio", nextSwPref).apply()
+                    loadingSpinner.visibility = View.VISIBLE
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (!isFinishing && !isDestroyed && !isAnyCastActive()) {
+                            try {
+                                releaseLocalExoPlayerAndTrimAllocator()
+                                initExoPlayer()
+                                playerView.player = player
+                                val port = localStreamServer?.listeningPort ?: proxyServer?.listeningPort ?: 8080
+                                val url = currentPlayUrl ?: "http://127.0.0.1:$port/stream"
+                                pendingResumePositionMs = currentPos
+                                // On retry 2, prepare from byte 0 so codecs initialize on keyframe 0 before seeking
+                                val prepStartMs = if (decoderErrorRetryCount >= 2) 0L else currentPos
+                                if (prepStartMs == 0L && currentPos > 0L) {
+                                    mutedPendingInitialLiveSeek = true
+                                    player?.volume = 0f
+                                }
+                                playUrl(url, prepStartMs)
+                            } catch (re: Exception) {
+                                Log.e(TAG, "Decoder recovery failed: ${re.message}", re)
+                            }
+                        }
+                    }, 350L)
+                    return
+                }
+
+                // Error definitivo o reintentos agotados: Generar y enviar reporte al bot + servidor HTTPS
                 val currentPos = player?.currentPosition ?: 0L
-                val duration = player?.duration ?: 0L
+                val duration = (player?.duration?.takeIf { it > 0 && it != C.TIME_UNSET } ?: lastKnownLocalDurationMs).coerceAtLeast(0L)
                 val posStr = "${currentPos / 1000 / 60}:${String.format("%02d", (currentPos / 1000) % 60)}"
                 val durStr = "${duration / 1000 / 60}:${String.format("%02d", (duration / 1000) % 60)}"
 
                 val extra = mapOf(
                     "title" to currentTitle,
+                    "liveTv" to "$isLiveTvMode (ch=$liveTvChannelId)",
                     "fileId" to currentFileId,
-                    "position" to "$posStr / $durStr (${currentPos}ms)",
-                    "error" to "${error.errorCodeName}: ${error.message}",
-                    "retryCount" to ioErrorRetryCount,
+                    "fileSize" to currentEffectiveFileSize,
+                    "position" to "$posStr / $durStr (${currentPos}ms, pendingResume=${pendingResumePositionMs ?: 0L}ms)",
+                    "error" to "${error.errorCodeName}: ${error.message} (cause=${error.cause?.javaClass?.simpleName}: ${error.cause?.message})",
+                    "retryCount" to "io=$ioErrorRetryCount, dec=$decoderErrorRetryCount",
                     "url" to (currentPlayUrl ?: "N/A")
                 )
 
-                Toast.makeText(this@PlayerActivity, "Error de reproducción. Enviando log al bot...", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@PlayerActivity, "Error de reproducción (${error.errorCodeName}). Enviando log...", Toast.LENGTH_LONG).show()
                 com.cineflix.android.util.ErrorLogCollector.sendReportToBot(
                     context = applicationContext,
                     reason = "ExoPlayer Error: ${error.errorCodeName} - ${error.message}",
@@ -822,42 +1393,106 @@ class PlayerActivity : AppCompatActivity() {
                     throwable = error
                 ) { success, _ ->
                     Handler(Looper.getMainLooper()).post {
-                        if (success) {
-                            Toast.makeText(applicationContext, "Reporte de error enviado a @videoclubpacobot", Toast.LENGTH_LONG).show()
+                        val msg = if (success) {
+                            "✅ Log de diagnóstico enviado a @videoclubpacobot"
+                        } else {
+                            "📡 Diagnóstico guardado en el servidor de Cineflix"
                         }
+                        Toast.makeText(applicationContext, msg, Toast.LENGTH_LONG).show()
                     }
                 }
                 finish()
             }
-        })
+        }
+        activePlayerListener = listener
+        p.addListener(listener)
     }
     private fun tryApplyPendingResumeSeek() {
         val resumePos = pendingResumePositionMs ?: return
         val p = player ?: return
         if (p.playbackState != Player.STATE_READY && p.playbackState != Player.STATE_BUFFERING) return
+
+        val knownDur = when {
+            p.duration > 60_000L && p.duration != C.TIME_UNSET -> p.duration
+            lastKnownLocalDurationMs > 60_000L -> lastKnownLocalDurationMs
+            else -> 0L
+        }
+        if (isLiveTvMode && knownDur >= 300_000L) {
+            val sqz = liveTvSqueezeController
+            val effEndMs = sqz?.resolveEffectiveBroadcastEndMs(knownDur) ?: knownDur
+            if (resumePos >= effEndMs - 3_000L) {
+                pendingResumePositionMs = null
+                if (mutedPendingInitialLiveSeek) {
+                    mutedPendingInitialLiveSeek = false
+                    p.volume = 1f
+                }
+                val eofKey = "$liveTvChannelId:$currentFileId"
+                if (lastPastEofAdvanceSlotKey != eofKey) {
+                    lastPastEofAdvanceSlotKey = eofKey
+                    val durSec = (knownDur / 1000L).toInt()
+                    Log.i(TAG, "⏭ tryApplyPendingResumeSeek: Live TV resumePos=${resumePos}ms >= effEnd=${effEndMs}ms; reporting & advancing")
+                    scope.launch {
+                        withTimeoutOrNull(1_800L) {
+                            withContext(Dispatchers.IO) { sqz?.reportTimingBlockingIo(durSec) }
+                        }
+                        withContext(Dispatchers.Main) {
+                            if (!isFinishing && !isDestroyed && isLiveTvMode) {
+                                triggerLiveTvNextProgram()
+                            }
+                        }
+                    }
+                    return
+                }
+            }
+        }
+
+        val clampedResumePos = if (knownDur > 10_000L && resumePos >= knownDur - 3_000L) {
+            (knownDur - 5_000L).coerceAtLeast(0L)
+        } else {
+            resumePos
+        }
+
         val current = p.currentPosition.coerceAtLeast(0L)
-        if (kotlin.math.abs(current - resumePos) <= 4000L) {
+        if (kotlin.math.abs(current - clampedResumePos) <= 4000L) {
             pendingResumePositionMs = null
-            Log.i(TAG, "▶ Local player already at resume position ${current}ms (target=${resumePos}ms)")
+            if (mutedPendingInitialLiveSeek) {
+                mutedPendingInitialLiveSeek = false
+                p.volume = 1f
+            }
+            Log.i(TAG, "▶ Local player already at resume position ${current}ms (target=${clampedResumePos}ms)")
             return
         }
         if (p.isCurrentMediaItemSeekable) {
             pendingResumePositionMs = null
-            Log.i(TAG, "▶ Seeking local player to resume position ${resumePos}ms (current=${current}ms)")
-            com.cineflix.android.util.ErrorLogCollector.log("Player", "Resume seek to ${resumePos}ms (current=${current}ms)")
-            p.seekTo(resumePos)
+            Log.i(TAG, "▶ Seeking local player to resume position ${clampedResumePos}ms (current=${current}ms)")
+            com.cineflix.android.util.ErrorLogCollector.log("Player", "Resume seek to ${clampedResumePos}ms (current=${current}ms)")
+            p.seekTo(clampedResumePos)
+            if (mutedPendingInitialLiveSeek) {
+                mutedPendingInitialLiveSeek = false
+                p.volume = 1f
+            }
         } else if (p.playbackState == Player.STATE_READY) {
-            Log.w(TAG, "▶ STATE_READY awaiting seek index for pendingResumePositionMs=${resumePos}ms")
+            Log.w(TAG, "▶ STATE_READY awaiting seek index for pendingResumePositionMs=${clampedResumePos}ms")
         }
     }
 
     private fun playUrl(url: String, startPositionMs: Long = pendingResumePositionMs ?: 0L) {
         currentPlayUrl = url
         loadingSpinner.visibility = View.VISIBLE
-        val safeStartMs = startPositionMs.coerceAtLeast(0L)
-        if (safeStartMs > 0L) {
+        var safeStartMs = startPositionMs.coerceAtLeast(0L)
+        val knownDur = lastKnownLocalDurationMs
+        if (knownDur > 10_000L && safeStartMs >= knownDur - 3_000L) {
+            safeStartMs = (knownDur - 5_000L).coerceAtLeast(0L)
+        }
+
+        val deferSeekUntilDurationKnown = isLiveTvMode && safeStartMs > 0L && knownDur <= 0L
+        if (deferSeekUntilDurationKnown) {
             pendingResumePositionMs = safeStartMs
-        } else {
+            mutedPendingInitialLiveSeek = true
+            player?.volume = 0f
+        } else if (safeStartMs > 0L) {
+            pendingResumePositionMs = safeStartMs
+        } else if (!mutedPendingInitialLiveSeek) {
             pendingResumePositionMs = null
         }
 
@@ -885,7 +1520,7 @@ class PlayerActivity : AppCompatActivity() {
                 .createMediaSource(mediaItem)
         }
 
-        if (safeStartMs > 0L) {
+        if (safeStartMs > 0L && !deferSeekUntilDurationKnown) {
             Log.i(TAG, "▶ Preparing local ExoPlayer directly at startPositionMs=${safeStartMs}ms")
             player?.setMediaSource(mediaSource, safeStartMs)
         } else {
@@ -1189,25 +1824,16 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun syncTrackSelectionToStreamServer() {
-        val prefs = getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
-        val forceStereoCast = if (isAnyCastActive()) {
-            forceCastStereoSession
-        } else {
-            prefs.getBoolean("force_software_audio", false)
-        }
-        val defaultAudioOrd = cachedAudioOptions.firstOrNull { it.isDefault }?.ordinal ?: 0
-        val currentAudioOpt = userSelectedAudioOrdinal?.let { cachedAudioOptions.getOrNull(it) }
-        val isDefaultNativeAudio = userSelectedAudioOrdinal != null &&
-            userSelectedAudioOrdinal == defaultAudioOrd &&
-            currentAudioOpt?.requiresAudioTranscode != true
         val (effSubMode, effSubTrackNum, effSubOrdinal) = resolveEffectiveSubtitleSelection()
+        val effectiveAudioTrackNum = userSelectedAudioTrackNum
+            ?: userSelectedAudioOrdinal?.let { cachedAudioOptions.getOrNull(it)?.matroskaTrackNumber }
         localStreamServer?.updateCastTrackSelection(
-            audioTrackNumber = if (isDefaultNativeAudio) null else userSelectedAudioTrackNum,
-            audioOrdinal = if (isDefaultNativeAudio) null else userSelectedAudioOrdinal,
+            audioTrackNumber = effectiveAudioTrackNum,
+            audioOrdinal = userSelectedAudioOrdinal,
             subtitleMode = effSubMode,
             subtitleTrackNumber = effSubTrackNum,
             subtitleOrdinal = effSubOrdinal,
-            forceStereo = forceStereoCast
+            forceStereo = forceCastStereoSession
         )
         syncCurrentTracksToCoordinator()
     }
@@ -1297,7 +1923,7 @@ class PlayerActivity : AppCompatActivity() {
         var forceSoftware = if (isAnyCastActive()) {
             forceCastStereoSession
         } else {
-            prefs.getBoolean("force_software_audio", false)
+            prefs.getBoolean("force_software_audio", true)
         }
 
         val btnToggleStereo = dialogView.findViewById<LinearLayout>(R.id.btn_toggle_stereo)
@@ -1325,11 +1951,8 @@ class PlayerActivity : AppCompatActivity() {
                 val currentPos = player?.currentPosition ?: 0L
                 val wasPlayingLocal = player?.isPlaying ?: true
 
-                // Desvincular vista del player anterior para proteger el SurfaceView de TV
-                playerView.player = null
-                player?.stop()
-                player?.release()
-                player = null
+                // Desvincular vista del player anterior y recortar su DefaultAllocator antes de recrear
+                releaseLocalExoPlayerAndTrimAllocator()
 
                 initExoPlayer()
                 playerView.player = player
@@ -1337,11 +1960,12 @@ class PlayerActivity : AppCompatActivity() {
                 val port = localStreamServer?.listeningPort ?: proxyServer?.listeningPort ?: 8080
                 val url = currentPlayUrl ?: "http://127.0.0.1:$port/stream"
                 pendingResumePositionMs = currentPos
-                playUrl(url)
+                playUrl(url, currentPos)
 
-                if (!wasPlayingLocal) {
+                if (!wasPlayingLocal && !isLivePauseLocked()) {
                     player?.pause()
                 }
+                dialog.dismiss()
             } else {
                 syncTrackSelectionToStreamServer()
                 dialog.dismiss()
@@ -1415,9 +2039,9 @@ class PlayerActivity : AppCompatActivity() {
                 userSelectedAudioOrdinal = opt.ordinal
                 userSelectedAudioTrackNum = opt.matroskaTrackNumber
                 exoCurrentlySelectedAudioOrdinal = opt.ordinal
-                syncTrackSelectionToStreamServer()
 
                 if (!isAnyCastActive() && p != null) {
+                    syncTrackSelectionToStreamServer()
                     applyStoredTrackOverridesToExoPlayerIfNeeded(p.currentTracks)
                 }
 
@@ -1456,19 +2080,19 @@ class PlayerActivity : AppCompatActivity() {
             userSelectedSubtitleOrdinal = null
             userSelectedSubtitleTrackNum = null
             exoCurrentlySelectedSubtitleOrdinal = null
-            syncTrackSelectionToStreamServer()
 
             if (!isAnyCastActive() && p != null) {
+                syncTrackSelectionToStreamServer()
                 p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
                     .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                     .build()
             }
 
-            if (isAnyCastActive()) {
-                reloadActiveCastForTrackChange("💬 Subtítulos desactivados")
-            } else {
-                Toast.makeText(this@PlayerActivity, "💬 Subtítulos desactivados", Toast.LENGTH_SHORT).show()
+            when {
+                isGoogleCasting -> applyGoogleCastSubtitleChangeInPlace("💬 Subtítulos desactivados")
+                isAnyCastActive() -> reloadActiveCastForTrackChange("💬 Subtítulos desactivados")
+                else -> Toast.makeText(this@PlayerActivity, "💬 Subtítulos desactivados", Toast.LENGTH_SHORT).show()
             }
             dialog.dismiss()
         }
@@ -1497,16 +2121,16 @@ class PlayerActivity : AppCompatActivity() {
                 userSelectedSubtitleOrdinal = opt.ordinal
                 userSelectedSubtitleTrackNum = opt.matroskaTrackNumber
                 exoCurrentlySelectedSubtitleOrdinal = opt.ordinal
-                syncTrackSelectionToStreamServer()
 
                 if (!isAnyCastActive() && p != null) {
+                    syncTrackSelectionToStreamServer()
                     applyStoredTrackOverridesToExoPlayerIfNeeded(p.currentTracks)
                 }
 
-                if (isAnyCastActive()) {
-                    reloadActiveCastForTrackChange("💬 Subtítulos: ${opt.name}")
-                } else {
-                    Toast.makeText(this@PlayerActivity, "💬 Subtítulos: ${opt.name}", Toast.LENGTH_SHORT).show()
+                when {
+                    isGoogleCasting -> applyGoogleCastSubtitleChangeInPlace("💬 Subtítulos: ${opt.name}")
+                    isAnyCastActive() -> reloadActiveCastForTrackChange("💬 Subtítulos: ${opt.name}")
+                    else -> Toast.makeText(this@PlayerActivity, "💬 Subtítulos: ${opt.name}", Toast.LENGTH_SHORT).show()
                 }
                 dialog.dismiss()
             }
@@ -1553,7 +2177,12 @@ class PlayerActivity : AppCompatActivity() {
             lastCastPositionMs = pos
             return pos
         }
-        return player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            return lastKnownLocalPositionMs.coerceAtLeast(0L)
+        }
+        val pos = player?.currentPosition?.coerceAtLeast(0L) ?: lastKnownLocalPositionMs.coerceAtLeast(0L)
+        lastKnownLocalPositionMs = pos
+        return pos
     }
 
     private fun getCurrentEffectiveDurationMs(): Long {
@@ -1568,6 +2197,9 @@ class PlayerActivity : AppCompatActivity() {
                 return castDur
             }
             if (serverDur > 0L) return serverDur
+            return lastKnownLocalDurationMs
+        }
+        if (Looper.myLooper() != Looper.getMainLooper()) {
             return lastKnownLocalDurationMs
         }
         val localDur = player?.duration ?: 0L
@@ -1602,6 +2234,13 @@ class PlayerActivity : AppCompatActivity() {
                 CastSessionCoordinator.notifyGoogleCastSeek(safeTarget)
                 val seekOpts = MediaSeekOptions.Builder().setPosition(safeTarget).build()
                 sessionManager?.currentCastSession?.remoteMediaClient?.seek(seekOpts)
+                localStreamServer?.notifyGoogleCastSeekForSubtitles(safeTarget) { nextSlot ->
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed && isGoogleCasting) {
+                            sessionManager?.currentCastSession?.remoteMediaClient?.setActiveMediaTracks(longArrayOf(nextSlot))
+                        }
+                    }
+                }
             }
             else -> player?.seekTo(safeTarget)
         }
@@ -1609,6 +2248,12 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun togglePlayPause() {
         when {
+            isLivePauseLocked() -> {
+                notifyLivePauseLockedToast()
+                if (!isAnyCastActive() && player?.isPlaying == false && player?.playbackState == Player.STATE_READY) {
+                    player?.play()
+                }
+            }
             isDlnaCasting || isGoogleCasting || CastSessionCoordinator.isCastingActive -> {
                 CastSessionCoordinator.togglePlayPause(this)
             }
@@ -1621,23 +2266,42 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun toggleControls() {
+        if (isInPipModeCompat()) return
         if (controlsVisible) hideControls() else showControls()
     }
 
     private fun showControls() {
+        if (isInPipModeCompat()) return
         val wasHidden = !controlsVisible
         bottomBar.visibility = View.VISIBLE
         bottomBar.animate().alpha(1f).setDuration(200).start()
-        centerControls.visibility = View.VISIBLE
-        centerControls.animate().alpha(1f).setDuration(200).start()
-        castContainer.visibility = View.VISIBLE
-        castContainer.animate().alpha(1f).setDuration(200).start()
-        controlsVisible = true
-        
-        if (wasHidden) {
-            btnPlayPause.post { btnPlayPause.requestFocus() }
+        if (isLivePauseLocked()) {
+            centerControls.animate().cancel()
+            centerControls.visibility = View.GONE
+        } else {
+            centerControls.visibility = View.VISIBLE
+            centerControls.animate().alpha(1f).setDuration(200).start()
         }
-        
+        if (isLiveTvMode) {
+            liveTvTopBar?.let { bar ->
+                bar.visibility = View.VISIBLE
+                bar.animate().alpha(1f).setDuration(200).start()
+            }
+        }
+        controlsVisible = true
+        xrayController?.onControlsVisibilityChanged(true)
+
+        if (wasHidden) {
+            val targetFocus: View = if (isLivePauseLocked()) {
+                btnLiveFicha?.takeIf { it.visibility == View.VISIBLE }
+                    ?: btnLiveChNext
+                    ?: btnTracks
+            } else {
+                btnPlayPause
+            }
+            targetFocus.post { targetFocus.requestFocus() }
+        }
+
         scheduleHideControls()
     }
 
@@ -1647,10 +2311,35 @@ class PlayerActivity : AppCompatActivity() {
         }
         bottomBar.animate().alpha(0f).setDuration(300).withEndAction { bottomBar.visibility = View.GONE }.start()
         centerControls.animate().alpha(0f).setDuration(300).withEndAction { centerControls.visibility = View.GONE }.start()
-        if (!isAnyCastActive()) {
-            castContainer.animate().alpha(0f).setDuration(300).withEndAction { castContainer.visibility = View.GONE }.start()
-        }
+        liveTvTopBar?.animate()?.alpha(0f)?.setDuration(300)?.withEndAction {
+            liveTvTopBar?.visibility = View.GONE
+        }?.start()
         controlsVisible = false
+        xrayController?.onControlsVisibilityChanged(false)
+        if (isLiveTvMode && isTvOrDpadActive() && liveTvSqueezeController?.isSqueezeVisible() == true) {
+            rootFrame.post {
+                if (!controlsVisible) {
+                    liveTvSqueezeController?.focusFirstChannelCardIfAvailable()
+                }
+            }
+        }
+    }
+
+    private fun hideControlsImmediateForPip() {
+        controlsHandler.removeCallbacksAndMessages(null)
+        titleHandler.removeCallbacksAndMessages(null)
+        bottomBar.animate().cancel()
+        centerControls.animate().cancel()
+        tvVideoTitle.animate().cancel()
+        liveTvTopBar?.animate()?.cancel()
+        bottomBar.visibility = View.GONE
+        centerControls.visibility = View.GONE
+        tvVideoTitle.visibility = View.GONE
+        liveTvTopBar?.visibility = View.GONE
+        layoutSkipIntro.visibility = View.GONE
+        layoutNextEpisode.visibility = View.GONE
+        controlsVisible = false
+        xrayController?.onControlsVisibilityChanged(false)
     }
 
     private fun scheduleHideControls() {
@@ -1684,94 +2373,130 @@ class PlayerActivity : AppCompatActivity() {
 
         val time = getCurrentEffectivePositionMs()
         val duration = getCurrentEffectiveDurationMs()
+
+        // Strict live sync enforcement for Saturday 22:00h "El Peliculón"
+        if (isPremiereSyncLocked && liveTvTunedAtEpochMs > 0L && !isAnyCastActive() &&
+            player?.playbackState == Player.STATE_READY
+        ) {
+            val elapsedSec = ((System.currentTimeMillis() - liveTvTunedAtEpochMs).coerceAtLeast(0L)) / 1000L
+            val expectedMs = (liveTvBaseOffsetSec + elapsedSec) * 1000L
+            val withinBounds = duration <= 0L || duration == C.TIME_UNSET || expectedMs < (duration - 5_000L)
+            if (withinBounds && (player?.isCurrentMediaItemSeekable == true)) {
+                val driftMs = kotlin.math.abs(time - expectedMs)
+                val now = System.currentTimeMillis()
+                if (driftMs > 9_500L && now - lastPremiereAutoResyncAtMs > 12_000L) {
+                    lastPremiereAutoResyncAtMs = now
+                    Log.i(TAG, "🔒 El Peliculón auto-resync: pos=${time}ms expected=${expectedMs}ms drift=${driftMs}ms")
+                    player?.seekTo(expectedMs)
+                    if (player?.isPlaying == false) player?.play()
+                }
+            }
+        }
+
+        if (isLiveTvMode && !liveTvAutoAdvancePending && !liveTvZapPending &&
+            pendingResumePositionMs == null && (isAnyCastActive() || player?.playbackState == Player.STATE_READY)
+        ) {
+            val cleanDurMs = if (duration > 0L && duration != C.TIME_UNSET) duration else 0L
+            val shouldCutSynchronized = liveTvSqueezeController?.onPlaybackTick(
+                positionMs = time,
+                durationMs = cleanDurMs,
+                isInPipMode = isInPipModeCompat() || isAnyCastActive()
+            ) == true
+            if (shouldCutSynchronized && !nextEpisodeTriggered) {
+                nextEpisodeTriggered = true
+                Log.i(TAG, "✂️ Synchronized 3-lock Live TV credits cut reached at pos=${time}ms/${cleanDurMs}ms; advancing slot")
+                com.cineflix.android.util.ErrorLogCollector.log("Player", "Live TV 3-lock credits cut at pos=$time/$cleanDurMs")
+                triggerLiveTvNextProgram()
+                return
+            }
+        }
+
         if (duration > 0 && duration != C.TIME_UNSET) {
             seekBar.max = duration.toInt()
             seekBar.progress = time.toInt()
             tvTimeCurrent.text = formatTime(time)
             tvTimeDuration.text = formatTime(duration)
 
-            // Intro and Next Episode check
-            val introStartMs = (intent.getStringExtra(EXTRA_INTRO_START_MS) ?: "").toLongOrNull()
-            val introEndMs   = (intent.getStringExtra(EXTRA_INTRO_END_MS)   ?: "").toLongOrNull()
+            if (!isLiveTvMode && !isPremiereSyncLocked && !isInPipModeCompat()) {
+                // Intro check
+                val introStartMs = (intent.getStringExtra(EXTRA_INTRO_START_MS) ?: "").toLongOrNull()
+                val introEndMs   = (intent.getStringExtra(EXTRA_INTRO_END_MS)   ?: "").toLongOrNull()
 
-            if (!introSkipped && introStartMs != null && introEndMs != null && introEndMs > introStartMs) {
-                val isSeekable = isAnyCastActive() || (player?.isCurrentMediaItemSeekable ?: true)
-                val inIntro = isSeekable && time in introStartMs until introEndMs
-                if (inIntro) {
-                    if (layoutSkipIntro.visibility != View.VISIBLE) {
-                        layoutSkipIntro.visibility = View.VISIBLE
-                        layoutSkipIntro.alpha = 0f
-                        layoutSkipIntro.animate().alpha(1f).setDuration(300).start()
-                        Log.i(TAG, "⏩ SHOWING Skip Intro overlay (time=$time in $introStartMs until $introEndMs)")
-                        // Only steal focus if Next Episode is NOT already visible
-                        if (layoutNextEpisode.visibility != View.VISIBLE) {
-                            layoutSkipIntro.requestFocus()
+                if (!introSkipped && introStartMs != null && introEndMs != null && introEndMs > introStartMs) {
+                    val isSeekable = isAnyCastActive() || (player?.isCurrentMediaItemSeekable ?: true)
+                    val inIntro = isSeekable && time in introStartMs until introEndMs
+                    if (inIntro) {
+                        if (layoutSkipIntro.visibility != View.VISIBLE) {
+                            layoutSkipIntro.visibility = View.VISIBLE
+                            layoutSkipIntro.alpha = 0f
+                            layoutSkipIntro.animate().alpha(1f).setDuration(300).start()
+                            Log.i(TAG, "⏩ SHOWING Skip Intro overlay (time=$time in $introStartMs until $introEndMs)")
+                            if (layoutNextEpisode.visibility != View.VISIBLE) {
+                                layoutSkipIntro.requestFocus()
+                            }
                         }
-                    }
-                } else {
-                    if (layoutSkipIntro.visibility == View.VISIBLE) {
-                        layoutSkipIntro.animate().alpha(0f).setDuration(200).withEndAction {
-                            layoutSkipIntro.visibility = View.GONE
-                        }.start()
-                    }
-                }
-            } else if (introSkipped && layoutSkipIntro.visibility == View.VISIBLE) {
-                layoutSkipIntro.visibility = View.GONE
-            }
-
-            // Intro and Next Episode check
-            val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
-            if (contentId.startsWith("tv_")) {
-                val creditsStartStr = intent.getStringExtra(EXTRA_CREDITS_START) ?: ""
-                val creditsStartSeconds = creditsStartStr.toIntOrNull()
-                // TheIntroDB credits fallback (already in ms)
-                val introDbCreditsMs = (intent.getStringExtra(EXTRA_INTRODB_CREDITS_MS) ?: "").toLongOrNull()
-
-                val shouldShow: Boolean
-                val secondsLeft: Int
-
-                if (creditsStartSeconds != null) {
-                    // Priority 1: Manual credits trigger (value is in seconds)
-                    val creditsStartMs = creditsStartSeconds * 1000L
-                    shouldShow = time >= creditsStartMs
-                    secondsLeft = if (time < duration) ((duration - time) / 1000).toInt() else 0
-                } else if (introDbCreditsMs != null && introDbCreditsMs > 0) {
-                    // Priority 2: TheIntroDB credits (value is in ms)
-                    shouldShow = time >= introDbCreditsMs
-                    secondsLeft = if (time < duration) ((duration - time) / 1000).toInt() else 0
-                } else {
-                    // Fallback: last 30 seconds
-                    val timeLeft = duration - time
-                    shouldShow = timeLeft in 1000..30000
-                    secondsLeft = (timeLeft / 1000).toInt()
-                }
-
-                if (shouldShow) {
-                    if (layoutNextEpisode.visibility != View.VISIBLE) {
-                        layoutNextEpisode.visibility = View.VISIBLE
-                        layoutNextEpisode.alpha = 0f
-                        layoutNextEpisode.animate().alpha(1f).setDuration(300).start()
-                        layoutNextEpisode.requestFocus()
-                        Log.i(TAG, "▶️ SHOWING Next Episode overlay (time=$time, secondsLeft=$secondsLeft)")
-                        // Hide skip intro if next episode appears (avoid visual clash)
+                    } else {
                         if (layoutSkipIntro.visibility == View.VISIBLE) {
-                            layoutSkipIntro.visibility = View.GONE
+                            layoutSkipIntro.animate().alpha(0f).setDuration(200).withEndAction {
+                                layoutSkipIntro.visibility = View.GONE
+                            }.start()
                         }
                     }
-                    tvNextEpisodeCountdown.text = "Siguiente en ${secondsLeft}s"
+                } else if (introSkipped && layoutSkipIntro.visibility == View.VISIBLE) {
+                    layoutSkipIntro.visibility = View.GONE
+                }
 
-                    // Auto-advance if countdown expires or video ends
-                    if (secondsLeft <= 0 && !nextEpisodeTriggered && duration > 30_000L) {
-                        nextEpisodeTriggered = true
-                        Log.i(TAG, "▶️ Next Episode countdown reached 0s, auto-triggering next episode")
-                        triggerNextEpisode()
+                // Next Episode check
+                val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
+                if (contentId.startsWith("tv_")) {
+                    val creditsStartStr = intent.getStringExtra(EXTRA_CREDITS_START) ?: ""
+                    val creditsStartSeconds = creditsStartStr.toIntOrNull()
+                    val introDbCreditsMs = (intent.getStringExtra(EXTRA_INTRODB_CREDITS_MS) ?: "").toLongOrNull()
+
+                    val shouldShow: Boolean
+                    val secondsLeft: Int
+
+                    if (creditsStartSeconds != null && creditsStartSeconds > 0) {
+                        val creditsStartMs = creditsStartSeconds * 1000L
+                        shouldShow = time >= creditsStartMs
+                        secondsLeft = if (time < duration) ((duration - time) / 1000).toInt() else 0
+                    } else if (introDbCreditsMs != null && introDbCreditsMs > 0) {
+                        shouldShow = time >= introDbCreditsMs
+                        secondsLeft = if (time < duration) ((duration - time) / 1000).toInt() else 0
+                    } else {
+                        val timeLeft = duration - time
+                        shouldShow = timeLeft in 1000..30000
+                        secondsLeft = (timeLeft / 1000).toInt()
                     }
-                } else {
-                    if (layoutNextEpisode.visibility == View.VISIBLE) {
-                        layoutNextEpisode.visibility = View.GONE
+
+                    if (shouldShow) {
+                        if (layoutNextEpisode.visibility != View.VISIBLE) {
+                            layoutNextEpisode.visibility = View.VISIBLE
+                            layoutNextEpisode.alpha = 0f
+                            layoutNextEpisode.animate().alpha(1f).setDuration(300).start()
+                            layoutNextEpisode.requestFocus()
+                            Log.i(TAG, "▶️ SHOWING Next Episode overlay (time=$time, secondsLeft=$secondsLeft)")
+                            if (layoutSkipIntro.visibility == View.VISIBLE) {
+                                layoutSkipIntro.visibility = View.GONE
+                            }
+                        }
+                        tvNextEpisodeCountdown.text = "Siguiente en ${secondsLeft}s"
+
+                        if (secondsLeft <= 0 && !nextEpisodeTriggered && duration > 30_000L) {
+                            nextEpisodeTriggered = true
+                            Log.i(TAG, "▶️ Next Episode countdown reached 0s, auto-triggering next episode")
+                            triggerNextEpisode()
+                        }
+                    } else {
+                        if (layoutNextEpisode.visibility == View.VISIBLE) {
+                            layoutNextEpisode.visibility = View.GONE
+                        }
                     }
                 }
             }
+        }
+        if (player?.isPlaying == false || player?.playWhenReady == false) {
+            notifyXrayPlaybackState()
         }
     }
 
@@ -1796,18 +2521,39 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun showTitle(title: String) {
-        if (title.isNotEmpty()) {
-            tvVideoTitle.text = title
-            tvVideoTitle.alpha = 0f
-            tvVideoTitle.visibility = View.VISIBLE
-            tvVideoTitle.animate().alpha(1f).setDuration(400).start()
-            
+        if (isInPipModeCompat()) return
+        val suppressDuplicateRawTitle = isLiveTvMode && title == currentTitle && liveTvProgramDisplayTitle.isNotBlank()
+        if (title.isNotEmpty() || isLiveTvMode) {
+            if (suppressDuplicateRawTitle || title.isEmpty()) {
+                tvVideoTitle.animate().cancel()
+                tvVideoTitle.visibility = View.GONE
+            } else {
+                tvVideoTitle.text = title
+                tvVideoTitle.alpha = 0f
+                tvVideoTitle.visibility = View.VISIBLE
+                tvVideoTitle.animate().alpha(1f).setDuration(400).start()
+            }
+            if (isLiveTvMode) {
+                liveTvTopBar?.let { bar ->
+                    bar.visibility = View.VISIBLE
+                    bar.alpha = 0f
+                    bar.animate().alpha(1f).setDuration(350).start()
+                }
+            }
+
             titleHandler.removeCallbacksAndMessages(null)
             titleHandler.postDelayed({
-                tvVideoTitle.animate().alpha(0f).setDuration(500).withEndAction { 
-                    tvVideoTitle.visibility = View.GONE 
-                }.start()
-            }, 2000)
+                if (tvVideoTitle.visibility == View.VISIBLE) {
+                    tvVideoTitle.animate().alpha(0f).setDuration(500).withEndAction {
+                        tvVideoTitle.visibility = View.GONE
+                    }.start()
+                }
+                if (!controlsVisible) {
+                    liveTvTopBar?.animate()?.alpha(0f)?.setDuration(400)?.withEndAction {
+                        liveTvTopBar?.visibility = View.GONE
+                    }?.start()
+                }
+            }, 3000)
         }
     }
 
@@ -1817,19 +2563,98 @@ class PlayerActivity : AppCompatActivity() {
         val episode = intent.getStringExtra(EXTRA_EPISODE) ?: ""
 
         if (contentId.startsWith("tv_")) {
+            val sNum = season.toIntOrNull() ?: 1
+            val eNum = episode.toIntOrNull() ?: 1
+            MainActivity.deliverNextEpisodeFromPlayer(contentId, sNum, eNum)
             val resultIntent = Intent().apply {
                 putExtra("next_episode", true)
                 putExtra("content_id", contentId)
-                putExtra("season", season.toIntOrNull() ?: 1)
-                putExtra("episode", episode.toIntOrNull() ?: 1)
+                putExtra("season", sNum)
+                putExtra("episode", eNum)
             }
             setResult(RESULT_OK, resultIntent)
         }
         finish()
     }
 
+    private fun triggerLiveTvNextProgram() {
+        if (liveTvAutoAdvancePending) return
+        liveTvSqueezeController?.destroy()
+        liveTvSqueezeController = null
+
+        if (isPremiereSyncLocked || liveTvChannelId.equals("ch_premiere_sabado", ignoreCase = true)) {
+            Log.i(TAG, "🎬 Saturday Premiere finished naturally; stopping Live TV mode and closing player")
+            MainActivity.stopLiveTvFromPlayer(reopenGrid = true)
+            hadLiveTvSession = false
+            isLiveTvMode = false
+            finish()
+            return
+        }
+
+        val dispatched = MainActivity.advanceLiveTvProgramFromPlayer(liveTvChannelId)
+        if (!dispatched) {
+            Log.w(TAG, "Live TV 24/7 auto-advance could not reach WebView; finishing player cleanly")
+            isLiveTvMode = false
+            finish()
+            return
+        }
+
+        liveTvAutoAdvancePending = true
+        Log.i(TAG, "📺 Live TV 24/7 slot ended; advancing seamlessly to next program on channel=$liveTvChannelId (pip=${isInPipModeCompat()})")
+
+        // Immediately reclaim buffers & TDLib disk chunks of the finished episode/movie
+        streamStartupJob?.cancel()
+        streamStartupJob = null
+        seekDebounceHandler.removeCallbacksAndMessages(null)
+        pendingSeekTargetMs = null
+        xrayController?.hideAllImmediate()
+
+        if (!isAnyCastActive()) {
+            val finishedFileId = currentFileId
+            val finishedParts = multipartParts
+            val finishedServer = localStreamServer
+            localStreamServer = null
+            currentFileId = -1
+            multipartParts = null
+
+            try {
+                player?.stop()
+                player?.clearMediaItems()
+                playerAllocator?.trim()
+            } catch (_: Exception) {}
+            try {
+                finishedServer?.stop()
+            } catch (_: Exception) {}
+
+            val idsToRelease = buildSet {
+                if (finishedFileId > 0) add(finishedFileId)
+                finishedParts?.forEach { if (it.fileId > 0) add(it.fileId) }
+            }
+            val engine = TelegramEngine.getInstance(this)
+            engine.purgeAllStreamingCaches(idsToRelease)
+        }
+
+        if (!isInPipModeCompat()) {
+            loadingSpinner.visibility = View.VISIBLE
+            showTitle("📺 Continuando emisión en directo...")
+        } else {
+            loadingSpinner.visibility = View.GONE
+            hideControlsImmediateForPip()
+        }
+
+        backgroundReleaseHandler.removeCallbacks(liveTvAutoAdvanceTimeoutRunnable)
+        backgroundReleaseHandler.postDelayed(liveTvAutoAdvanceTimeoutRunnable, LIVE_TV_AUTO_ADVANCE_TIMEOUT_MS)
+    }
+
+    private fun isLiveSeekLocked(): Boolean = shouldLockSeekForPlayback(isLiveTvMode, isPremiereSyncLocked)
+    private fun isLivePauseLocked(): Boolean = shouldLockPauseForPlayback(isLiveTvMode, isPremiereSyncLocked)
+
     private fun executeOrDebounceSeek(targetMs: Long, debounceMs: Long = 400L) {
         if (!isAnyCastActive() && player == null) return
+        if (isLiveSeekLocked()) {
+            notifyLiveSeekLockedToast()
+            return
+        }
         val duration = getCurrentEffectiveDurationMs()
         val safeTarget = if (duration > 0 && duration != C.TIME_UNSET) {
             Math.max(0L, Math.min(targetMs, duration))
@@ -1838,6 +2663,7 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         pendingSeekTargetMs = safeTarget
+        notifyXrayPlaybackState()
         lastCastPositionMs = safeTarget
         if (isDlnaCasting) {
             CastSessionCoordinator.notifyDlnaSeek(safeTarget)
@@ -1856,6 +2682,10 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun seekRelative(deltaMs: Long) {
         if (!isAnyCastActive() && player == null) return
+        if (isLiveSeekLocked()) {
+            notifyLiveSeekLockedToast()
+            return
+        }
         val duration = getCurrentEffectiveDurationMs()
         val isLiveCast = isDlnaCasting && dlnaController.isCurrentSessionLiveTranscode
         val effectiveDeltaMs = if (isLiveCast && kotlin.math.abs(deltaMs) == 10_000L) {
@@ -1876,54 +2706,951 @@ class PlayerActivity : AppCompatActivity() {
         executeOrDebounceSeek(target, debounceMs = if (isLiveCast) 650L else 400L)
     }
 
+    private fun applySpecialPlaybackModesFromIntent(
+        srcIntent: Intent,
+        phone: String,
+        contentId: String,
+        season: String,
+        episode: String,
+        title: String
+    ) {
+        isLiveTvMode = srcIntent.getBooleanExtra(EXTRA_IS_LIVE_TV, false)
+        liveTvChannelId = srcIntent.getStringExtra(EXTRA_LIVE_TV_CHANNEL_ID).orEmpty().trim()
+        liveTvChannelLabel = srcIntent.getStringExtra(EXTRA_LIVE_TV_CHANNEL_LABEL).orEmpty().trim()
+        liveTvTunedAtEpochMs = srcIntent.getLongExtra(EXTRA_LIVE_TV_TUNED_AT_MS, 0L)
+        liveTvBaseOffsetSec = srcIntent.getLongExtra(EXTRA_LIVE_TV_BASE_OFFSET_SEC, 0L)
+        isPremiereSyncLocked = srcIntent.getBooleanExtra(EXTRA_IS_PREMIERE_LOCKED, false) ||
+            liveTvChannelId.equals("ch_premiere_sabado", ignoreCase = true)
+
+        if (isPremiereSyncLocked) {
+            isLiveTvMode = true
+            if (liveTvTunedAtEpochMs <= 0L) {
+                liveTvTunedAtEpochMs = System.currentTimeMillis()
+            }
+            if (liveTvBaseOffsetSec <= 0L) {
+                liveTvBaseOffsetSec = (srcIntent.getStringExtra(EXTRA_PROGRESS)?.toFloatOrNull()?.toLong() ?: 0L)
+                    .coerceAtLeast(0L)
+            }
+        }
+        hadLiveTvSession = isLiveTvMode
+
+        val explicitType = srcIntent.getStringExtra(EXTRA_XRAY_MEDIA_TYPE).orEmpty().lowercase()
+        val resolvedMediaType = when {
+            explicitType == "tv" || explicitType == "movie" -> explicitType
+            contentId.startsWith("tv_") || season.isNotBlank() -> "tv"
+            else -> "movie"
+        }
+        val cleanLookupId = contentId.removePrefix("tv_").removePrefix("mv_").removePrefix("movie_").trim()
+        val resolvedItemId = srcIntent.getStringExtra(EXTRA_LIVE_TV_ITEM_ID).orEmpty().trim().ifBlank { cleanLookupId }
+        val resolvedTmdbId = srcIntent.getIntExtra(EXTRA_XRAY_TMDB_ID, 0)
+        val explicitCleanTitle = srcIntent.getStringExtra(EXTRA_XRAY_CLEAN_TITLE)?.takeIf { it.isNotBlank() && it != "null" }
+        val resolvedCleanTitle = explicitCleanTitle ?: XrayOverlayController.sanitizeLookupTitle(title)
+        val resolvedYear = srcIntent.getStringExtra(EXTRA_XRAY_YEAR)?.takeIf { it.isNotBlank() && it != "null" }
+            ?: XrayOverlayController.extractYearFromTitle(title)
+        val explicitProgramTitle = srcIntent.getStringExtra(EXTRA_LIVE_TV_PROGRAM_TITLE)?.takeIf { it.isNotBlank() && it != "null" }
+
+        liveTvFichaMediaType = resolvedMediaType
+        liveTvFichaItemId = resolvedItemId
+        liveTvFichaTmdbId = resolvedTmdbId
+        liveTvFichaCleanTitle = resolvedCleanTitle
+        liveTvFichaYear = resolvedYear
+        liveTvFichaPosterPath = srcIntent.getStringExtra(EXTRA_LIVE_TV_POSTER_PATH).orEmpty().trim()
+        liveTvFichaPayload = srcIntent.getStringExtra(EXTRA_LIVE_TV_PAYLOAD).orEmpty().trim()
+        liveTvFichaRawJson = srcIntent.getStringExtra(EXTRA_LIVE_TV_RAW_ITEM_JSON).orEmpty().trim()
+        liveTvProgramDisplayTitle = formatLiveTvProgramDisplayTitle(
+            explicitProgramTitle = explicitProgramTitle,
+            cleanTitle = resolvedCleanTitle,
+            rawTitle = title,
+            year = resolvedYear,
+            mediaType = resolvedMediaType,
+            season = season,
+            episode = episode
+        )
+
+        // Configure Live TV top bar (🔴 EN DIRECTO + channel + content title e.g. Epic Movie (2007) + ℹ Ficha + Ch-/Ch+ + 📋 Guía)
+        val titleLp = tvVideoTitle.layoutParams as? FrameLayout.LayoutParams
+        if (isLiveTvMode) {
+            val bar = ensureLiveTvTopBar()
+            updateLiveTvTopBarUi()
+            if (titleLp != null) {
+                titleLp.topMargin = dpToPx(if (isLiveTvTopBarCompactTwoRow) 114 else 84)
+                tvVideoTitle.layoutParams = titleLp
+            }
+            if (isInPipModeCompat()) {
+                bar.visibility = View.GONE
+            }
+        } else {
+            liveTvTopBar?.visibility = View.GONE
+            if (titleLp != null) {
+                titleLp.topMargin = dpToPx(32)
+                tvVideoTitle.layoutParams = titleLp
+            }
+        }
+
+        // Disable pause / rewind / fast-forward / scrubbing across ALL Live TV broadcasts
+        if (isLiveSeekLocked()) {
+            btnRewind.visibility = View.GONE
+            btnForward.visibility = View.GONE
+            btnPlayPause.visibility = View.GONE
+            btnPlayPause.isFocusable = false
+            btnPlayPause.isClickable = false
+            centerControls.visibility = View.GONE
+            seekBar.isEnabled = false
+            seekBar.isFocusable = false
+            seekBar.isClickable = false
+            seekBar.thumb?.mutate()?.alpha = 0
+            seekBar.alpha = 0.55f
+            layoutSkipIntro.visibility = View.GONE
+            layoutNextEpisode.visibility = View.GONE
+        } else {
+            btnRewind.visibility = View.VISIBLE
+            btnForward.visibility = View.VISIBLE
+            btnPlayPause.visibility = View.VISIBLE
+            btnPlayPause.isFocusable = true
+            btnPlayPause.isClickable = true
+            btnPlayPause.alpha = 1.0f
+            seekBar.isEnabled = true
+            seekBar.isFocusable = true
+            seekBar.isClickable = true
+            seekBar.thumb?.mutate()?.alpha = 255
+            seekBar.alpha = 1.0f
+        }
+
+        // Configure Synchronized Credits Continuity & Pay-TV Squeeze-Back (Live TV only)
+        liveTvSqueezeController?.destroy()
+        liveTvSqueezeController = null
+        if (isLiveTvMode) {
+            val isKids = srcIntent.getBooleanExtra(EXTRA_IS_KIDS_PROFILE, false)
+            val slotDesc = LiveTvSqueezeBackController.LiveSlotDescriptor(
+                channelId = liveTvChannelId,
+                mediaType = resolvedMediaType,
+                itemId = resolvedItemId,
+                tmdbId = resolvedTmdbId,
+                season = season.toIntOrNull() ?: 0,
+                episode = episode.toIntOrNull() ?: 0,
+                isKidsProfile = isKids,
+                isPremiereChannel = isPremiereSyncLocked,
+                manualCreditsStartSec = srcIntent.getStringExtra(EXTRA_CREDITS_START)?.toIntOrNull(),
+                introDbCreditsMs = srcIntent.getStringExtra(EXTRA_INTRODB_CREDITS_MS)?.toLongOrNull(),
+                initialContinuityJson = srcIntent.getStringExtra(EXTRA_LIVE_TV_CONTINUITY_JSON).orEmpty(),
+                initialUpNextJson = srcIntent.getStringExtra(EXTRA_LIVE_TV_UP_NEXT_JSON).orEmpty(),
+                initialOtherChannelsJson = srcIntent.getStringExtra(EXTRA_LIVE_TV_OTHER_CHANNELS_JSON).orEmpty()
+            )
+            liveTvSqueezeController = LiveTvSqueezeBackController(
+                activity = this,
+                rootContainer = rootFrame,
+                videoSurface = playerView,
+                descriptor = slotDesc,
+                onRequestPreloadNext = { chId ->
+                    MainActivity.preloadNextLiveTvProgramFromPlayer(chId)
+                },
+                onZapToChannel = { targetChId ->
+                    triggerLiveTvSpecificChannelZap(targetChId)
+                },
+                onSqueezeVisibilityChanged = { visible ->
+                    if (visible) {
+                        if (controlsVisible) hideControls()
+                        if (tvVideoTitle.visibility == View.VISIBLE) {
+                            titleHandler.removeCallbacksAndMessages(null)
+                            tvVideoTitle.animate().cancel()
+                            tvVideoTitle.visibility = View.GONE
+                        }
+                        if (isTvOrDpadActive()) {
+                            rootFrame.post {
+                                if (!controlsVisible) {
+                                    liveTvSqueezeController?.focusFirstChannelCardIfAvailable()
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+        }
+
+        // Configure Prime-style Native X-Ray on Pause + Bottom-bar Toggle (VOD only; never in Live TV / Premiere)
+        xrayController?.destroy()
+        xrayController = null
+        resetXrayFocusAndToggleUi()
+        if (!isLiveTvMode && !isPremiereSyncLocked) {
+            btnXrayToggle.visibility = View.VISIBLE
+            btnCastBottom.nextFocusLeftId = R.id.btn_xray_toggle
+            seekBar.nextFocusDownId = R.id.btn_xray_toggle
+
+            val isKids = srcIntent.getBooleanExtra(EXTRA_IS_KIDS_PROFILE, false)
+
+            val descriptor = XrayOverlayController.MediaDescriptor(
+                mediaType = resolvedMediaType,
+                id = cleanLookupId,
+                tmdbId = resolvedTmdbId,
+                title = resolvedCleanTitle,
+                year = resolvedYear,
+                season = season.toIntOrNull() ?: 0,
+                episode = episode.toIntOrNull() ?: 0,
+                isCleanCatalogTitle = explicitCleanTitle != null
+            )
+            xrayController = XrayOverlayController(
+                activity = this,
+                rootContainer = rootFrame,
+                mediaDescriptor = descriptor,
+                userPhone = phone,
+                isKidsProfile = isKids,
+                onPanelVisibilityChanged = { visible, anchoredAtTop, firstChip ->
+                    btnXrayToggle.setTextColor(
+                        Color.parseColor(if (visible) "#A7F3D0" else "#FDE68A")
+                    )
+                    if (visible && anchoredAtTop && tvVideoTitle.visibility == View.VISIBLE) {
+                        titleHandler.removeCallbacksAndMessages(null)
+                        tvVideoTitle.animate().cancel()
+                        tvVideoTitle.visibility = View.GONE
+                    }
+                    val chipId = firstChip?.id ?: View.NO_ID
+                    if (visible && chipId != View.NO_ID) {
+                        if (anchoredAtTop) {
+                            btnPlayPause.nextFocusUpId = chipId
+                            btnRewind.nextFocusUpId = chipId
+                            btnForward.nextFocusUpId = chipId
+                            btnPlayPause.nextFocusDownId = R.id.seek_bar
+                            btnRewind.nextFocusDownId = R.id.seek_bar
+                            btnForward.nextFocusDownId = R.id.seek_bar
+                            seekBar.nextFocusUpId = R.id.btn_play_pause
+                        } else {
+                            btnPlayPause.nextFocusUpId = View.NO_ID
+                            btnRewind.nextFocusUpId = View.NO_ID
+                            btnForward.nextFocusUpId = View.NO_ID
+                            btnPlayPause.nextFocusDownId = chipId
+                            btnRewind.nextFocusDownId = chipId
+                            btnForward.nextFocusDownId = chipId
+                            seekBar.nextFocusUpId = chipId
+                        }
+                    } else {
+                        resetCenterAndSeekFocusLinks()
+                    }
+                },
+                onWatchlistMutated = {
+                    MainActivity.notifyWatchlistMutatedFromPlayer()
+                },
+                onOpenCatalogItem = { targetItem ->
+                    MainActivity.deliverOpenCatalogItemFromPlayer(
+                        mediaType = targetItem.mediaType,
+                        itemId = targetItem.id,
+                        tmdbId = targetItem.tmdbId,
+                        title = targetItem.title,
+                        year = targetItem.year,
+                        posterPath = targetItem.posterPath,
+                        payload = targetItem.payload,
+                        rawItemJson = targetItem.rawItemJson
+                    )
+                    val res = Intent().apply {
+                        putExtra("open_catalog_item", true)
+                        putExtra("media_type", targetItem.mediaType)
+                        putExtra("item_id", targetItem.id)
+                        putExtra("tmdb_id", targetItem.tmdbId)
+                        putExtra("title", targetItem.title)
+                        putExtra("year", targetItem.year)
+                        putExtra("poster_path", targetItem.posterPath ?: "")
+                        putExtra("payload", targetItem.payload ?: "")
+                        putExtra("raw_item_json", targetItem.rawItemJson)
+                    }
+                    setResult(RESULT_OK, res)
+                    finish()
+                }
+            )
+            xrayController?.onControlsVisibilityChanged(controlsVisible)
+        } else {
+            btnXrayToggle.visibility = View.GONE
+            btnCastBottom.nextFocusLeftId = View.NO_ID
+            seekBar.nextFocusDownId = R.id.btn_cast_bottom
+        }
+    }
+
+    private fun resetCenterAndSeekFocusLinks() {
+        if (isLiveSeekLocked()) {
+            val topTargetId = btnLiveFicha?.takeIf { it.visibility == View.VISIBLE }?.id
+                ?: btnLiveChNext?.id
+                ?: View.NO_ID
+            val downTargetFromTop = R.id.btn_tracks
+            btnLiveFicha?.nextFocusDownId = downTargetFromTop
+            btnLiveChPrev?.nextFocusDownId = downTargetFromTop
+            btnLiveChNext?.nextFocusDownId = downTargetFromTop
+            btnLiveGuide?.nextFocusDownId = downTargetFromTop
+
+            btnCastBottom.nextFocusUpId = topTargetId
+            btnTracks.nextFocusUpId = topTargetId
+            btnResize.nextFocusUpId = topTargetId
+            btnReportError.nextFocusUpId = topTargetId
+        } else {
+            btnPlayPause.nextFocusUpId = View.NO_ID
+            btnRewind.nextFocusUpId = View.NO_ID
+            btnForward.nextFocusUpId = View.NO_ID
+            btnPlayPause.nextFocusDownId = R.id.seek_bar
+            btnRewind.nextFocusDownId = R.id.seek_bar
+            btnForward.nextFocusDownId = R.id.seek_bar
+            seekBar.nextFocusUpId = R.id.btn_play_pause
+
+            btnCastBottom.nextFocusUpId = R.id.seek_bar
+            btnTracks.nextFocusUpId = R.id.seek_bar
+            btnResize.nextFocusUpId = R.id.seek_bar
+            btnReportError.nextFocusUpId = R.id.seek_bar
+        }
+    }
+
+    private fun resetXrayFocusAndToggleUi() {
+        btnXrayToggle.setTextColor(Color.parseColor("#FDE68A"))
+        resetCenterAndSeekFocusLinks()
+    }
+
+    private fun canOpenCurrentLiveProgramFicha(): Boolean {
+        return liveTvFichaItemId.isNotBlank() ||
+            liveTvFichaTmdbId > 0 ||
+            liveTvFichaCleanTitle.isNotBlank() ||
+            liveTvFichaRawJson.isNotBlank() ||
+            currentTitle.isNotBlank()
+    }
+
+    private fun updateLiveTvTopBarUi() {
+        val chText = liveTvChannelLabel.ifBlank { "Cineflix TV" }
+        tvLiveTvBadgeText?.text = if (isPremiereSyncLocked) {
+            "🔴 EN DIRECTO  •  $chText  •  🔒 Sincronizado"
+        } else {
+            "🔴 EN DIRECTO  •  $chText"
+        }
+        val progText = liveTvProgramDisplayTitle.ifBlank {
+            formatLiveTvProgramDisplayTitle(
+                cleanTitle = liveTvFichaCleanTitle,
+                rawTitle = currentTitle,
+                year = liveTvFichaYear,
+                mediaType = liveTvFichaMediaType
+            )
+        }
+        tvLiveTvProgramTitle?.let { pTv ->
+            pTv.text = progText
+            pTv.visibility = if (progText.isNotBlank()) View.VISIBLE else View.GONE
+        }
+        btnLiveFicha?.let { fichaBtn ->
+            val canOpen = canOpenCurrentLiveProgramFicha()
+            fichaBtn.visibility = if (canOpen) View.VISIBLE else View.GONE
+            if (canOpen) {
+                btnLiveChPrev?.nextFocusLeftId = fichaBtn.id
+                fichaBtn.nextFocusRightId = btnLiveChPrev?.id ?: View.NO_ID
+            } else {
+                btnLiveChPrev?.nextFocusLeftId = View.NO_ID
+            }
+        }
+        resetCenterAndSeekFocusLinks()
+    }
+
+    private fun openCurrentLiveProgramFicha() {
+        if (!canOpenCurrentLiveProgramFicha()) return
+        val fallbackCleanTitle = liveTvFichaCleanTitle.ifBlank {
+            XrayOverlayController.sanitizeLookupTitle(currentTitle).ifBlank { currentTitle.trim() }
+        }
+        val fallbackYear = liveTvFichaYear.ifBlank {
+            XrayOverlayController.extractYearFromTitle(currentTitle)
+        }
+        liveTvAutoAdvancePending = false
+        liveTvZapPending = false
+        backgroundReleaseHandler.removeCallbacks(liveTvAutoAdvanceTimeoutRunnable)
+        backgroundReleaseHandler.removeCallbacks(liveTvZapTimeoutRunnable)
+        liveTvSqueezeController?.destroy()
+        liveTvSqueezeController = null
+        isLiveTvMode = false
+        hadLiveTvSession = false
+        MainActivity.stopLiveTvFromPlayer(reopenGrid = false, onlyIfNotTuning = false)
+
+        MainActivity.deliverOpenCatalogItemFromPlayer(
+            mediaType = liveTvFichaMediaType,
+            itemId = liveTvFichaItemId,
+            tmdbId = liveTvFichaTmdbId,
+            title = fallbackCleanTitle,
+            year = fallbackYear,
+            posterPath = liveTvFichaPosterPath.takeIf { it.isNotBlank() },
+            payload = liveTvFichaPayload.takeIf { it.isNotBlank() },
+            rawItemJson = liveTvFichaRawJson
+        )
+        val res = Intent().apply {
+            putExtra("open_catalog_item", true)
+            putExtra("media_type", liveTvFichaMediaType)
+            putExtra("item_id", liveTvFichaItemId)
+            putExtra("tmdb_id", liveTvFichaTmdbId)
+            putExtra("title", fallbackCleanTitle)
+            putExtra("year", fallbackYear)
+            putExtra("poster_path", liveTvFichaPosterPath)
+            putExtra("payload", liveTvFichaPayload)
+            putExtra("raw_item_json", liveTvFichaRawJson)
+        }
+        setResult(RESULT_OK, res)
+        finish()
+    }
+
+    private fun triggerLiveTvChannelZap(delta: Int) {
+        if (!isLiveTvMode) return
+        val step = if (delta >= 0) 1 else -1
+        liveTvSqueezeController?.restoreFullscreenImmediate()
+        liveTvZapPending = true
+        backgroundReleaseHandler.removeCallbacks(liveTvZapTimeoutRunnable)
+        backgroundReleaseHandler.postDelayed(liveTvZapTimeoutRunnable, 25_000L)
+
+        if (!isInPipModeCompat()) {
+            loadingSpinner.visibility = View.VISIBLE
+            showTitle(if (step >= 0) "📺 Cambiando a Canal +..." else "📺 Cambiando a Canal -...")
+            if (controlsVisible) {
+                scheduleHideControls()
+            }
+        }
+
+        MainActivity.zapLiveTvFromPlayer(step, liveTvChannelId) { target ->
+            if (isFinishing || isDestroyed || !isLiveTvMode) return@zapLiveTvFromPlayer
+            applyResolvedZapTargetToUi(target)
+        }
+    }
+
+    private fun triggerLiveTvSpecificChannelZap(targetChannelId: String) {
+        if (!isLiveTvMode || targetChannelId.isBlank()) return
+        liveTvSqueezeController?.restoreFullscreenImmediate()
+        liveTvZapPending = true
+        backgroundReleaseHandler.removeCallbacks(liveTvZapTimeoutRunnable)
+        backgroundReleaseHandler.postDelayed(liveTvZapTimeoutRunnable, 25_000L)
+
+        if (!isInPipModeCompat()) {
+            loadingSpinner.visibility = View.VISIBLE
+            showTitle("📺 Cambiando de canal...")
+            if (controlsVisible) {
+                scheduleHideControls()
+            }
+        }
+
+        MainActivity.zapToSpecificLiveTvChannelFromPlayer(targetChannelId) { target ->
+            if (isFinishing || isDestroyed || !isLiveTvMode) return@zapToSpecificLiveTvChannelFromPlayer
+            applyResolvedZapTargetToUi(target)
+        }
+    }
+
+    private fun applyResolvedZapTargetToUi(target: MainActivity.Companion.NativeZapTarget) {
+        val updated = applyNativeZapTargetToFichaState(
+            previousChannelId = liveTvChannelId,
+            previousChannelLabel = liveTvChannelLabel,
+            target = target
+        )
+        liveTvChannelId = updated.channelId
+        liveTvChannelLabel = updated.channelLabel
+        isPremiereSyncLocked = updated.isPremiereLocked
+        liveTvFichaItemId = updated.itemId
+        liveTvFichaTmdbId = updated.tmdbId
+        liveTvFichaYear = updated.year
+        liveTvFichaMediaType = updated.mediaType
+        liveTvFichaCleanTitle = updated.cleanTitle
+        liveTvFichaPosterPath = updated.posterPath
+        liveTvFichaPayload = updated.payload
+        liveTvFichaRawJson = updated.rawItemJson
+        liveTvProgramDisplayTitle = updated.programDisplayTitle
+        updateLiveTvTopBarUi()
+        if (!isInPipModeCompat()) {
+            val banner = when {
+                updated.channelLabel.isNotBlank() && liveTvProgramDisplayTitle.isNotBlank() ->
+                    "📺 ${updated.channelLabel} — $liveTvProgramDisplayTitle"
+                liveTvProgramDisplayTitle.isNotBlank() -> "📺 $liveTvProgramDisplayTitle"
+                updated.channelLabel.isNotBlank() -> "📺 ${updated.channelLabel}"
+                else -> ""
+            }
+            if (banner.isNotBlank()) {
+                showTitle(banner)
+            }
+        }
+    }
+
+    private fun ensureLiveTvTopBar(): LinearLayout {
+        liveTvTopBar?.let { return it }
+        val swDp = resources.configuration.screenWidthDp
+        val fontScale = resources.configuration.fontScale
+        val compactTwoRow = !StorageAndRamHygiene.isTelevision(this) &&
+            ((swDp in 1..679) || (fontScale > 1.15f && swDp in 1..779))
+        isLiveTvTopBarCompactTwoRow = compactTwoRow
+
+        val bar = LinearLayout(this).apply {
+            orientation = if (compactTwoRow) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            gravity = if (compactTwoRow) Gravity.START else Gravity.CENTER_VERTICAL
+            isClickable = true
+            elevation = dpToPx(16).toFloat()
+            translationZ = dpToPx(16).toFloat()
+            setPadding(
+                dpToPx(if (compactTwoRow) 12 else 14),
+                dpToPx(if (compactTwoRow) 8 else 9),
+                dpToPx(if (compactTwoRow) 12 else 14),
+                dpToPx(if (compactTwoRow) 8 else 9)
+            )
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dpToPx(14).toFloat()
+                setColor(Color.parseColor("#D90D0E14"))
+                setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+            }
+            visibility = View.GONE
+        }
+
+        val infoColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = if (compactTwoRow) {
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            } else {
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    rightMargin = dpToPx(10)
+                }
+            }
+        }
+
+        val badgeTv = TextView(this).apply {
+            setTextColor(Color.parseColor("#E2E8F0"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compactTwoRow) 11f else 11.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        tvLiveTvBadgeText = badgeTv
+        infoColumn.addView(badgeTv)
+
+        val progTv = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compactTwoRow) 13.5f else 14.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dpToPx(2)
+            }
+        }
+        tvLiveTvProgramTitle = progTv
+        infoColumn.addView(progTv)
+
+        bar.addView(infoColumn)
+
+        fun makeActionChip(
+            label: String,
+            highlighted: Boolean = false,
+            firstInRow: Boolean = false,
+            onClick: () -> Unit
+        ): TextView {
+            return TextView(this).apply {
+                id = View.generateViewId()
+                text = label
+                val normalTextColor = if (highlighted) Color.parseColor("#FEF08A") else Color.WHITE
+                setTextColor(normalTextColor)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (compactTwoRow) 11.5f else 12f)
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                isSingleLine = true
+                isFocusable = true
+                isClickable = true
+                setPadding(
+                    dpToPx(if (compactTwoRow) 9 else 11),
+                    dpToPx(if (compactTwoRow) 5 else 6),
+                    dpToPx(if (compactTwoRow) 9 else 11),
+                    dpToPx(if (compactTwoRow) 5 else 6)
+                )
+                val normalBg = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dpToPx(10).toFloat()
+                    if (highlighted) {
+                        setColor(Color.parseColor("#2EFACC15"))
+                        setStroke(dpToPx(1), Color.parseColor("#88FACC15"))
+                    } else {
+                        setColor(Color.parseColor("#26FFFFFF"))
+                        setStroke(dpToPx(1), Color.parseColor("#40FFFFFF"))
+                    }
+                }
+                val focusBg = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dpToPx(10).toFloat()
+                    setColor(Color.parseColor("#E50914"))
+                    setStroke(dpToPx(2), Color.WHITE)
+                }
+                background = normalBg
+                setOnFocusChangeListener { v, hasFocus ->
+                    v.background = if (hasFocus) focusBg else normalBg
+                    (v as? TextView)?.setTextColor(if (hasFocus) Color.WHITE else normalTextColor)
+                    scheduleHideControls()
+                }
+                setOnClickListener {
+                    scheduleHideControls()
+                    onClick()
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    leftMargin = if (compactTwoRow && firstInRow) 0 else dpToPx(6)
+                }
+            }
+        }
+
+        val fichaChip = makeActionChip("ℹ Ficha", highlighted = true, firstInRow = true) {
+            openCurrentLiveProgramFicha()
+        }
+        val prevChip = makeActionChip("⏮ CH-") {
+            triggerLiveTvChannelZap(-1)
+        }
+        val nextChip = makeActionChip("CH+ ⏭") {
+            triggerLiveTvChannelZap(1)
+        }
+        val guideChip = makeActionChip("📋 Guía") {
+            if (!tryEnterLiveTvPictureInPicture()) {
+                finish()
+            }
+        }
+        fichaChip.nextFocusRightId = prevChip.id
+        prevChip.nextFocusLeftId = fichaChip.id
+        prevChip.nextFocusRightId = nextChip.id
+        nextChip.nextFocusLeftId = prevChip.id
+        nextChip.nextFocusRightId = guideChip.id
+        guideChip.nextFocusLeftId = nextChip.id
+
+        btnLiveFicha = fichaChip
+        btnLiveChPrev = prevChip
+        btnLiveChNext = nextChip
+        btnLiveGuide = guideChip
+
+        if (compactTwoRow) {
+            val actionsRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dpToPx(6)
+                }
+            }
+            actionsRow.addView(fichaChip)
+            actionsRow.addView(prevChip)
+            actionsRow.addView(nextChip)
+            actionsRow.addView(guideChip)
+            bar.addView(actionsRow)
+        } else {
+            bar.addView(fichaChip)
+            bar.addView(prevChip)
+            bar.addView(nextChip)
+            bar.addView(guideChip)
+        }
+
+        val baseSideMargin = dpToPx(if (compactTwoRow) 14 else 20)
+        val baseTopMargin = dpToPx(if (compactTwoRow) 12 else 16)
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.TOP
+            leftMargin = baseSideMargin
+            rightMargin = baseSideMargin
+            topMargin = baseTopMargin
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(bar) { v, insets ->
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            val curLp = v.layoutParams as? FrameLayout.LayoutParams
+            if (curLp != null) {
+                val safeLeft = maxOf(baseSideMargin, cutout.left + dpToPx(10))
+                val safeRight = maxOf(baseSideMargin, cutout.right + dpToPx(10))
+                val safeTop = maxOf(baseTopMargin, cutout.top + dpToPx(6))
+                if (curLp.leftMargin != safeLeft || curLp.rightMargin != safeRight || curLp.topMargin != safeTop) {
+                    curLp.leftMargin = safeLeft
+                    curLp.rightMargin = safeRight
+                    curLp.topMargin = safeTop
+                    v.layoutParams = curLp
+                }
+            }
+            insets
+        }
+        rootFrame.addView(bar, lp)
+        ViewCompat.requestApplyInsets(bar)
+        liveTvTopBar = bar
+        return bar
+    }
+
+    private fun notifyPremiereSyncLockedToast() {
+        val now = System.currentTimeMillis()
+        if (now - lastPremiereLockToastAtMs < 2500L) return
+        lastPremiereLockToastAtMs = now
+        Toast.makeText(
+            this,
+            "🔒 El Peliculón en directo: reproducción sincronizada para todos",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun notifyLiveSeekLockedToast() {
+        if (isPremiereSyncLocked) {
+            notifyPremiereSyncLockedToast()
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastPremiereLockToastAtMs < 2500L) return
+        lastPremiereLockToastAtMs = now
+        Toast.makeText(
+            this,
+            "📺 Emisión en directo: no se puede avanzar ni retroceder",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun notifyLivePauseLockedToast() {
+        if (!isAnyCastActive() && (!hasRenderedLiveVideoFrame || player?.playbackState != Player.STATE_READY)) {
+            return
+        }
+        if (isReleasingOrRecoveringPlayer || isFinishing || isDestroyed) return
+        if (isPremiereSyncLocked) {
+            notifyPremiereSyncLockedToast()
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastPremiereLockToastAtMs < 2500L) return
+        lastPremiereLockToastAtMs = now
+        Toast.makeText(
+            this,
+            "📺 Emisión en directo: no se puede pausar",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun isInPipModeCompat(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode
+    }
+
+    private fun notifyXrayPlaybackState() {
+        val ctrl = xrayController ?: return
+        val p = player
+        val isPlaybackPaused = p != null && !p.playWhenReady &&
+            p.playbackState != Player.STATE_IDLE &&
+            p.playbackState != Player.STATE_ENDED
+        val isPausedReady = isPlaybackPaused &&
+            p.playbackState == Player.STATE_READY && !p.isPlaying
+        val suppress = isLiveTvMode || isPremiereSyncLocked || isAnyCastActive() || isInPipModeCompat() || isSeeking || pendingSeekTargetMs != null
+        ctrl.onPlaybackStateUpdated(
+            isPausedReady = isPausedReady,
+            positionMs = getCurrentEffectivePositionMs(),
+            durationMs = getCurrentEffectiveDurationMs(),
+            suppressAll = suppress,
+            isPlaybackPaused = isPlaybackPaused
+        )
+    }
+
+    private fun tryEnterLiveTvPictureInPicture(): Boolean {
+        if (!isLiveTvMode || isAnyCastActive() || isFinishing || isDestroyed) return false
+        if (isInPipModeCompat()) return true
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
+        return try {
+            liveTvSqueezeController?.restoreFullscreenImmediate()
+            xrayController?.hideAllImmediate()
+            hideControlsImmediateForPip()
+            enteringPipUntilElapsedMs = android.os.SystemClock.elapsedRealtime() + 1500L
+            val params = PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(16, 9))
+                .build()
+            val entered = enterPictureInPictureMode(params)
+            if (!entered) {
+                enteringPipUntilElapsedMs = 0L
+            }
+            entered
+        } catch (e: Throwable) {
+            enteringPipUntilElapsedMs = 0L
+            Log.w(TAG, "Picture-in-Picture unavailable: ${e.message}")
+            false
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (isLiveTvMode && !isAnyCastActive() && !isInPipModeCompat()) {
+            tryEnterLiveTvPictureInPicture()
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode) {
+            enteringPipUntilElapsedMs = 0L
+            isActivityPausedForLifecycle = false
+            backgroundReleaseHandler.removeCallbacks(backgroundIdleReleaseRunnable)
+            loadingSpinner.visibility = View.GONE
+            liveTvSqueezeController?.restoreFullscreenImmediate()
+            xrayController?.hideAllImmediate()
+            hideControlsImmediateForPip()
+            if (isLivePauseLocked() && !isAnyCastActive() && player?.playWhenReady == false) {
+                player?.play()
+            }
+        } else {
+            hideSystemUI()
+            // If user tapped [X] Close on the PiP window, lifecycle is STOPPED/CREATED -> finish cleanly!
+            if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) && !isFinishing) {
+                isLiveTvMode = false
+                finish()
+            } else if (isLiveTvMode) {
+                showTitle(currentTitle)
+            }
+        }
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+            keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+            keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+            keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
+            keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+            keyCode == KeyEvent.KEYCODE_ENTER ||
+            keyCode == KeyEvent.KEYCODE_CHANNEL_UP ||
+            keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN ||
+            keyCode == KeyEvent.KEYCODE_INFO ||
+            keyCode == KeyEvent.KEYCODE_GUIDE
+        ) {
+            hasSeenDpadInput = true
+            xrayController?.notifyDpadActive()
+        }
         if (!isAnyCastActive() && player == null) return super.onKeyDown(keyCode, event)
 
-        if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+        if (isLiveTvMode && !isAnyCastActive()) {
+            if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP || keyCode == KeyEvent.KEYCODE_PAGE_UP) {
+                triggerLiveTvChannelZap(1)
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN || keyCode == KeyEvent.KEYCODE_PAGE_DOWN) {
+                triggerLiveTvChannelZap(-1)
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_GUIDE || keyCode == KeyEvent.KEYCODE_TV_CONTENTS_MENU) {
+                if (!tryEnterLiveTvPictureInPicture()) finish()
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_INFO) {
+                if (!controlsVisible) {
+                    showControls()
+                } else {
+                    openCurrentLiveProgramFicha()
+                }
+                return true
+            }
+        }
+
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+            keyCode == KeyEvent.KEYCODE_SPACE ||
+            (isLivePauseLocked() && keyCode == KeyEvent.KEYCODE_HEADSETHOOK)
+        ) {
             togglePlayPause()
             return true
         }
-        if (keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE || keyCode == KeyEvent.KEYCODE_MEDIA_STOP) {
+            if (isLivePauseLocked()) {
+                notifyLivePauseLockedToast()
+                if (!isAnyCastActive() && player?.isPlaying == false && player?.playbackState == Player.STATE_READY) {
+                    player?.play()
+                }
+                showControls()
+                return true
+            }
+            player?.pause()
+            showControls()
+            return true
+        }
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY) {
+            player?.play()
+            showControls()
+            return true
+        }
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ||
+            keyCode == KeyEvent.KEYCODE_MEDIA_STEP_FORWARD ||
+            (isLiveSeekLocked() && keyCode == KeyEvent.KEYCODE_MEDIA_NEXT)
+        ) {
             seekRelative(10000)
             showControls()
             return true
         }
-        if (keyCode == KeyEvent.KEYCODE_MEDIA_REWIND) {
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_REWIND ||
+            keyCode == KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD ||
+            (isLiveSeekLocked() && keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+        ) {
             seekRelative(-10000)
             showControls()
             return true
         }
 
         if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
-            if (!controlsVisible) {
-                seekRelative(-10000)
+            if (!controlsVisible && liveTvSqueezeController?.isSqueezeVisible() == true) {
+                if (liveTvSqueezeController?.hasSqueezeFocus() == true) {
+                    return super.onKeyDown(keyCode, event)
+                }
+                if (liveTvSqueezeController?.focusFirstChannelCardIfAvailable() == true) return true
+            }
+            if (!controlsVisible && xrayController?.isAnyOverlayVisible() != true) {
+                if (!isLiveSeekLocked()) {
+                    seekRelative(-10000)
+                }
                 showControls()
                 return true
+            }
+            if (!controlsVisible && xrayController?.isAnyOverlayVisible() == true && xrayController?.hasOverlayFocus() != true) {
+                if (xrayController?.focusFirstChipIfAvailable() == true) return true
             }
             scheduleHideControls()
             return super.onKeyDown(keyCode, event)
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
-            if (!controlsVisible) {
-                seekRelative(10000)
+            if (!controlsVisible && liveTvSqueezeController?.isSqueezeVisible() == true) {
+                if (liveTvSqueezeController?.hasSqueezeFocus() == true) {
+                    return super.onKeyDown(keyCode, event)
+                }
+                if (liveTvSqueezeController?.focusFirstChannelCardIfAvailable() == true) return true
+            }
+            if (!controlsVisible && xrayController?.isAnyOverlayVisible() != true) {
+                if (!isLiveSeekLocked()) {
+                    seekRelative(10000)
+                }
                 showControls()
                 return true
+            }
+            if (!controlsVisible && xrayController?.isAnyOverlayVisible() == true && xrayController?.hasOverlayFocus() != true) {
+                if (xrayController?.focusFirstChipIfAvailable() == true) return true
             }
             scheduleHideControls()
             return super.onKeyDown(keyCode, event)
         }
 
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
-            if (!controlsVisible) {
-                togglePlayPause()
-            } else {
-                scheduleHideControls()
+            if (liveTvSqueezeController?.hasSqueezeFocus() == true) {
                 return super.onKeyDown(keyCode, event)
             }
-            return true
+            if (!controlsVisible && liveTvSqueezeController?.isSqueezeVisible() == true) {
+                if (liveTvSqueezeController?.focusFirstChannelCardIfAvailable() == true) return true
+            }
+            if (!controlsVisible && xrayController?.hasOverlayFocus() != true) {
+                if (isLivePauseLocked()) {
+                    showControls()
+                } else {
+                    togglePlayPause()
+                }
+                return true
+            }
+            scheduleHideControls()
+            return super.onKeyDown(keyCode, event)
         }
 
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+            if (!controlsVisible && keyCode == KeyEvent.KEYCODE_DPAD_DOWN &&
+                liveTvSqueezeController?.isSqueezeVisible() == true
+            ) {
+                if (liveTvSqueezeController?.hasSqueezeFocus() != true &&
+                    liveTvSqueezeController?.focusFirstChannelCardIfAvailable() == true
+                ) {
+                    return true
+                }
+            }
             if (!controlsVisible) {
                 showControls()
                 return true
@@ -1933,12 +3660,18 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (xrayController?.onBackPressed() == true) {
+                return true
+            }
             if (isAnyCastActive()) {
                 returnToCatalogWhileCasting()
                 return true
             }
             if (controlsVisible) {
                 hideControls()
+                return true
+            }
+            if (isLiveTvMode && tryEnterLiveTvPictureInPicture()) {
                 return true
             }
             finish()
@@ -1949,7 +3682,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.action == MotionEvent.ACTION_DOWN) {
+        if (event.action == MotionEvent.ACTION_DOWN && !isInPipModeCompat()) {
             toggleControls()
             return true
         }
@@ -1957,22 +3690,37 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     // --- Unified 1-Tap Cast (Google Cast + Native DLNA Smart TVs: Samsung Tizen, LG webOS, etc.) ---
-    private fun setupUnifiedCastEngine() {
-        try {
-            castContext = CastContext.getSharedInstance(this)
-            sessionManager = castContext?.sessionManager
-        } catch (e: Throwable) {
-            Log.w(TAG, "Google Cast SDK unavailable (DLNA Smart TV discovery remains 100% active): ${e.message}")
+    private fun ensureCastDiscoveryInitialized(startScan: Boolean = false) {
+        if (castContext == null && sessionManager == null) {
+            try {
+                castContext = CastContext.getSharedInstance(this)
+                sessionManager = castContext?.sessionManager
+            } catch (e: Throwable) {
+                Log.w(TAG, "Google Cast SDK unavailable (DLNA Smart TV discovery remains 100% active): ${e.message}")
+            }
+            setupCastSessionListener()
         }
+        val discovery = unifiedTvDiscovery ?: UnifiedTvDiscoveryManager(this).also {
+            unifiedTvDiscovery = it
+        }
+        if (startScan) {
+            discovery.startActiveDiscovery(forceRefresh = false)
+        }
+    }
 
-        setupCastSessionListener()
+    private fun setupUnifiedCastEngine() {
         setupDlnaControllerListener()
 
-        // Pre-warm Wi-Fi discovery immediately so all TVs (Android TV + Samsung Tizen + LG webOS)
-        // are already ready in 0ms when the user taps the Cast button!
-        val discovery = UnifiedTvDiscoveryManager(this)
-        unifiedTvDiscovery = discovery
-        discovery.startActiveDiscovery(forceRefresh = false)
+        // Pre-warm Wi-Fi discovery on phones/tablets so TVs are ready in 0ms when tapping Cast;
+        // on Android TV boxes, defer loading Google Play Services Cast Dynamite (~15-22 MB) & MediaRouter
+        // until the user actually taps the Cast button (or re-attaches to an active Cast session).
+        val eagerInit = !StorageAndRamHygiene.isTelevision(this) ||
+            isAnyCastActive() ||
+            CastSessionCoordinator.isCastingActive ||
+            intent.getBooleanExtra(EXTRA_ATTACH_ACTIVE_CAST, false)
+        if (eagerInit) {
+            ensureCastDiscoveryInitialized(startScan = true)
+        }
         updateCastUiIndicators()
     }
 
@@ -2042,6 +3790,8 @@ class PlayerActivity : AppCompatActivity() {
                 isDlnaCasting = false
                 activeCastDeviceId = null
                 activeCastTvName = ""
+                localStreamServer = null
+                castEndedAndSynced = true
                 releaseCastLocks()
                 updateCastUiIndicators()
 
@@ -2122,6 +3872,7 @@ class PlayerActivity : AppCompatActivity() {
                     notifyAttachedPlayerToClose = false
                 )
                 localStreamServer = null
+                castEndedAndSynced = true
                 updateCastUiIndicators()
                 val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
                 if (contentId.startsWith("tv_") && !nextEpisodeTriggered) {
@@ -2139,6 +3890,7 @@ class PlayerActivity : AppCompatActivity() {
                 activeCastDeviceId = null
                 activeCastTvName = ""
                 localStreamServer = null
+                castEndedAndSynced = true
                 finish()
             }
         }
@@ -2260,7 +4012,6 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun loadMediaIntoGoogleCastSession(session: CastSession, startPosMs: Long) {
-        syncTrackSelectionToStreamServer()
         val targetHost = try {
             session.castDevice?.inetAddress?.hostAddress
         } catch (_: Throwable) {
@@ -2268,13 +4019,9 @@ class PlayerActivity : AppCompatActivity() {
         }
         val lanIp = LanNetworkUtils.getBestLanIpv4(this, targetHost)
         val lss = localStreamServer
-        val streamUrl = when {
-            lanIp != null && lss != null && lss.listeningPort > 0 -> lss.resolveLanGoogleCastUrl(lanIp)
-            castStreamUrl != null -> castStreamUrl!!
-            else -> {
-                Toast.makeText(this, "Conéctate a una red Wi-Fi para enviar a la TV", Toast.LENGTH_LONG).show()
-                return
-            }
+        if ((lanIp == null || lss == null || lss.listeningPort <= 0) && castStreamUrl == null) {
+            Toast.makeText(this, "Conéctate a una red Wi-Fi para enviar a la TV", Toast.LENGTH_LONG).show()
+            return
         }
 
         requestNotificationPermissionIfNeeded()
@@ -2314,10 +4061,19 @@ class PlayerActivity : AppCompatActivity() {
         val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE).apply {
             putString(MediaMetadata.KEY_TITLE, currentTitle.ifBlank { "Cineflix" })
         }
-        val durHint = getCurrentEffectiveDurationMs()
         val resumeAtMs = lastCastPositionMs
+        val loadGen = googleCastLoadGeneration.incrementAndGet()
 
         Thread {
+            if (lss != null) {
+                try {
+                    lss.getOrParseMatroskaHeaderInfo()
+                } catch (_: Exception) {}
+            }
+            if (loadGen != googleCastLoadGeneration.get()) return@Thread
+            syncTrackSelectionToStreamServer()
+            // Pre-warm subtitles BEFORE closing the old video socket so Chromecast never auto-reconnects
+            // on the old stream while subtitle cues are being extracted!
             val vttUrl = if (lanIp != null && lss != null) {
                 try {
                     lss.resolveLanGoogleCastSubtitleVttUrl(lanIp, resumeAtMs)
@@ -2327,9 +4083,20 @@ class PlayerActivity : AppCompatActivity() {
             } else {
                 null
             }
+            if (loadGen != googleCastLoadGeneration.get()) return@Thread
+            val streamUrl = when {
+                lanIp != null && lss != null && lss.listeningPort > 0 -> lss.resolveLanGoogleCastUrl(lanIp)
+                else -> castStreamUrl ?: return@Thread
+            }
+            val slotUrls = if (lanIp != null && lss != null && lss.listeningPort > 0) {
+                lss.buildGoogleCastSubtitleTrackSlots(lanIp)
+            } else {
+                emptyList()
+            }
+            val durHint = getCurrentEffectiveDurationMs()
 
             runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (isFinishing || isDestroyed || loadGen != googleCastLoadGeneration.get()) return@runOnUiThread
                 val mediaInfoBuilder = MediaInfo.Builder(streamUrl)
                     .setContentType("video/mp4")
                     .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
@@ -2337,7 +4104,21 @@ class PlayerActivity : AppCompatActivity() {
                 if (durHint > 0L) {
                     mediaInfoBuilder.setStreamDuration(durHint)
                 }
-                if (!vttUrl.isNullOrBlank()) {
+                if (slotUrls.isNotEmpty()) {
+                    val vttTracks = slotUrls.map { (slotId, slotUrl) ->
+                        com.google.android.gms.cast.MediaTrack.Builder(
+                            slotId,
+                            com.google.android.gms.cast.MediaTrack.TYPE_TEXT
+                        )
+                            .setName("Subtítulos")
+                            .setSubtype(com.google.android.gms.cast.MediaTrack.SUBTYPE_SUBTITLES)
+                            .setContentId(slotUrl)
+                            .setContentType("text/vtt")
+                            .setLanguage("es")
+                            .build()
+                    }
+                    mediaInfoBuilder.setMediaTracks(vttTracks)
+                } else if (!vttUrl.isNullOrBlank()) {
                     val vttTrack = com.google.android.gms.cast.MediaTrack.Builder(
                         1L,
                         com.google.android.gms.cast.MediaTrack.TYPE_TEXT
@@ -2369,6 +4150,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun showUnifiedCastDialog() {
+        ensureCastDiscoveryInitialized(startScan = false)
         activeCastDialog?.takeIf { it.isShowing }?.dismiss()
 
         val dialog = android.app.Dialog(this, R.style.Theme_Cineflix_TVDialog)
@@ -2473,6 +4255,9 @@ class PlayerActivity : AppCompatActivity() {
 
         dialog.setOnDismissListener {
             unifiedTvDiscovery?.removeListener(discoveryListener)
+            if (StorageAndRamHygiene.isTelevision(this) && !isAnyCastActive()) {
+                unifiedTvDiscovery?.stopActiveDiscovery()
+            }
             if (activeCastDialog === dialog) {
                 activeCastDialog = null
             }
@@ -2626,6 +4411,43 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     /**
+     * Toggles or switches subtitles on an active Google Cast session in-place using pre-registered
+     * WebVTT `MediaTrack` slots (`1L..24L`) via `RemoteMediaClient.setActiveMediaTracks` —
+     * zero video reload, zero socket drop, and zero audio interruption!
+     */
+    private fun applyGoogleCastSubtitleChangeInPlace(toastLabel: String) {
+        val lss = localStreamServer ?: return
+        val session = sessionManager?.currentCastSession
+        if (session == null || !session.isConnected) {
+            reloadActiveCastForTrackChange(toastLabel)
+            return
+        }
+        val (effSubMode, effSubTrackNum, effSubOrdinal) = resolveEffectiveSubtitleSelection()
+        syncCurrentTracksToCoordinator()
+        val curPosMs = getCurrentEffectivePositionMs()
+        Toast.makeText(this, toastLabel, Toast.LENGTH_SHORT).show()
+
+        lss.updateCastSubtitleSelectionInPlace(
+            subtitleMode = effSubMode,
+            subtitleTrackNumber = effSubTrackNum,
+            subtitleOrdinal = effSubOrdinal,
+            currentPositionMs = curPosMs
+        ) { nextSlot ->
+            runOnUiThread {
+                if (isFinishing || isDestroyed || !isGoogleCasting) return@runOnUiThread
+                val rmc = sessionManager?.currentCastSession?.remoteMediaClient ?: return@runOnUiThread
+                try {
+                    if (nextSlot != null && nextSlot > 0L) {
+                        rmc.setActiveMediaTracks(longArrayOf(nextSlot))
+                    } else {
+                        rmc.setActiveMediaTracks(longArrayOf())
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    /**
      * Reloads the active Smart TV (DLNA or Google Cast) stream at the exact current playback position
      * when the user changes Audio language or Subtitles from the phone during an active cast session.
      */
@@ -2751,11 +4573,13 @@ class PlayerActivity : AppCompatActivity() {
         releaseCastLocks()
         updateCastUiIndicators()
 
-        val phone = intent.getStringExtra(EXTRA_PHONE) ?: ""
-        val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
-        val season = intent.getStringExtra(EXTRA_SEASON) ?: ""
-        val episode = intent.getStringExtra(EXTRA_EPISODE) ?: ""
-        ensureLocalProgressTrackingStarted(phone, contentId, season, episode)
+        if (!isLiveTvMode) {
+            val phone = intent.getStringExtra(EXTRA_PHONE) ?: ""
+            val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
+            val season = intent.getStringExtra(EXTRA_SEASON) ?: ""
+            val episode = intent.getStringExtra(EXTRA_EPISODE) ?: ""
+            ensureLocalProgressTrackingStarted(phone, contentId, season, episode)
+        }
 
         Log.i(TAG, "📱 Resuming playback locally on phone after casting at advanced position ${resumePosMs}ms")
         resumeLocalPlayerAfterCast(resumePosMs)
@@ -2767,20 +4591,18 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     /**
-     * Stops local ExoPlayer decoding & HTTP 127.0.0.1 buffering while casting so the Smart TV
-     * gets 100% of Wi-Fi + TDLib bandwidth and the phone uses minimal battery.
+     * Releases local ExoPlayer decoders & heap buffers while casting so the Smart TV
+     * gets 100% of Wi-Fi + TDLib bandwidth and the device reclaims ~32-64 MB of RAM immediately.
      */
     private fun parkLocalPlayerForCasting(positionMs: Long) {
+        xrayController?.hideAllImmediate()
         player?.currentTracks?.let { snapshotExoTracksCatalog(it) }
         val dur = player?.duration ?: 0L
         if (dur > 0L && dur != C.TIME_UNSET) {
             lastKnownLocalDurationMs = dur
         }
         lastCastPositionMs = positionMs.coerceAtLeast(0L)
-        try {
-            player?.pause()
-            player?.stop()
-        } catch (_: Exception) {}
+        releaseLocalExoPlayerAndTrimAllocator()
     }
 
     private fun resumeLocalPlayerAfterCast(resumePosMs: Long) {
@@ -2789,6 +4611,9 @@ class PlayerActivity : AppCompatActivity() {
             if (it.listeningPort > 0) "http://127.0.0.1:${it.listeningPort}/stream" else null
         } ?: currentPlayUrl ?: return
 
+        if (player == null) {
+            initExoPlayer()
+        }
         val safePos = resumePosMs.coerceAtLeast(0L)
         pendingResumePositionMs = safePos
         playUrl(url, safePos)
@@ -2841,8 +4666,17 @@ class PlayerActivity : AppCompatActivity() {
             lastKnownLocalDurationMs = snap.durationMs
         }
 
+        val reattachIntent = CastSessionCoordinator.buildReopenPlayerIntent(this)
+        setIntent(reattachIntent)
+        applySpecialPlaybackModesFromIntent(
+            srcIntent = reattachIntent,
+            phone = activeMedia.phone,
+            contentId = activeMedia.contentId,
+            season = activeMedia.season,
+            episode = activeMedia.episode,
+            title = currentTitle
+        )
         setupUnifiedCastEngine()
-        initExoPlayer()
 
         loadingSpinner.visibility = if (snap.isConnecting) View.VISIBLE else View.GONE
         layoutCastStatusCard.visibility = View.VISIBLE
@@ -2856,12 +4690,14 @@ class PlayerActivity : AppCompatActivity() {
             if (snap.isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
         )
 
-        ensureLocalProgressTrackingStarted(
-            activeMedia.phone,
-            activeMedia.contentId,
-            activeMedia.season,
-            activeMedia.episode
-        )
+        if (!isLiveTvMode) {
+            ensureLocalProgressTrackingStarted(
+                activeMedia.phone,
+                activeMedia.contentId,
+                activeMedia.season,
+                activeMedia.episode
+            )
+        }
         updateCastUiIndicators()
         updateSeekBar()
         startSeekBarUpdater()
@@ -2886,6 +4722,7 @@ class PlayerActivity : AppCompatActivity() {
                     lastCastPositionMs = safeStart
                     loadMediaIntoGoogleCastSession(currentSession, safeStart)
                 } else {
+                    if (player == null) initExoPlayer()
                     val url = currentPlayUrl ?: return
                     playUrl(url, safeStart)
                 }
@@ -2945,7 +4782,22 @@ class PlayerActivity : AppCompatActivity() {
             introStartMs = intent.getStringExtra(EXTRA_INTRO_START_MS) ?: activeMedia?.introStartMs.orEmpty(),
             introEndMs = intent.getStringExtra(EXTRA_INTRO_END_MS) ?: activeMedia?.introEndMs.orEmpty(),
             introDbCreditsMs = intent.getStringExtra(EXTRA_INTRODB_CREDITS_MS) ?: activeMedia?.introDbCreditsMs.orEmpty(),
-            storedSevenZip = storedSevenZipArchive
+            storedSevenZip = storedSevenZipArchive,
+            isLiveTv = isLiveTvMode,
+            isPremiereLocked = isPremiereSyncLocked,
+            liveTvChannelId = liveTvChannelId,
+            liveTvChannelLabel = liveTvChannelLabel,
+            liveTvProgramTitle = liveTvProgramDisplayTitle,
+            liveTvItemId = liveTvFichaItemId,
+            liveTvTmdbId = liveTvFichaTmdbId,
+            liveTvYear = liveTvFichaYear,
+            liveTvMediaType = liveTvFichaMediaType,
+            liveTvCleanTitle = liveTvFichaCleanTitle,
+            liveTvPosterPath = liveTvFichaPosterPath,
+            liveTvPayload = liveTvFichaPayload,
+            liveTvRawItemJson = liveTvFichaRawJson,
+            liveTvTunedAtMs = liveTvTunedAtEpochMs,
+            liveTvBaseOffsetSec = liveTvBaseOffsetSec
         )
     }
 
@@ -2973,29 +4825,298 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onNewIntent(newIntent: Intent) {
         super.onNewIntent(newIntent)
+        if (newIntent.getBooleanExtra(EXTRA_EXPAND_EXISTING_PIP, false)) {
+            if (!isInPipModeCompat()) {
+                showTitle(currentTitle)
+                showControls()
+            }
+            updateSeekBar()
+            return
+        }
         val attachOnly = newIntent.getBooleanExtra(EXTRA_ATTACH_ACTIVE_CAST, false)
         val newFileId = newIntent.getIntExtra(EXTRA_FILE_ID, -1)
-        if (attachOnly || (newFileId > 0 && newFileId == currentFileId)) {
-            showControls()
+        val sameMultipart = newIntent.getStringExtra(EXTRA_MULTIPART_JSON).orEmpty() ==
+            intent.getStringExtra(EXTRA_MULTIPART_JSON).orEmpty()
+        val sameLiveMode = newIntent.getBooleanExtra(EXTRA_IS_LIVE_TV, false) == isLiveTvMode
+        val sameLiveChannel = newIntent.getStringExtra(EXTRA_LIVE_TV_CHANNEL_ID).orEmpty() == liveTvChannelId
+        if (shouldIgnoreDuplicateNewIntent(
+                attachOnly = attachOnly,
+                newFileId = newFileId,
+                currentFileId = currentFileId,
+                sameMultipart = sameMultipart,
+                sameLiveMode = sameLiveMode,
+                sameLiveChannel = sameLiveChannel,
+                releasedWhileBackgrounded = releasedWhileBackgrounded,
+                liveTvAutoAdvancePending = liveTvAutoAdvancePending,
+                liveTvZapPending = liveTvZapPending
+            )
+        ) {
+            if (!isInPipModeCompat()) {
+                showControls()
+            }
             updateSeekBar()
             return
         }
         if (isAnyCastActive()) {
+            liveTvAutoAdvancePending = false
+            liveTvZapPending = false
+            backgroundReleaseHandler.removeCallbacks(liveTvAutoAdvanceTimeoutRunnable)
+            backgroundReleaseHandler.removeCallbacks(liveTvZapTimeoutRunnable)
             isDetachingKeepCastAlive = true
+            setIntent(newIntent)
+            recreate()
+            return
         }
+        switchStreamInPlace(newIntent)
+    }
+
+    private fun switchStreamInPlace(newIntent: Intent) {
+        liveTvAutoAdvancePending = false
+        liveTvZapPending = false
+        castEndedAndSynced = false
+        val wasLiveTvSession = hadLiveTvSession
+        backgroundReleaseHandler.removeCallbacks(liveTvAutoAdvanceTimeoutRunnable)
+        backgroundReleaseHandler.removeCallbacks(liveTvZapTimeoutRunnable)
+        val engine = TelegramEngine.getInstance(this)
+        var newParts: List<FilePart>? = null
+        var newStored7z = false
+        val mpJson = newIntent.getStringExtra(EXTRA_MULTIPART_JSON)
+        if (!mpJson.isNullOrEmpty()) {
+            try {
+                val arr = org.json.JSONArray(mpJson)
+                val parsed = mutableListOf<FilePart>()
+                var sum = 0L
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val archive = obj.optString("archive", "")
+                    require(archive == "" || archive == "7z-copy")
+                    if (i == 0) newStored7z = archive == "7z-copy"
+                    require(newStored7z == (archive == "7z-copy"))
+                    val pid = obj.optInt("fileId", 0)
+                    val psz = obj.getLong("size")
+                    val pMsgId = obj.optLong("msgId", 0L)
+                    require((pid > 0 || pMsgId != 0L) && psz > 0 && psz <= Long.MAX_VALUE - sum)
+                    sum += psz
+                    parsed.add(FilePart(pid, psz, pMsgId))
+                }
+                if (parsed.isNotEmpty()) newParts = parsed
+            } catch (e: Exception) {
+                Log.e(TAG, "switchStreamInPlace multipart parse error", e)
+                return
+            }
+        }
+
+        val initialNextFileId = newParts?.firstOrNull()?.fileId ?: newIntent.getIntExtra(EXTRA_FILE_ID, -1)
+        val initialNextFileSize = newIntent.getLongExtra(EXTRA_FILE_SIZE, 0L)
+        val chatId = newIntent.getLongExtra(EXTRA_CHAT_ID, 0L)
+        val msgId = newIntent.getLongExtra(EXTRA_MSG_ID, 0L)
+
+        // Cancel any previous in-flight resolution & tear down previous stream immediately
+        streamStartupJob?.cancel()
+        val prevFileId = currentFileId
+        val prevParts = multipartParts
+        val prevServer = localStreamServer
+        localStreamServer = null
+
+        seekDebounceHandler.removeCallbacksAndMessages(null)
+        pendingSeekTargetMs = null
+        try {
+            player?.stop()
+            player?.clearMediaItems()
+            playerAllocator?.trim()
+        } catch (_: Exception) {}
+        try { prevServer?.stop() } catch (_: Exception) {}
+
+        val prevIdsToPurge = mutableSetOf<Int>()
+        if (prevFileId > 0 && prevFileId != initialNextFileId) {
+            prevIdsToPurge.add(prevFileId)
+        }
+        prevParts?.forEach { part ->
+            if (newParts?.any { it.fileId == part.fileId } != true && part.fileId != initialNextFileId && part.fileId > 0) {
+                prevIdsToPurge.add(part.fileId)
+            }
+        }
+        if (prevIdsToPurge.isNotEmpty()) {
+            engine.releaseSpecificVideoFiles(prevIdsToPurge)
+        }
+
+        // Reset per-item state
+        cachedAudioOptions = emptyList()
+        cachedSubtitleOptions = emptyList()
+        exoCurrentlySelectedAudioOrdinal = null
+        exoCurrentlySelectedSubtitleOrdinal = null
+        userSelectedAudioOrdinal = null
+        userSelectedAudioTrackNum = null
+        userSubtitleMode = MatroskaEbmlTrackPatcher.SubtitlePatchMode.DISABLE_ALL
+        userSelectedSubtitleOrdinal = null
+        userSelectedSubtitleTrackNum = null
+        lastKnownLocalPositionMs = 0L
+        lastKnownLocalDurationMs = 0L
+        introSkipped = false
+        nextEpisodeTriggered = false
+        hasRenderedLiveVideoFrame = false
+        mutedPendingInitialLiveSeek = false
+        releasedWhileBackgrounded = false
+        ioErrorRetryCount = 0
+        decoderErrorRetryCount = 0
+
         setIntent(newIntent)
-        recreate()
+        multipartParts = newParts
+        storedSevenZipArchive = newStored7z
+        currentFileId = initialNextFileId
+        currentMimeType = newIntent.getStringExtra(EXTRA_MIME_TYPE) ?: "video/mp4"
+        currentTitle = newIntent.getStringExtra(EXTRA_TITLE) ?: ""
+
+        val phone = newIntent.getStringExtra(EXTRA_PHONE) ?: ""
+        val contentId = newIntent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
+        val season = newIntent.getStringExtra(EXTRA_SEASON) ?: ""
+        val episode = newIntent.getStringExtra(EXTRA_EPISODE) ?: ""
+        applySpecialPlaybackModesFromIntent(newIntent, phone, contentId, season, episode, currentTitle)
+        if (wasLiveTvSession && !isLiveTvMode) {
+            com.cineflix.android.MainActivity.stopLiveTvFromPlayer(reopenGrid = false, onlyIfNotTuning = true)
+        }
+
+        if (!isInPipModeCompat()) {
+            loadingSpinner.visibility = View.VISIBLE
+            showTitle(currentTitle)
+            scheduleHideControls()
+        } else {
+            loadingSpinner.visibility = View.GONE
+            hideControlsImmediateForPip()
+        }
+
+        val initialPartsSnapshot = newParts
+        streamStartupJob = scope.launch {
+            var resolvedParts = initialPartsSnapshot
+            var nextFileId = initialNextFileId
+            var nextFileSize = initialNextFileSize
+
+            if (!resolvedParts.isNullOrEmpty()) {
+                val validated = engine.ensureValidMultipartParts(resolvedParts, chatId)
+                if (validated == null || validated.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        if (!isFinishing && !isDestroyed) {
+                            Toast.makeText(this@PlayerActivity, "Error: no se pudieron resolver las partes del vídeo", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    return@launch
+                }
+                resolvedParts = validated
+                nextFileId = validated[0].fileId
+            } else {
+                val verified = engine.ensureValidFileId(nextFileId, chatId, msgId, nextFileSize)
+                if (verified != null && verified.first > 0) {
+                    nextFileId = verified.first
+                    if (nextFileSize <= 0L && verified.second > 0L) {
+                        nextFileSize = verified.second
+                    }
+                }
+                if (nextFileId > 0 && nextFileSize <= 0L) {
+                    val tdSize = engine.resolveFileSizeForFileId(nextFileId)
+                    if (tdSize > 0L) nextFileSize = tdSize
+                }
+            }
+
+            if (!isActive) return@launch
+            if (nextFileId <= 0) {
+                withContext(Dispatchers.Main) {
+                    if (!isFinishing && !isDestroyed) {
+                        Toast.makeText(this@PlayerActivity, "Error: fileId inválido ($nextFileId)", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                return@launch
+            }
+
+            withContext(Dispatchers.Main) {
+                if (!isActive || isFinishing || isDestroyed || isCleanedUp) return@withContext
+
+                multipartParts = resolvedParts
+                currentFileId = nextFileId
+                val effSize = if (nextFileSize > 0L) nextFileSize else 2_000_000_000L
+                currentEffectiveFileSize = resolvedParts?.sumOf { it.size }?.takeIf { it > 0L } ?: effSize
+
+                val ramBudget = StorageAndRamHygiene.resolvePlayerRamBudget(this@PlayerActivity)
+                val lss = LocalStreamServer(engine, localPrefetchBufferBytes = ramBudget.localServerPrefetchBytes)
+                val lssUrl = lss.start(
+                    fileId = nextFileId,
+                    totalSize = currentEffectiveFileSize,
+                    mimeType = currentMimeType,
+                    multipartParts = multipartParts,
+                    storedSevenZip = storedSevenZipArchive,
+                    archiveError = { message ->
+                        runOnUiThread {
+                            if (!isFinishing && !isDestroyed) {
+                                Toast.makeText(this@PlayerActivity, message, Toast.LENGTH_LONG).show()
+                                finish()
+                            }
+                        }
+                    }
+                )
+                localStreamServer = lss
+                currentPlayUrl = lssUrl
+                val wifiIp = LanNetworkUtils.getBestLanIpv4(this@PlayerActivity)
+                castStreamUrl = if (wifiIp != null && lss.listeningPort > 0) {
+                    "http://$wifiIp:${lss.listeningPort}/stream/cast.mp4"
+                } else {
+                    null
+                }
+                val inspectedDurMs = withTimeoutOrNull(4_500L) {
+                    withContext(Dispatchers.IO) { lss.inspectInitialDurationMs() }
+                } ?: 0L
+                if (!isActive || isFinishing || isDestroyed || isCleanedUp) return@withContext
+                if (inspectedDurMs > 0L) {
+                    lastKnownLocalDurationMs = inspectedDurMs
+                    CastSessionCoordinator.updateKnownDurationMs(inspectedDurMs)
+                }
+                val updatedSz = lss.getEffectiveSizeBytes()
+                if (updatedSz > currentEffectiveFileSize && multipartParts.isNullOrEmpty()) {
+                    currentEffectiveFileSize = updatedSz
+                }
+                prewarmMatroskaTrackCatalog(lss)
+
+                if (player == null) {
+                    initExoPlayer()
+                }
+
+                val startSec = newIntent.getStringExtra(EXTRA_PROGRESS)?.toFloatOrNull()?.toInt() ?: 0
+                var startMs = if (startSec > 2) startSec * 1000L else 0L
+                if (isLiveTvMode && startMs > 0L && inspectedDurMs >= 300_000L) {
+                    val sqz = liveTvSqueezeController
+                    val effEndMs = sqz?.resolveEffectiveBroadcastEndMs(inspectedDurMs) ?: inspectedDurMs
+                    if (startMs >= effEndMs - 3_000L) {
+                        val eofKey = "$liveTvChannelId:$nextFileId"
+                        if (lastPastEofAdvanceSlotKey != eofKey) {
+                            lastPastEofAdvanceSlotKey = eofKey
+                            val realDurSec = (inspectedDurMs / 1000L).toInt()
+                            withTimeoutOrNull(1_800L) {
+                                withContext(Dispatchers.IO) { sqz?.reportTimingBlockingIo(realDurSec) }
+                            }
+                            if (!isActive || isFinishing || isDestroyed || isCleanedUp) return@withContext
+                            triggerLiveTvNextProgram()
+                            return@withContext
+                        } else {
+                            startMs = (startMs % inspectedDurMs).coerceIn(0L, (effEndMs - 20_000L).coerceAtLeast(0L))
+                        }
+                    }
+                }
+                playUrl(lssUrl, startMs)
+                if (!isLiveTvMode) {
+                    ensureLocalProgressTrackingStarted(phone, contentId, season, episode)
+                }
+                if (isInPipModeCompat()) {
+                    loadingSpinner.visibility = View.GONE
+                    hideControlsImmediateForPip()
+                }
+            }
+        }
     }
 
     private fun updateCastUiIndicators() {
         val active = isAnyCastActive()
         val iconRes = if (active) R.drawable.ic_cast_tv_connected else R.drawable.ic_cast_tv
-        btnCastUnified.setImageResource(iconRes)
         btnCastBottom.setImageResource(iconRes)
         if (active) {
             layoutCastStatusCard.visibility = View.VISIBLE
-            castContainer.visibility = View.VISIBLE
-            castContainer.alpha = 1f
         } else {
             layoutCastStatusCard.visibility = View.GONE
         }
@@ -3054,10 +5175,150 @@ class PlayerActivity : AppCompatActivity() {
     // --- Lifecycle & Progress ---
     override fun onResume() {
         super.onResume()
-        hideSystemUI()
-        unifiedTvDiscovery?.startActiveDiscovery(forceRefresh = false)
-        if (!isAnyCastActive() && wasPlaying) {
+        isActivityPausedForLifecycle = false
+        activePlayerRef = WeakReference(this)
+        backgroundReleaseHandler.removeCallbacks(backgroundIdleReleaseRunnable)
+        if (!isInPipModeCompat()) {
+            hideSystemUI()
+        }
+        if (!StorageAndRamHygiene.isTelevision(this) || isAnyCastActive()) {
+            unifiedTvDiscovery?.startActiveDiscovery(forceRefresh = false)
+        }
+
+        if (releasedWhileBackgrounded && !isAnyCastActive()) {
+            releasedWhileBackgrounded = false
+            rebuildStreamAfterBackgroundRelease()
+            return
+        }
+
+        if (!isAnyCastActive() && !isReleasingOrRecoveringPlayer &&
+            (player?.mediaItemCount ?: 0) > 0 &&
+            (wasPlaying || isLivePauseLocked())
+        ) {
+            if (isLiveTvMode && liveTvTunedAtEpochMs > 0L &&
+                player?.playbackState == Player.STATE_READY &&
+                player?.isCurrentMediaItemSeekable == true
+            ) {
+                val elapsedSec = ((System.currentTimeMillis() - liveTvTunedAtEpochMs).coerceAtLeast(0L)) / 1000L
+                val expectedMs = (liveTvBaseOffsetSec + elapsedSec) * 1000L
+                val duration = getCurrentEffectiveDurationMs()
+                val withinBounds = duration <= 0L || duration == C.TIME_UNSET || expectedMs < (duration - 5_000L)
+                if (withinBounds && kotlin.math.abs(getCurrentEffectivePositionMs() - expectedMs) > 8_000L) {
+                    player?.seekTo(expectedMs)
+                }
+            }
             player?.play()
+        }
+    }
+
+    private fun rebuildStreamAfterBackgroundRelease() {
+        if (currentFileId <= 0 && multipartParts.isNullOrEmpty()) {
+            if (isLiveTvMode) {
+                triggerLiveTvNextProgram()
+            }
+            return
+        }
+        val engine = TelegramEngine.getInstance(this)
+        val useNodeJsProxy = intent.getBooleanExtra("USE_NODEJS_PROXY", false)
+        val resumeUrl: String
+        if (useNodeJsProxy) {
+            resumeUrl = "http://127.0.0.1:3000/stream"
+        } else {
+            val ramBudget = StorageAndRamHygiene.resolvePlayerRamBudget(this)
+            val lss = LocalStreamServer(engine, localPrefetchBufferBytes = ramBudget.localServerPrefetchBytes)
+            val lssUrl = lss.start(
+                fileId = currentFileId,
+                totalSize = currentEffectiveFileSize,
+                mimeType = currentMimeType,
+                multipartParts = multipartParts,
+                storedSevenZip = storedSevenZipArchive,
+                archiveError = { message ->
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed) {
+                            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                            finish()
+                        }
+                    }
+                }
+            )
+            localStreamServer = lss
+            prewarmMatroskaTrackCatalog(lss)
+            val wifiIp = LanNetworkUtils.getBestLanIpv4(this)
+            castStreamUrl = if (wifiIp != null && lss.listeningPort > 0) {
+                "http://$wifiIp:${lss.listeningPort}/stream/cast.mp4"
+            } else {
+                null
+            }
+            resumeUrl = lssUrl
+        }
+        currentPlayUrl = resumeUrl
+        if (player == null) {
+            initExoPlayer()
+        }
+        val resumeMs = if (isLiveTvMode && liveTvTunedAtEpochMs > 0L) {
+            val elapsedSec = ((System.currentTimeMillis() - liveTvTunedAtEpochMs).coerceAtLeast(0L)) / 1000L
+            (liveTvBaseOffsetSec + elapsedSec) * 1000L
+        } else {
+            savedPosition.coerceAtLeast(0L)
+        }
+        playUrl(resumeUrl, resumeMs)
+        if (!wasPlaying && !isPremiereSyncLocked && !isLiveTvMode) {
+            player?.pause()
+        }
+    }
+
+    private fun releaseHeavyResourcesWhileBackgrounded() {
+        if (releasedWhileBackgrounded || isCleanedUp || isFinishing || isDestroyed) return
+        if (isAnyCastActive() || isInPipModeCompat()) return
+
+        Log.i(TAG, "🧹 Reclaiming ExoPlayer + LocalStreamServer + TDLib cache while PlayerActivity is idle in background")
+        liveTvAutoAdvancePending = false
+        liveTvZapPending = false
+        backgroundReleaseHandler.removeCallbacks(liveTvAutoAdvanceTimeoutRunnable)
+        backgroundReleaseHandler.removeCallbacks(liveTvZapTimeoutRunnable)
+        streamStartupJob?.cancel()
+        streamStartupJob = null
+        savedPosition = getCurrentEffectivePositionMs()
+        xrayController?.trimMemory(isUiHidden = true)
+        unifiedTvDiscovery?.stopActiveDiscovery()
+        seekDebounceHandler.removeCallbacksAndMessages(null)
+        pendingSeekTargetMs = null
+
+        releaseLocalExoPlayerAndTrimAllocator()
+
+        val ownedServer = localStreamServer
+        localStreamServer = null
+        try { ownedServer?.stop() } catch (_: Exception) {}
+
+        val engine = TelegramEngine.getInstance(this)
+        val idsToPurge = buildSet {
+            if (currentFileId > 0) add(currentFileId)
+            multipartParts?.forEach { if (it.fileId > 0) add(it.fileId) }
+        }
+        engine.purgeAllStreamingCaches(idsToPurge)
+        val appCacheDir = applicationContext.cacheDir
+        StorageAndRamHygiene.launchBackgroundHygiene {
+            StorageAndRamHygiene.cleanEphemeralCacheArtifacts(appCacheDir)
+        }
+        MainActivity.trimWebViewMemoryFromBackgroundIfIdle()
+        releasedWhileBackgrounded = true
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        try { playerAllocator?.trim() } catch (_: Exception) {}
+        val isUiHidden = !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            xrayController?.trimMemory(isUiHidden = isUiHidden)
+        }
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN &&
+            !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) &&
+            !isAnyCastActive() &&
+            !isInPipModeCompat() &&
+            !isFinishing
+        ) {
+            backgroundReleaseHandler.removeCallbacks(backgroundIdleReleaseRunnable)
+            releaseHeavyResourcesWhileBackgrounded()
         }
     }
 
@@ -3082,9 +5343,26 @@ class PlayerActivity : AppCompatActivity() {
             wasPlaying = false
             return
         }
+        if (isInPipModeCompat() || (isLiveTvMode && android.os.SystemClock.elapsedRealtime() < enteringPipUntilElapsedMs)) {
+            // Keep Live TV playing smoothly inside (or while entering) the floating Picture-in-Picture window!
+            return
+        }
+        isActivityPausedForLifecycle = true
         wasPlaying = player?.isPlaying == true
         if (wasPlaying) {
             player?.pause()
+        }
+        // Flush watch progress immediately so Android TV Home/Standby never loses progress
+        val phone = intent.getStringExtra(EXTRA_PHONE) ?: ""
+        val contentId = intent.getStringExtra(EXTRA_CONTENT_ID) ?: ""
+        val season = intent.getStringExtra(EXTRA_SEASON) ?: ""
+        val episode = intent.getStringExtra(EXTRA_EPISODE) ?: ""
+        val pos = getCurrentEffectivePositionMs()
+        val dur = getCurrentEffectiveDurationMs()
+        if (!isLiveTvMode && !hadLiveTvSession && !castEndedAndSynced && phone.isNotEmpty() && contentId.isNotEmpty() && pos > 0L) {
+            scope.launch {
+                sendProgressPingDirect(phone, contentId, season, episode, pos, dur)
+            }
         }
     }
 
@@ -3103,13 +5381,20 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        backgroundReleaseHandler.removeCallbacks(backgroundIdleReleaseRunnable)
+        if (!isInPipModeCompat() && !isAnyCastActive()) {
+            unifiedTvDiscovery?.stopActiveDiscovery()
+        }
         if (isFinishing) {
             cleanup()
+        } else if (!isAnyCastActive() && !isInPipModeCompat()) {
+            backgroundReleaseHandler.postDelayed(backgroundIdleReleaseRunnable, BACKGROUND_IDLE_RELEASE_MS)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        backgroundReleaseHandler.removeCallbacksAndMessages(null)
         titleHandler.removeCallbacksAndMessages(null)
         controlsHandler.removeCallbacksAndMessages(null)
         seekBarHandler.removeCallbacksAndMessages(null)
@@ -3122,8 +5407,35 @@ class PlayerActivity : AppCompatActivity() {
     private fun cleanup() {
         if (isCleanedUp) return
         isCleanedUp = true
+        val wasLiveSession = hadLiveTvSession
+        liveTvAutoAdvancePending = false
+        liveTvZapPending = false
+        streamStartupJob?.cancel()
+        streamStartupJob = null
+        backgroundReleaseHandler.removeCallbacksAndMessages(null)
+        titleHandler.removeCallbacksAndMessages(null)
+        controlsHandler.removeCallbacksAndMessages(null)
+        seekBarHandler.removeCallbacksAndMessages(null)
         seekDebounceHandler.removeCallbacksAndMessages(null)
         pendingSeekTargetMs = null
+
+        val newerActivePlayer = activePlayerRef?.get()?.takeIf {
+            it !== this && !it.isFinishing && !it.isDestroyed
+        }
+        if (activePlayerRef?.get() === this) {
+            activePlayerRef = null
+        }
+
+        if (wasLiveSession && newerActivePlayer == null && !isChangingConfigurations && !isDetachingKeepCastAlive) {
+            hadLiveTvSession = false
+            com.cineflix.android.MainActivity.stopLiveTvFromPlayer(reopenGrid = false, onlyIfNotTuning = true)
+        }
+
+        try { liveTvSqueezeController?.destroy() } catch (_: Exception) {}
+        liveTvSqueezeController = null
+
+        try { xrayController?.destroy() } catch (_: Exception) {}
+        xrayController = null
 
         if (CastSessionCoordinator.playerUiListener === castUiListener) {
             CastSessionCoordinator.playerUiListener = null
@@ -3147,17 +5459,10 @@ class PlayerActivity : AppCompatActivity() {
             castSessionListener?.let { sessionManager?.removeSessionManagerListener(it, CastSession::class.java) }
         } catch (_: Exception) {}
 
-        try {
-            player?.stop()
-            player?.clearMediaItems()
-        } catch (_: Exception) {}
+        releaseLocalExoPlayerAndTrimAllocator()
+        cachedAudioOptions = emptyList()
+        cachedSubtitleOptions = emptyList()
 
-        try {
-            player?.release()
-        } catch (e: Exception) {
-            Log.w(TAG, "Exception during player.release(): ${e.message}")
-        }
-        player = null
         releaseCastLocks()
         scope.cancel()
 
@@ -3170,7 +5475,7 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         // If casting was still active during non-detached termination, delegate full cleanup to coordinator
-        if (CastSessionCoordinator.isCastingActive) {
+        if (CastSessionCoordinator.isCastingActive && newerActivePlayer == null) {
             localStreamServer = null
             CastSessionCoordinator.stopCastingCompletely(this, notifyAttachedPlayerToClose = false)
             return
@@ -3189,22 +5494,33 @@ class PlayerActivity : AppCompatActivity() {
         try { proxyServer?.stop() } catch (_: Exception) {}
         proxyServer = null
         try { ownedServer?.stop() } catch (_: Exception) {}
-        com.cineflix.android.GramJSStreamManager.currentPlaybackId = ""
 
-        if (ownedServer != null) {
-            val engine = TelegramEngine.getInstance(this)
-            val fileId = currentFileId.takeIf { it > 0 } ?: intent.getIntExtra(EXTRA_FILE_ID, -1)
-            if (fileId > 0) {
-                engine.cancelAndDeleteVideo(fileId)
+        val engine = TelegramEngine.getInstance(this)
+        val fileId = currentFileId.takeIf { it > 0 } ?: intent.getIntExtra(EXTRA_FILE_ID, -1)
+        val idsToPurge = buildSet {
+            if (fileId > 0) add(fileId)
+            multipartParts?.forEach { if (it.fileId > 0) add(it.fileId) }
+        }
+        if (newerActivePlayer != null) {
+            val activeIds = buildSet {
+                if (newerActivePlayer.currentFileId > 0) add(newerActivePlayer.currentFileId)
+                newerActivePlayer.multipartParts?.forEach { if (it.fileId > 0) add(it.fileId) }
             }
-            multipartParts?.forEach { part ->
-                engine.cancelAndDeleteVideo(part.fileId)
+            val safeUnusedIds = idsToPurge - activeIds
+            if (safeUnusedIds.isNotEmpty()) {
+                engine.releaseSpecificVideoFiles(safeUnusedIds)
             }
-            engine.optimizeStorage(30L * 1024 * 1024, immunityDelaySec = 0)
+        } else {
+            com.cineflix.android.GramJSStreamManager.currentPlaybackId = ""
+            engine.purgeAllStreamingCaches(idsToPurge)
+            val appCacheDir = applicationContext.cacheDir
+            StorageAndRamHygiene.launchBackgroundHygiene {
+                StorageAndRamHygiene.cleanEphemeralCacheArtifacts(appCacheDir)
+            }
         }
 
-        if (phone.isNotEmpty() && contentId.isNotEmpty() && finalPosition > 0) {
-            CoroutineScope(Dispatchers.IO).launch {
+        if (!isLiveTvMode && !wasLiveSession && !castEndedAndSynced && phone.isNotEmpty() && contentId.isNotEmpty() && finalPosition > 0) {
+            StorageAndRamHygiene.launchBackgroundHygiene {
                 sendProgressPingDirect(phone, contentId, season, episode, finalPosition, finalDuration)
             }
         }
@@ -3241,22 +5557,12 @@ class PlayerActivity : AppCompatActivity() {
         val isFinished = durationMs > 0 && currentPosition >= (durationMs - 5000)
 
         withContext(Dispatchers.IO) {
+            var conn: java.net.HttpURLConnection? = null
             try {
-                // Bypass SSL for older Android TV boxes with expired Let's Encrypt roots
-                val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
-                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate>? = null
-                    override fun checkClientTrusted(certs: Array<java.security.cert.X509Certificate>, authType: String) {}
-                    override fun checkServerTrusted(certs: Array<java.security.cert.X509Certificate>, authType: String) {}
-                })
-                val sc = javax.net.ssl.SSLContext.getInstance("SSL")
-                sc.init(null, trustAllCerts, java.security.SecureRandom())
-                javax.net.ssl.HttpsURLConnection.setDefaultSSLSocketFactory(sc.socketFactory)
-                val allHostsValid = javax.net.ssl.HostnameVerifier { _, _ -> true }
-
-                val url = java.net.URL("https://cineflixapp.duckdns.org/api/progress")
-                val conn = url.openConnection() as javax.net.ssl.HttpsURLConnection
-                conn.hostnameVerifier = allHostsValid
+                conn = StorageAndRamHygiene.openCompatUrlConnection("https://cineflixapp.duckdns.org/api/progress")
                 conn.requestMethod = "POST"
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
                 conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 conn.setRequestProperty("x-user-phone", phone)
                 conn.doOutput = true
@@ -3277,30 +5583,19 @@ class PlayerActivity : AppCompatActivity() {
                 }
                 val responseCode = conn.responseCode
                 android.util.Log.d("PROGRESS", "POST contentId=$contentId position=$progressSeconds response=$responseCode")
-                conn.disconnect()
             } catch (e: Exception) {
                 android.util.Log.e("PROGRESS", "POST error", e)
+            } finally {
+                try { conn?.disconnect() } catch (_: Exception) {}
             }
         }
     }
 
     private suspend fun fetchSavedProgress(phone: String, contentId: String, season: String, episode: String): Int {
         return withContext(Dispatchers.IO) {
+            var conn: java.net.HttpURLConnection? = null
             try {
-                // Bypass SSL for older Android TV boxes with expired Let's Encrypt roots
-                val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
-                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate>? = null
-                    override fun checkClientTrusted(certs: Array<java.security.cert.X509Certificate>, authType: String) {}
-                    override fun checkServerTrusted(certs: Array<java.security.cert.X509Certificate>, authType: String) {}
-                })
-                val sc = javax.net.ssl.SSLContext.getInstance("SSL")
-                sc.init(null, trustAllCerts, java.security.SecureRandom())
-                javax.net.ssl.HttpsURLConnection.setDefaultSSLSocketFactory(sc.socketFactory)
-                val allHostsValid = javax.net.ssl.HostnameVerifier { _, _ -> true }
-
-                val url = java.net.URL("https://cineflixapp.duckdns.org/api/progress")
-                val conn = url.openConnection() as javax.net.ssl.HttpsURLConnection
-                conn.hostnameVerifier = allHostsValid
+                conn = StorageAndRamHygiene.openCompatUrlConnection("https://cineflixapp.duckdns.org/api/progress")
                 conn.requestMethod = "GET"
                 conn.setRequestProperty("x-user-phone", phone)
                 conn.connectTimeout = 5000
@@ -3308,7 +5603,7 @@ class PlayerActivity : AppCompatActivity() {
 
                 val responseCode = conn.responseCode
                 if (responseCode == 200) {
-                    val body = conn.inputStream.bufferedReader().readText()
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
                     android.util.Log.d("PROGRESS", "GET response=$body")
                     val arr = org.json.JSONArray(body)
                     for (i in 0 until arr.length()) {
@@ -3325,6 +5620,8 @@ class PlayerActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 android.util.Log.e("PROGRESS", "GET error", e)
                 0
+            } finally {
+                try { conn?.disconnect() } catch (_: Exception) {}
             }
         }
     }

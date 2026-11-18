@@ -268,6 +268,11 @@ class LiveTranscodeSession(
             } finally {
                 synchronized(bufferLock) {
                     producerFinishedEof = true
+                    if (cancelled.get()) {
+                        prefixChunks.clear()
+                        prefixPinnedBytes = 0
+                        rollingChunks.clear()
+                    }
                     bufferLock.notifyAll()
                 }
             }
@@ -279,6 +284,9 @@ class LiveTranscodeSession(
     fun stop() {
         if (!cancelled.compareAndSet(false, true)) return
         synchronized(bufferLock) {
+            prefixChunks.clear()
+            prefixPinnedBytes = 0
+            rollingChunks.clear()
             bufferLock.notifyAll()
         }
         workerThread?.interrupt()

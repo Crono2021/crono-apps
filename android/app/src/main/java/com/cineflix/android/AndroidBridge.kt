@@ -50,6 +50,7 @@ class AndroidBridge(
                     is TelegramEngine.AuthState.Ready -> "READY"
                     is TelegramEngine.AuthState.WaitPhone -> "WAIT_PHONE"
                     is TelegramEngine.AuthState.WaitCode -> "WAIT_CODE"
+                    is TelegramEngine.AuthState.WaitEmailCode -> "WAIT_EMAIL_CODE|${authState.emailPattern}"
                     is TelegramEngine.AuthState.WaitPassword -> "WAIT_PASSWORD"
                     is TelegramEngine.AuthState.WaitQrCode -> "WAIT_QR|${authState.link}"
                     else -> null
@@ -61,110 +62,124 @@ class AndroidBridge(
         }
     }
 
-    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // Auth methods (called by callNativeAsync in telegram.js)
-    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ──────────────────────────────────────────────────────────────────────────
+    // Auth methods — QueryId-correlated (zero cross-talk) + Legacy compatible
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @JavascriptInterface
+    fun getPasswordHint(): String = engine.getLastPasswordHint()
+
+    @JavascriptInterface
+    fun getLastSubmittedPhone(): String = engine.getLastSubmittedPhone()
+
+    @JavascriptInterface
+    fun getCodeDeliveryInfo(): String = engine.getCodeDeliveryInfoJson()
 
     @JavascriptInterface
     fun requestAuthState() {
-        val currentState = engine.authState.value
-        val state = when (currentState) {
-            is TelegramEngine.AuthState.Ready         -> "READY"
-            is TelegramEngine.AuthState.WaitPhone     -> "WAIT_PHONE"
-            is TelegramEngine.AuthState.WaitCode      -> "WAIT_CODE"
-            is TelegramEngine.AuthState.WaitPassword  -> "WAIT_PASSWORD"
-            is TelegramEngine.AuthState.WaitQrCode    -> "WAIT_QR|${currentState.link}"
-            else                                      -> "UNKNOWN"
+        sendAuthState(engine.formatCurrentAuthStateString())
+    }
+
+    @JavascriptInterface
+    fun requestAuthStateAsync(queryId: String) {
+        callback(queryId, true, engine.formatCurrentAuthStateString())
+    }
+
+    @JavascriptInterface
+    fun resetAuthSession() {
+        scope.launch {
+            engine.resetAuthSessionSuspend()
+                .onSuccess { sendAuthState(it) }
+                .onFailure { sendAuthError(it.message ?: "Error reiniciando sesión") }
         }
-        sendAuthState(state)
+    }
+
+    @JavascriptInterface
+    fun resetAuthSessionAsync(queryId: String) {
+        scope.launch {
+            engine.resetAuthSessionSuspend()
+                .onSuccess { callback(queryId, true, it) }
+                .onFailure { callback(queryId, false, it.message ?: "Error reiniciando sesión") }
+        }
     }
 
     @JavascriptInterface
     fun loginWithPhone(phone: String) {
-        // Send the phone number to TDLib. TDLib's response comes asynchronously via
-        // UpdateAuthorizationState -> WaitCode. We observe the Flow and reply to JS
-        // as soon as we see WaitCode (or an Error state).
         scope.launch {
-            if (engine.authState.value is TelegramEngine.AuthState.WaitCode) {
-                // Already in WaitCode (e.g. user clicked Resend)
-                engine.sendPhone(phone) { err -> sendAuthError(err) }
-                sendAuthState("WAIT_CODE")
-                return@launch
-            }
-            engine.sendPhone(phone) { err -> sendAuthError(err) }
-            // Wait for TDLib to transition to WaitCode (up to 15 s)
-            val timeout = kotlinx.coroutines.withTimeoutOrNull(15_000) {
-                engine.authState.first {
-                    it is TelegramEngine.AuthState.WaitCode ||
-                    it is TelegramEngine.AuthState.Error
-                }
-            }
-            when (timeout) {
-                is TelegramEngine.AuthState.WaitCode -> sendAuthState("WAIT_CODE")
-                is TelegramEngine.AuthState.Error    -> sendAuthError((timeout as TelegramEngine.AuthState.Error).message)
-                null -> sendAuthError("Timeout: TDLib did not confirm phone")
-                else -> sendAuthError("Unexpected state: $timeout")
-            }
+            engine.loginWithPhoneSuspend(phone)
+                .onSuccess { sendAuthState(it) }
+                .onFailure { sendAuthError(it.message ?: "Error enviando código") }
+        }
+    }
+
+    @JavascriptInterface
+    fun loginWithPhoneAsync(queryId: String, phone: String) {
+        scope.launch {
+            engine.loginWithPhoneSuspend(phone)
+                .onSuccess { callback(queryId, true, it) }
+                .onFailure { callback(queryId, false, it.message ?: "Error enviando código") }
         }
     }
 
     @JavascriptInterface
     fun signInWithCode(code: String) {
-        val current = engine.authState.value
-        if (current is TelegramEngine.AuthState.Ready) {
-            sendAuthState("READY")
-            return
-        }
-        if (current is TelegramEngine.AuthState.WaitPassword) {
-            sendAuthState("WAIT_PASSWORD")
-            return
-        }
-        if (current !is TelegramEngine.AuthState.WaitCode) {
-            Log.w(TAG, "signInWithCode called but state is $current (not WaitCode)")
-            sendAuthError("⚠️ La sesión cambió o expiró. Solicita un código nuevo pulsando Reenviar.")
-            return
-        }
         scope.launch {
-            engine.sendCode(code) { err -> sendAuthError(err) }
-            val timeout = kotlinx.coroutines.withTimeoutOrNull(15_000) {
-                engine.authState.first {
-                    it is TelegramEngine.AuthState.Ready ||
-                    it is TelegramEngine.AuthState.WaitPassword ||
-                    it is TelegramEngine.AuthState.Error
-                }
-            }
-            when (timeout) {
-                is TelegramEngine.AuthState.Ready       -> sendAuthState("READY")
-                is TelegramEngine.AuthState.WaitPassword -> sendAuthState("WAIT_PASSWORD")
-                is TelegramEngine.AuthState.Error       -> sendAuthError((timeout as TelegramEngine.AuthState.Error).message)
-                null -> sendAuthError("Timeout: TDLib did not confirm code")
-                else -> sendAuthError("Unexpected state: $timeout")
-            }
+            engine.signInWithCodeSuspend(code)
+                .onSuccess { sendAuthState(it) }
+                .onFailure { sendAuthError(it.message ?: "Error verificando código") }
+        }
+    }
+
+    @JavascriptInterface
+    fun signInWithCodeAsync(queryId: String, code: String) {
+        scope.launch {
+            engine.signInWithCodeSuspend(code)
+                .onSuccess { callback(queryId, true, it) }
+                .onFailure { callback(queryId, false, it.message ?: "Error verificando código") }
         }
     }
 
     @JavascriptInterface
     fun signInWithPassword(password: String) {
         scope.launch {
-            engine.sendPassword(password) { err -> sendAuthError(err) }
-            val timeout = kotlinx.coroutines.withTimeoutOrNull(15_000) {
-                engine.authState.first {
-                    it is TelegramEngine.AuthState.Ready ||
-                    it is TelegramEngine.AuthState.Error
-                }
-            }
-            when (timeout) {
-                is TelegramEngine.AuthState.Ready -> sendAuthState("READY")
-                is TelegramEngine.AuthState.Error -> sendAuthError((timeout as TelegramEngine.AuthState.Error).message)
-                null -> sendAuthError("Timeout: TDLib did not confirm 2FA")
-                else -> sendAuthError("Unexpected state: $timeout")
-            }
+            engine.signInWithPasswordSuspend(password)
+                .onSuccess { sendAuthState(it) }
+                .onFailure { sendAuthError(it.message ?: "Error verificando contraseña 2FA") }
+        }
+    }
+
+    @JavascriptInterface
+    fun signInWithPasswordAsync(queryId: String, password: String) {
+        scope.launch {
+            engine.signInWithPasswordSuspend(password)
+                .onSuccess { callback(queryId, true, it) }
+                .onFailure { callback(queryId, false, it.message ?: "Error verificando contraseña 2FA") }
         }
     }
 
     @JavascriptInterface
     fun logOut() {
-        engine.logout { sendAuthState("WAIT_PHONE") }
+        savePhone("")
+        saveTelegramSession("")
+        scope.launch {
+            val st = engine.logoutSuspend()
+            sendAuthState(st)
+        }
+    }
+
+    @JavascriptInterface
+    fun logOutAsync(queryId: String) {
+        savePhone("")
+        saveTelegramSession("")
+        scope.launch {
+            val st = engine.logoutSuspend()
+            callback(queryId, true, st)
+        }
+    }
+
+    @JavascriptInterface
+    fun logout() {
+        logOut()
     }
 
     @JavascriptInterface
@@ -185,71 +200,26 @@ class AndroidBridge(
     }
 
     /**
-     * Request QR code login. TDLib will transition to WaitOtherDeviceConfirmation
-     * with a tg://login?token=... link. We send it to JS and keep watching for
-     * the user to scan it (state transitions to Ready or WaitPassword).
+     * Request QR code login. TDLib transitions to WaitOtherDeviceConfirmation
+     * with a tg://login?token=... link, while engine.authState.collect in init
+     * forwards subsequent QR token rotations, WAIT_PASSWORD, and READY events.
      */
     @JavascriptInterface
     fun requestQrLogin() {
-        val current = engine.authState.value
-        if (current is TelegramEngine.AuthState.WaitCode ||
-            current is TelegramEngine.AuthState.WaitPassword ||
-            current is TelegramEngine.AuthState.Ready) {
-            Log.w(TAG, "requestQrLogin ignored because authState is already $current")
-            return
-        }
         scope.launch {
-            engine.requestQrLogin { err -> sendAuthError(err) }
-            // Wait for TDLib to emit WaitQrCode (up to 15s)
-            val qrState = kotlinx.coroutines.withTimeoutOrNull(15_000) {
-                engine.authState.first {
-                    it is TelegramEngine.AuthState.WaitQrCode ||
-                    it is TelegramEngine.AuthState.Error ||
-                    it is TelegramEngine.AuthState.WaitCode ||
-                    it is TelegramEngine.AuthState.Ready
-                }
-            }
-            if (qrState is TelegramEngine.AuthState.WaitCode || qrState is TelegramEngine.AuthState.Ready) {
-                return@launch
-            }
-            when (qrState) {
-                is TelegramEngine.AuthState.WaitQrCode -> {
-                    sendAuthState("WAIT_QR|${qrState.link}")
-                    // Keep watching: when user scans, TDLib goes to Ready or WaitPassword
-                    // Also handle QR token refresh (TDLib sends a new WaitQrCode with updated link)
-                    val finalState = kotlinx.coroutines.withTimeoutOrNull(120_000) {
-                        engine.authState.first {
-                            it is TelegramEngine.AuthState.Ready ||
-                            it is TelegramEngine.AuthState.WaitPassword ||
-                            it is TelegramEngine.AuthState.Error ||
-                            it is TelegramEngine.AuthState.WaitPhone ||
-                            it is TelegramEngine.AuthState.WaitCode
-                        }
-                    }
-                    if (finalState is TelegramEngine.AuthState.WaitCode) {
-                        return@launch
-                    }
-                    when (finalState) {
-                        is TelegramEngine.AuthState.Ready        -> sendAuthState("READY")
-                        is TelegramEngine.AuthState.WaitPassword -> sendAuthState("WAIT_PASSWORD")
-                        is TelegramEngine.AuthState.WaitPhone    -> sendAuthState("WAIT_PHONE")
-                        is TelegramEngine.AuthState.Error        -> sendAuthError((finalState as TelegramEngine.AuthState.Error).message)
-                        null -> {
-                            if (engine.authState.value is TelegramEngine.AuthState.WaitQrCode) {
-                                sendAuthError("QR expirado. Inténtalo de nuevo.")
-                            }
-                        }
-                        else -> {}
-                    }
-                }
-                is TelegramEngine.AuthState.Error -> sendAuthError((qrState as TelegramEngine.AuthState.Error).message)
-                null -> {
-                    if (engine.authState.value is TelegramEngine.AuthState.WaitQrCode || engine.authState.value is TelegramEngine.AuthState.WaitPhone) {
-                        sendAuthError("Timeout: TDLib no generó el código QR")
-                    }
-                }
-                else -> {}
-            }
+            engine.requestQrLoginSuspend(forceReset = false)
+                .onSuccess { sendAuthState(it) }
+                .onFailure { sendAuthError(it.message ?: "Error generando código QR") }
+        }
+    }
+
+    @JavascriptInterface
+    fun requestQrLoginAsync(queryId: String, forceResetStr: String) {
+        val force = forceResetStr.equals("true", ignoreCase = true) || forceResetStr == "1"
+        scope.launch {
+            engine.requestQrLoginSuspend(forceReset = force)
+                .onSuccess { callback(queryId, true, it) }
+                .onFailure { callback(queryId, false, it.message ?: "Error generando código QR") }
         }
     }
 
@@ -396,6 +366,145 @@ class AndroidBridge(
     // Playback â€” launches PlayerActivity (TVGram approach)
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+    @Volatile
+    private var pendingPlaybackMetaJson: String? = null
+
+    @Volatile
+    private var pendingPlaybackMetaAtElapsedMs: Long = 0L
+
+    @JavascriptInterface
+    fun setNextPlaybackMetadata(jsonStr: String) {
+        val clean = jsonStr.takeIf { it.isNotBlank() }
+        pendingPlaybackMetaJson = clean
+        pendingPlaybackMetaAtElapsedMs = if (clean != null) android.os.SystemClock.elapsedRealtime() else 0L
+    }
+
+    @JavascriptInterface
+    fun closeLiveTvPip() {
+        pendingPlaybackMetaJson = null
+        pendingPlaybackMetaAtElapsedMs = 0L
+        PlayerActivity.finishActiveLiveTvInstanceIfAny()
+    }
+
+    @JavascriptInterface
+    fun expandLiveTvPip(channelId: String): Boolean {
+        if (!PlayerActivity.canExpandActiveLiveTvPip(channelId)) {
+            return false
+        }
+        PlayerActivity.markLaunchDispatched()
+        runOnUiThread {
+            if (!PlayerActivity.canExpandActiveLiveTvPip(channelId)) return@runOnUiThread
+            val intent = Intent(context, PlayerActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                if (context !is android.app.Activity) {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                putExtra(PlayerActivity.EXTRA_EXPAND_EXISTING_PIP, true)
+            }
+            context.startActivity(intent)
+            MainActivity.scheduleRePauseWebViewAfterHeadlessLaunch()
+        }
+        return true
+    }
+
+    private fun applyPendingPlaybackMetaToIntent(intent: Intent, progressFallback: String? = null) {
+        val raw = pendingPlaybackMetaJson ?: return
+        val savedAtElapsed = pendingPlaybackMetaAtElapsedMs
+        pendingPlaybackMetaJson = null
+        pendingPlaybackMetaAtElapsedMs = 0L
+        if (savedAtElapsed > 0L && (android.os.SystemClock.elapsedRealtime() - savedAtElapsed) > 120_000L) {
+            return
+        }
+        try {
+            val obj = JSONObject(raw)
+            val isLiveTv = obj.optBoolean("isLiveTv", false)
+            val chId = obj.optString("channelId", "").trim()
+            val chLabel = obj.optString("channelLabel", "").trim()
+            val tunedAtMs = obj.optLong("tunedAtMs", 0L)
+            val fallbackOffset = progressFallback?.toFloatOrNull()?.toLong()?.coerceAtLeast(0L) ?: 0L
+            val baseOffsetSec = obj.optLong("baseOffsetSec", fallbackOffset).coerceAtLeast(0L)
+            val isPremiere = obj.optBoolean("isPremiereLocked", false) ||
+                chId.equals("ch_premiere_sabado", ignoreCase = true)
+            val expandFromPip = obj.optBoolean("expandFromPip", false)
+
+            if (isLiveTv || isPremiere) {
+                intent.putExtra(PlayerActivity.EXTRA_IS_LIVE_TV, true)
+                intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_CHANNEL_ID, chId)
+                intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_CHANNEL_LABEL, chLabel)
+                intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_TUNED_AT_MS, if (tunedAtMs > 0L) tunedAtMs else System.currentTimeMillis())
+                intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_BASE_OFFSET_SEC, baseOffsetSec)
+                intent.putExtra(PlayerActivity.EXTRA_IS_PREMIERE_LOCKED, isPremiere)
+                intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_EXPAND_FROM_PIP, expandFromPip)
+                val programTitle = obj.optString("programTitle", "").trim()
+                if (programTitle.isNotEmpty() && programTitle != "null") {
+                    intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_PROGRAM_TITLE, programTitle)
+                }
+                val itemId = obj.optString("itemId", "").trim()
+                if (itemId.isNotEmpty() && itemId != "null") {
+                    intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_ITEM_ID, itemId)
+                }
+                val posterPath = obj.optString("posterPath", "").trim()
+                if (posterPath.isNotEmpty() && posterPath != "null") {
+                    intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_POSTER_PATH, posterPath)
+                }
+                val payload = obj.optString("payload", "").trim()
+                if (payload.isNotEmpty() && payload != "null") {
+                    intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_PAYLOAD, payload)
+                }
+                val rawItemJson = obj.optString("rawItemJson", "").trim()
+                if (rawItemJson.isNotEmpty() && rawItemJson != "null") {
+                    intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_RAW_ITEM_JSON, rawItemJson)
+                }
+                val continuityJson = obj.optString("continuityJson", "").trim()
+                if (continuityJson.isNotEmpty() && continuityJson != "null") {
+                    intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_CONTINUITY_JSON, continuityJson)
+                }
+                val upNextJson = obj.optString("upNextJson", "").trim()
+                if (upNextJson.isNotEmpty() && upNextJson != "null") {
+                    intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_UP_NEXT_JSON, upNextJson)
+                }
+                val otherChannelsJson = obj.optString("otherChannelsJson", "").trim()
+                if (otherChannelsJson.isNotEmpty() && otherChannelsJson != "null") {
+                    intent.putExtra(PlayerActivity.EXTRA_LIVE_TV_OTHER_CHANNELS_JSON, otherChannelsJson)
+                }
+            }
+
+            val tmdbId = obj.optInt("tmdbId", 0)
+            if (tmdbId > 0) intent.putExtra(PlayerActivity.EXTRA_XRAY_TMDB_ID, tmdbId)
+            val year = obj.optString("year", "").trim()
+            if (year.isNotEmpty() && year != "null") intent.putExtra(PlayerActivity.EXTRA_XRAY_YEAR, year)
+            val mediaType = obj.optString("mediaType", "").trim()
+            if (mediaType.isNotEmpty() && mediaType != "null") intent.putExtra(PlayerActivity.EXTRA_XRAY_MEDIA_TYPE, mediaType)
+            val cleanTitle = obj.optString("cleanTitle", "").trim()
+            if (cleanTitle.isNotEmpty() && cleanTitle != "null") intent.putExtra(PlayerActivity.EXTRA_XRAY_CLEAN_TITLE, cleanTitle)
+            if (obj.optBoolean("isKids", false)) {
+                intent.putExtra(PlayerActivity.EXTRA_IS_KIDS_PROFILE, true)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse pendingPlaybackMetaJson: ${e.message}")
+        }
+    }
+
+    private fun launchOrRouteToPlayer(intent: Intent) {
+        PlayerActivity.markLaunchDispatched()
+        runOnUiThread {
+            PlayerActivity.markLaunchDispatched()
+            // If PlayerActivity is currently floating in 16:9 Picture-in-Picture and the user zapped
+            // to another Live TV channel (without requesting fullscreen expansion), switch the stream
+            // directly in-process so the floating Mini-TV stays docked over the guide!
+            if (PlayerActivity.dispatchNewIntentToActivePipIfStayInPip(intent)) {
+                MainActivity.scheduleRePauseWebViewAfterHeadlessLaunch()
+                return@runOnUiThread
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            if (context !is android.app.Activity) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            MainActivity.scheduleRePauseWebViewAfterHeadlessLaunch()
+        }
+    }
+
     /**
      * playVideo(chatId, msgId, fileId, fileSize, mimeType, title)
      * Called by streamVideoNative() in telegram.js.
@@ -410,8 +519,9 @@ class AndroidBridge(
             putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize.toLongOrNull() ?: 0L)
             putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
             putExtra(PlayerActivity.EXTRA_TITLE,     title)
+            applyPendingPlaybackMetaToIntent(this)
         }
-        context.startActivity(intent)
+        launchOrRouteToPlayer(intent)
     }
 
     private var launcher: ((Intent) -> Unit)? = null
@@ -440,8 +550,9 @@ class AndroidBridge(
             putExtra(PlayerActivity.EXTRA_CONTENT_ID, contentId)
             putExtra(PlayerActivity.EXTRA_SEASON,     season)
             putExtra(PlayerActivity.EXTRA_EPISODE,    episode)
+            applyPendingPlaybackMetaToIntent(this)
         }
-        launcher?.invoke(intent) ?: context.startActivity(intent)
+        launchOrRouteToPlayer(intent)
     }
 
     @JavascriptInterface
@@ -461,11 +572,10 @@ class AndroidBridge(
             putExtra(PlayerActivity.EXTRA_SEASON,     season)
             putExtra(PlayerActivity.EXTRA_EPISODE,    episode)
             putExtra(PlayerActivity.EXTRA_CREDITS_START, creditsStart)
+            applyPendingPlaybackMetaToIntent(this)
         }
-        launcher?.invoke(intent) ?: context.startActivity(intent)
+        launchOrRouteToPlayer(intent)
     }
-
-
 
     private fun playVideoInternal(
         chatId: String, msgId: String, mimeType: String, title: String,
@@ -474,12 +584,11 @@ class AndroidBridge(
         fileId: String? = null, fileSize: String? = null, multipartJson: String? = null,
         progress: String? = null
     ) {
-
         val intent = Intent(context, PlayerActivity::class.java).apply {
             putExtra(PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull()   ?: 0L)
             putExtra(PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull()    ?: 0L)
             putExtra("EXTRA_PLAYBACK_ID", GramJSStreamManager.currentPlaybackId)
-            
+
             if (multipartJson != null) {
                 putExtra(PlayerActivity.EXTRA_MULTIPART_JSON, multipartJson)
                 if (!fileSize.isNullOrEmpty()) {
@@ -489,15 +598,15 @@ class AndroidBridge(
                 putExtra(PlayerActivity.EXTRA_FILE_ID,   fileId?.toIntOrNull()    ?: 0)
                 putExtra(PlayerActivity.EXTRA_FILE_SIZE, fileSize?.toLongOrNull() ?: 0L)
             }
-            
+
             putExtra(PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
             putExtra(PlayerActivity.EXTRA_TITLE,     title)
-            
+
             putExtra(PlayerActivity.EXTRA_PHONE,      phone)
             putExtra(PlayerActivity.EXTRA_CONTENT_ID, contentId)
             putExtra(PlayerActivity.EXTRA_SEASON,     season)
             putExtra(PlayerActivity.EXTRA_EPISODE,    episode)
-            
+
             putExtra(PlayerActivity.EXTRA_CREDITS_START, creditsStart)
             putExtra(PlayerActivity.EXTRA_INTRO_START_MS, introStart)
             putExtra(PlayerActivity.EXTRA_INTRO_END_MS, introEnd)
@@ -506,8 +615,9 @@ class AndroidBridge(
             if (!progress.isNullOrEmpty()) {
                 putExtra(PlayerActivity.EXTRA_PROGRESS, progress)
             }
+            applyPendingPlaybackMetaToIntent(this, progressFallback = progress)
         }
-        launcher?.invoke(intent) ?: context.startActivity(intent)
+        launchOrRouteToPlayer(intent)
     }
 
     @JavascriptInterface
@@ -599,7 +709,10 @@ class AndroidBridge(
                             val o = arr.getJSONObject(i)
                             val fId = o.optInt("fileId", 0)
                             val sz = o.optLong("size", 0L)
-                            if (fId > 0 && sz > 0) list.add(com.cineflix.android.ui.player.FilePart(fId, sz))
+                            val mId = o.optLong("msgId", 0L)
+                            if ((fId > 0 || mId != 0L) && sz > 0) {
+                                list.add(com.cineflix.android.ui.player.FilePart(fId, sz, mId))
+                            }
                         }
                         if (list.isNotEmpty()) parsedParts = list
                     } catch (e: Exception) {
@@ -632,8 +745,12 @@ class AndroidBridge(
                     } ?: videos.first()
                 }
 
+                if (parsedParts != null) {
+                    parsedParts = engine.ensureValidMultipartParts(parsedParts, picked.chatId)
+                }
+
                 try {
-                    cineScreenServer?.stop()
+                    cineScreenServer?.stop(keepCacheForImmediateHandoff = false, replacingWithNewStream = true)
                 } catch (_: Exception) {}
                 cineScreenServer = null
 
@@ -671,10 +788,11 @@ class AndroidBridge(
         }
     }
 
-    @JavascriptInterface
-    fun stopCineScreenStream() {
+    fun isCineScreenActive(): Boolean = cineScreenServer?.isActivelyRunning() == true
+
+    private fun stopCineScreenStreamInternal(keepCacheForImmediateHandoff: Boolean) {
         try {
-            cineScreenServer?.stop()
+            cineScreenServer?.stop(keepCacheForImmediateHandoff = keepCacheForImmediateHandoff)
         } catch (_: Exception) {}
         cineScreenServer = null
         cineCurrentVideoInfo = null
@@ -682,24 +800,35 @@ class AndroidBridge(
     }
 
     @JavascriptInterface
+    fun stopCineScreenStream() {
+        stopCineScreenStreamInternal(keepCacheForImmediateHandoff = false)
+    }
+
+    @JavascriptInterface
     fun playCineFullscreen(progressSec: String) {
         val info = cineCurrentVideoInfo
+        val titleCopy = cineCurrentMovieTitle
+        PlayerActivity.markLaunchDispatched()
+        stopCineScreenStreamInternal(keepCacheForImmediateHandoff = true)
         val intent = Intent(context, com.cineflix.android.ui.player.PlayerActivity::class.java).apply {
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_CHAT_ID,   info?.chatId ?: 0L)
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_MSG_ID,    info?.msgId ?: 0L)
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_FILE_ID,   info?.fileId ?: 0)
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_FILE_SIZE, info?.fileSize ?: 0L)
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_MIME_TYPE, info?.mimeType?.ifEmpty { "video/mp4" } ?: "video/mp4")
-            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_TITLE,     cineCurrentMovieTitle.ifEmpty { info?.fileName ?: "Cineflix" })
+            putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_TITLE,     titleCopy.ifEmpty { info?.fileName ?: "Cineflix" })
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_PROGRESS,  progressSec)
+            applyPendingPlaybackMetaToIntent(this, progressFallback = progressSec)
         }
-        launcher?.invoke(intent) ?: context.startActivity(intent)
+        launchOrRouteToPlayer(intent)
     }
 
     @JavascriptInterface
     fun playCineFullscreenFull(
         chatId: String, msgId: String, fileId: String, fileSize: String, mimeType: String, title: String, progressSec: String
     ) {
+        PlayerActivity.markLaunchDispatched()
+        stopCineScreenStreamInternal(keepCacheForImmediateHandoff = true)
         val intent = Intent(context, com.cineflix.android.ui.player.PlayerActivity::class.java).apply {
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_CHAT_ID,   chatId.toLongOrNull() ?: 0L)
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_MSG_ID,    msgId.toLongOrNull() ?: 0L)
@@ -708,8 +837,9 @@ class AndroidBridge(
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_MIME_TYPE, mimeType.ifEmpty { "video/mp4" })
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_TITLE,     title)
             putExtra(com.cineflix.android.ui.player.PlayerActivity.EXTRA_PROGRESS,  progressSec)
+            applyPendingPlaybackMetaToIntent(this, progressFallback = progressSec)
         }
-        launcher?.invoke(intent) ?: context.startActivity(intent)
+        launchOrRouteToPlayer(intent)
     }
 
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -735,6 +865,7 @@ class AndroidBridge(
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
             val downloadId = dm.enqueue(req)
             
+            val appCtx = context.applicationContext
             val receiver = object : android.content.BroadcastReceiver() {
                 override fun onReceive(ctx: Context, intent: Intent) {
                     val id = intent.getLongExtra(android.app.DownloadManager.EXTRA_DOWNLOAD_ID, -1)
@@ -749,14 +880,14 @@ class AndroidBridge(
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
-                        ctx.unregisterReceiver(this)
+                        runCatching { appCtx.unregisterReceiver(this) }
                     }
                 }
             }
             if (android.os.Build.VERSION.SDK_INT >= 33) {
-                context.registerReceiver(receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_EXPORTED)
+                appCtx.registerReceiver(receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE), Context.RECEIVER_EXPORTED)
             } else {
-                context.registerReceiver(receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE))
+                appCtx.registerReceiver(receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE))
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -768,33 +899,40 @@ class AndroidBridge(
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private fun sendAuthState(state: String) {
+        val quotedState = JSONObject.quote(state)
         runOnUiThread { webView.evaluateJavascript(
-            "window.onTelegramAuthStateChanged && window.onTelegramAuthStateChanged('$state')", null
+            "window.onTelegramAuthStateChanged && window.onTelegramAuthStateChanged($quotedState)", null
         )}
 
-        // When auth reaches READY, proactively inject the user's phone into WebView localStorage
+        // When auth reaches READY, proactively inject the user's phone into WebView localStorage + CineflixPrefs
         // so that getUserPhone() always finds it at Priority 1 (cross-device sync for favorites/progress)
         if (state == "READY") {
             engine.getMe { user ->
                 if (user != null) {
                     val phone = (user.phoneNumber?.takeIf { it.isNotEmpty() } ?: user.id.toString())
                         .replace("+", "").trim()
+                    if (phone.isNotEmpty()) {
+                        savePhone(phone)
+                    }
                     val tgName = listOf(user.firstName ?: "", user.lastName ?: "")
                         .map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" ").take(16).trim()
-                    if (tgName.isNotEmpty()) {
-                        runOnUiThread {
-                            webView.evaluateJavascript(
-                                "localStorage.setItem('cineflix_tg_name', " + JSONObject.quote(tgName) + ");", null
-                            )
-                        }
-                    }
+                    val quotedPhone = JSONObject.quote(phone)
+                    val quotedTgName = JSONObject.quote(tgName)
                     runOnUiThread {
                         webView.evaluateJavascript("""
                             (function() {
-                                localStorage.setItem('user_phone', '$phone');
-                                localStorage.setItem('cineflix_current_phone', '$phone');
-                                sessionStorage.setItem('cineflix_current_phone', '$phone');
-                                console.log('[Native] Auth READY — phone synced to localStorage: $phone');
+                                try {
+                                    var ph = $quotedPhone;
+                                    var nm = $quotedTgName;
+                                    if (nm) localStorage.setItem('cineflix_tg_name', nm);
+                                    if (ph) {
+                                        localStorage.setItem('user_phone', ph);
+                                        localStorage.setItem('cineflix_current_phone', ph);
+                                        localStorage.setItem('cineflix_verified_phone', ph);
+                                        sessionStorage.setItem('cineflix_current_phone', ph);
+                                    }
+                                    console.log('[Native] Auth READY — phone synced to localStorage:', ph);
+                                } catch (_) {}
                             })();
                         """.trimIndent(), null)
                     }
@@ -804,23 +942,19 @@ class AndroidBridge(
     }
 
     private fun sendAuthError(msg: String) {
-        val escaped = msg.replace("'", "\\'").replace("\n", " ")
+        val quotedMsg = JSONObject.quote(msg.replace("\r", " ").replace("\n", " "))
         runOnUiThread { webView.evaluateJavascript(
-            "window.onTelegramError && window.onTelegramError('$escaped')", null
+            "window.onTelegramError && window.onTelegramError($quotedMsg)", null
         )}
     }
 
     /** Deliver async result to JS via window.onTelegramCallback(queryId, success, payload) */
     private fun callback(queryId: String, success: Boolean, payload: String) {
-        // payload is either a JSON string or an error message
-        val escaped = payload
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\n", "\\n")
-            .replace("\r", "")
+        val quotedQueryId = JSONObject.quote(queryId)
+        val quotedPayload = JSONObject.quote(payload)
         runOnUiThread {
             webView.evaluateJavascript(
-                "window.onTelegramCallback && window.onTelegramCallback('$queryId', $success, '$escaped')",
+                "window.onTelegramCallback && window.onTelegramCallback($quotedQueryId, $success, $quotedPayload)",
                 null
             )
         }
@@ -854,8 +988,7 @@ class AndroidBridge(
 
     @JavascriptInterface
     fun getPlatform(): String {
-        val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager
-        return if (uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION) {
+        return if (com.cineflix.android.util.StorageAndRamHygiene.isTelevision(context)) {
             "android_tv"
         } else {
             "android"
@@ -863,13 +996,83 @@ class AndroidBridge(
     }
 
     @JavascriptInterface
-    @Suppress("DEPRECATION")
     fun getVersionCode(): Long {
         return try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionCode.toLong()
+            val pi = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                pi.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                pi.versionCode.toLong()
+            }
         } catch (e: Throwable) {
             2L
         }
+    }
+
+    @JavascriptInterface
+    fun getStorageReportJson(): String {
+        return try {
+            val dataDir = context.applicationContext.dataDir ?: context.filesDir.parentFile ?: context.filesDir
+            com.cineflix.android.util.StorageAndRamHygiene.measureAppStorageBytes(dataDir, context.cacheDir).toJsonString()
+        } catch (e: Throwable) {
+            "{}"
+        }
+    }
+
+    @JavascriptInterface
+    fun performDeepCacheCleanup(): String {
+        val dataDir = context.applicationContext.dataDir ?: context.filesDir.parentFile ?: context.filesDir
+        val before = com.cineflix.android.util.StorageAndRamHygiene.measureAppStorageBytes(dataDir, context.cacheDir)
+        context.getSharedPreferences("CineflixPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(com.cineflix.android.util.StorageAndRamHygiene.PREF_PENDING_PRE_WEBVIEW_PURGE, true)
+            .apply()
+        runOnUiThread {
+            try {
+                webView.clearCache(true)
+                webView.evaluateJavascript(
+                    com.cineflix.android.util.StorageAndRamHygiene.buildWebViewStorageHygieneJs(forceCompactIdb = true),
+                    null
+                )
+            } catch (_: Throwable) {}
+        }
+        scope.launch {
+            try {
+                com.cineflix.android.util.StorageAndRamHygiene.cleanTdlibDatabaseBloat(context.filesDir)
+                if (!com.cineflix.android.ui.player.cast.CastSessionCoordinator.isCastingActive &&
+                    !PlayerActivity.isPlaybackOrLaunchActive() &&
+                    !isCineScreenActive()
+                ) {
+                    engine.purgeAllStreamingCaches()
+                }
+                com.cineflix.android.util.StorageAndRamHygiene.cleanEphemeralCacheArtifacts(
+                    cacheDir = context.cacheDir,
+                    maxCrashReportAgeMs = 0L,
+                    maxOtaApkAgeMs = 0L
+                )
+                com.cineflix.android.util.StorageAndRamHygiene.enforceWebViewCacheQuota(
+                    dataDir = dataDir,
+                    cacheDir = context.cacheDir,
+                    maxCacheBytes = 0L,
+                    isWebViewActive = true
+                )
+                delay(450L)
+                val after = com.cineflix.android.util.StorageAndRamHygiene.measureAppStorageBytes(dataDir, context.cacheDir)
+                val freedMb = ((before.totalBytes - after.totalBytes).coerceAtLeast(0L)) / (1024.0 * 1024.0)
+                runOnUiThread {
+                    val msg = if (freedMb >= 0.5) {
+                        String.format(java.util.Locale.US, "🧹 Limpieza completada: %.1f MB liberados (sesión intacta)", freedMb)
+                    } else {
+                        "🧹 La app ya está limpia y optimizada (${String.format(java.util.Locale.US, "%.1f", after.totalBytes / (1024.0 * 1024.0))} MB en uso)"
+                    }
+                    android.widget.Toast.makeText(context.applicationContext, msg, android.widget.Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "performDeepCacheCleanup error: ${e.message}")
+            }
+        }
+        return before.toJsonString()
     }
 
     private var lastShowKeyboardTime = 0L
@@ -890,14 +1093,10 @@ class AndroidBridge(
 
     @JavascriptInterface
     fun hideKeyboard() {
-        val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager
-        val isTv = uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+        val isTv = com.cineflix.android.util.StorageAndRamHygiene.isTelevision(context)
         val isAmazon = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true)
-        
+
         if (isTv && !isAmazon) {
-            // En Android TV, al abrir el teclado el WebView pierde el foco de ventana.
-            // Esto dispara un evento 'blur' en JS que hace que tv-nav.js llame a hideKeyboard() al instante.
-            // Si la llamada ocurre justo despuÃ©s de abrirlo (menos de 1.5s), la ignoramos.
             if (System.currentTimeMillis() - lastShowKeyboardTime < 1500) {
                 android.util.Log.d("CineflixMain", "Ignored hideKeyboard() due to TV window focus blur")
                 return
@@ -922,7 +1121,7 @@ class AndroidBridge(
             editText.setText(currentText ?: "")
             editText.setSelection(editText.text.length)
             editText.isSingleLine = true
-            
+
             val dialog = android.app.AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Buscar")
                 .setView(editText)
@@ -940,7 +1139,7 @@ class AndroidBridge(
                 }
                 .setNegativeButton("Cancelar", null)
                 .create()
-                
+
             dialog.setOnShowListener {
                 editText.requestFocus()
                 val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
@@ -950,7 +1149,17 @@ class AndroidBridge(
         }
     }
 
-    fun cleanup() { scope.cancel() }
+    fun cleanup() {
+        stopCineScreenStream()
+        launcher = null
+        lastBotResponse = null
+        pendingPlaybackMetaJson = null
+        if (GramJSStreamManager.webView === webView) {
+            GramJSStreamManager.webView = null
+        }
+        GramJSStreamManager.activeRequests.clear()
+        scope.cancel()
+    }
 
     // --- GramJS Bridge (Phase 1 & 2) ---
     @JavascriptInterface
@@ -1004,8 +1213,9 @@ class AndroidBridge(
             putExtra(PlayerActivity.EXTRA_INTRO_START_MS, introStart)
             putExtra(PlayerActivity.EXTRA_INTRO_END_MS, introEnd)
             putExtra(PlayerActivity.EXTRA_INTRODB_CREDITS_MS, introDbCreditsMs)
+            applyPendingPlaybackMetaToIntent(this)
         }
-        launcher?.invoke(intent) ?: context.startActivity(intent)
+        launchOrRouteToPlayer(intent)
     }
 
     @JavascriptInterface

@@ -32,13 +32,30 @@ internal class BoundedVideoCache(
     }
 
     @Synchronized
-    fun read(fileId: Int, offset: Long, count: Long): ByteArray? {
-        require(fileId > 0 && offset >= 0 && count in 1..limitBytes)
+    fun releaseAll(): Boolean {
+        val active = currentFile
+        needsPurge = true
+        reservedBytes = 0
+        if (active == null) return true
+        val ok = backend.purge(active)
+        if (ok) {
+            currentFile = null
+        }
+        return ok
+    }
+
+    @Synchronized
+    fun read(fileId: Int, offset: Long, count: Long, isCancelled: (() -> Boolean)? = null): ByteArray? {
+        if (isCancelled?.invoke() == true) return null
+        if (fileId <= 0 || offset < 0 || count !in 1..limitBytes) return null
         if (currentFile != fileId) {
             // Release the previous part before allowing a new part to occupy disk.
             currentFile?.let { if (!backend.purge(it)) return null }
             currentFile = fileId
             needsPurge = true // Also discard files left by an earlier playback.
+        }
+        if (!needsPurge) {
+            backend.cached(fileId, offset, count)?.let { if (it.size.toLong() == count) return it }
         }
         if (needsPurge || reservedBytes + count > limitBytes) {
             needsPurge = true
@@ -46,7 +63,6 @@ internal class BoundedVideoCache(
             reservedBytes = 0
             needsPurge = false
         }
-        backend.cached(fileId, offset, count)?.let { if (it.size.toLong() == count) return it }
         // Reserve before the request: a failed/timed-out download can still write bytes.
         reservedBytes += count
         val bytes = backend.download(fileId, offset, count)

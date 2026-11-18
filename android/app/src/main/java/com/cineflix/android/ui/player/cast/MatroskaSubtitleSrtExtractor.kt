@@ -381,7 +381,9 @@ class MatroskaSubtitleSrtExtractor(
 
     private val cuesByTrack = ConcurrentHashMap<Int, ConcurrentSkipListMap<Long, SrtCue>>()
     private val prewarmedTrackStartMs = ConcurrentHashMap<Int, Long>()
+    private val extractedAlignedBlocks = ConcurrentSkipListSet<Long>()
     private val knownClusterBoundaries = ConcurrentSkipListSet<Long>()
+    private val knownClusterBoundariesCount = java.util.concurrent.atomic.AtomicInteger(0)
     private val clusterTimecodeByStartOffset = ConcurrentHashMap<Long, Long>()
     @Volatile private var parsedCues: List<MatroskaCuePoint>? = null
     @Volatile private var cuesParseAttempted: Boolean = false
@@ -398,7 +400,9 @@ class MatroskaSubtitleSrtExtractor(
     fun reset() {
         cuesByTrack.clear()
         prewarmedTrackStartMs.clear()
+        extractedAlignedBlocks.clear()
         knownClusterBoundaries.clear()
+        knownClusterBoundariesCount.set(0)
         clusterTimecodeByStartOffset.clear()
         parsedCues = null
         cuesParseAttempted = false
@@ -415,6 +419,29 @@ class MatroskaSubtitleSrtExtractor(
 
     fun getHarvestedCueCount(trackNumber: Int): Int {
         return cuesByTrack[trackNumber]?.size ?: 0
+    }
+
+    fun getDiscoveredClusterOffsets(): Set<Long> {
+        val out = java.util.HashSet<Long>(knownClusterBoundaries)
+        parsedCues?.forEach { cp ->
+            cp.positions.forEach { pos ->
+                if (pos.clusterOffset > 0L) out.add(pos.clusterOffset)
+            }
+        }
+        return out
+    }
+
+    private fun seedCuesClusterBoundaries(cues: List<MatroskaCuePoint>, timestampScaleNs: Long) {
+        val scaleNs = timestampScaleNs.coerceAtLeast(1L)
+        for (cp in cues) {
+            val ticks = (cp.timeMs * 1_000_000L) / scaleNs
+            for (pos in cp.positions) {
+                if (pos.clusterOffset > 0L) {
+                    addBoundary(pos.clusterOffset)
+                    clusterTimecodeByStartOffset.putIfAbsent(pos.clusterOffset, ticks)
+                }
+            }
+        }
     }
 
     private fun readFully(logicalOffset: Long, dst: ByteArray, length: Int): Int {
@@ -483,6 +510,7 @@ class MatroskaSubtitleSrtExtractor(
             if (parsed.isNotEmpty()) {
                 parsedCues = parsed
                 cuesParseAttempted = true
+                seedCuesClusterBoundaries(parsed, info.timestampScaleNs)
                 Log.i(TAG, "⚡ Passively captured ${parsed.size} Matroska <CuePoint> entries from stream read at offset=$rangeGlobalStart ($sliceLength bytes)")
             }
         } catch (_: Exception) {}
@@ -515,6 +543,18 @@ class MatroskaSubtitleSrtExtractor(
             knownClusterBoundaries.add(info.firstClusterOffset)
         }
 
+        // Record fully covered 128 KB TDLib blocks in this slice
+        val firstAligned = if (rangeGlobalStart % TDLIB_BLOCK_SIZE == 0L) {
+            rangeGlobalStart
+        } else {
+            rangeGlobalStart + (TDLIB_BLOCK_SIZE - (rangeGlobalStart % TDLIB_BLOCK_SIZE))
+        }
+        var blk = firstAligned
+        while (blk + TDLIB_BLOCK_SIZE <= sliceGlobalEnd) {
+            extractedAlignedBlocks.add(blk)
+            blk += TDLIB_BLOCK_SIZE
+        }
+
         try {
             harvestClustersInBuffer(
                 buf = sourceBuffer,
@@ -524,6 +564,34 @@ class MatroskaSubtitleSrtExtractor(
                 info = info,
                 subTracksByNum = subTracksByNum
             )
+            // Also directly resolve any <Cues>-indexed subtitle blocks inside this slice (100% immune to mid-cluster offsets!)
+            val cues = parsedCues
+            if (!cues.isNullOrEmpty()) {
+                val scaleNs = info.timestampScaleNs.coerceAtLeast(1L)
+                val sliceBuf = if (sliceOffset == 0 && sliceLength == sourceBuffer.size) {
+                    sourceBuffer
+                } else {
+                    sourceBuffer.copyOfRange(sliceOffset, sliceOffset + sliceLength)
+                }
+                for (cp in cues) {
+                    for (pos in cp.positions) {
+                        if (pos.relativeOffset >= 0L && subTracksByNum.containsKey(pos.trackNumber)) {
+                            val approx = pos.clusterOffset + 4L + pos.relativeOffset
+                            if (approx >= rangeGlobalStart && approx + 16L < sliceGlobalEnd) {
+                                extractTargetedCueAtRelativePosition(
+                                    buf = sliceBuf,
+                                    bufLen = sliceBuf.size,
+                                    bufGlobalStart = rangeGlobalStart,
+                                    cuePoint = cp,
+                                    cuePos = pos,
+                                    scaleNs = scaleNs,
+                                    subTracksByNum = subTracksByNum
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         } catch (_: Exception) {}
     }
 
@@ -786,8 +854,163 @@ class MatroskaSubtitleSrtExtractor(
 
     private fun isTrackPrewarmedForWindow(targetTrackNumber: Int, startPositionMs: Long): Boolean {
         val prevStart = prewarmedTrackStartMs[targetTrackNumber] ?: return false
-        return kotlin.math.abs(startPositionMs - prevStart) < 30_000L &&
-            getHarvestedCueCount(targetTrackNumber) > 0
+        if (kotlin.math.abs(startPositionMs - prevStart) >= 30_000L || getHarvestedCueCount(targetTrackNumber) <= 0) {
+            return false
+        }
+        val cues = parsedCues
+        if (!cues.isNullOrEmpty()) {
+            val firstMissing = getFirstUnextractedCueTimeMsAfter(null, targetTrackNumber, startPositionMs)
+            return firstMissing > startPositionMs + 120_000L
+        }
+        return true
+    }
+
+    /**
+     * Returns `Long.MAX_VALUE` if all `<Cues>`-indexed subtitle blocks for [targetTrackNumber] from
+     * [positionMs] to the end of the movie have been extracted into RAM, or the timestamp (`ms`) of
+     * the first unextracted subtitle `<CuePoint>` at or after [positionMs].
+     */
+    fun getFirstUnextractedCueTimeMsAfter(
+        info: MatroskaEbmlTrackPatcher.MatroskaHeaderInfo?,
+        targetTrackNumber: Int,
+        positionMs: Long
+    ): Long {
+        if (targetTrackNumber <= 0) return Long.MAX_VALUE
+        val cues = parsedCues ?: (if (info != null) ensureCuesParsed(info) else emptyList())
+        val trackMap = cuesByTrack[targetTrackNumber]
+        val minTimeMs = (positionMs - 5_000L).coerceAtLeast(0L)
+        var hasTrackEntriesInCues = false
+
+        for (cp in cues) {
+            for (pos in cp.positions) {
+                if (pos.trackNumber == targetTrackNumber && pos.clusterOffset > 0L) {
+                    hasTrackEntriesInCues = true
+                    if (cp.timeMs >= minTimeMs) {
+                        val approxFileOffset = if (pos.relativeOffset >= 0L) {
+                            pos.clusterOffset + 4L + pos.relativeOffset
+                        } else {
+                            pos.clusterOffset
+                        }
+                        val alignedBlock = approxFileOffset - (approxFileOffset % TDLIB_BLOCK_SIZE)
+                        val isExtracted = extractedAlignedBlocks.contains(alignedBlock) ||
+                            (trackMap != null && trackMap.containsKey(cp.timeMs))
+                        if (!isExtracted) {
+                            return cp.timeMs
+                        }
+                    }
+                }
+            }
+        }
+        if (hasTrackEntriesInCues) {
+            return Long.MAX_VALUE
+        }
+        // Fallback when <Cues> only indexed video keyframes: return highest harvested cue end timestamp
+        val lastCue = trackMap?.lastEntry()?.value
+        return lastCue?.endMs ?: 0L
+    }
+
+    /**
+     * Gently harvests the next [maxBatches] unextracted `<Cues>` subtitle blocks starting at or after
+     * [fromPositionMs]. Called by `LocalStreamServer` when the 16 MB Read-Ahead Video Prefetcher is full
+     * so 100% of the movie's subtitles are progressively pre-cached into RAM without competing with video I/O.
+     */
+    fun harvestNextCueBatchIfNeeded(
+        info: MatroskaEbmlTrackPatcher.MatroskaHeaderInfo?,
+        targetTrackNumber: Int,
+        fromPositionMs: Long,
+        maxBatches: Int = 1,
+        maxBudgetMs: Long = 350L
+    ): Int {
+        if (info == null || targetTrackNumber <= 0 || maxBatches <= 0) return 0
+        val cues = parsedCues ?: ensureCuesParsed(info)
+        if (cues.isEmpty()) return 0
+
+        val subTracksByNum = HashMap<Int, MatroskaEbmlTrackPatcher.MatroskaTrackInfo>(info.subtitleTracks.size * 2)
+        for (st in info.subtitleTracks) {
+            if (!st.isImageSubtitle && st.trackNumber > 0) {
+                subTracksByNum[st.trackNumber] = st
+            }
+        }
+        if (!subTracksByNum.containsKey(targetTrackNumber)) return 0
+
+        val minTimeMs = (fromPositionMs - 10_000L).coerceAtLeast(0L)
+        val blockMap = LinkedHashMap<Long, MutableList<Pair<MatroskaCuePoint, MatroskaCueTrackPos>>>()
+        val trackMap = cuesByTrack[targetTrackNumber]
+
+        for (cp in cues) {
+            if (cp.timeMs < minTimeMs) continue
+            for (pos in cp.positions) {
+                if (pos.trackNumber == targetTrackNumber && pos.clusterOffset > 0L) {
+                    val approxFileOffset = if (pos.relativeOffset >= 0L) {
+                        pos.clusterOffset + 4L + pos.relativeOffset
+                    } else {
+                        pos.clusterOffset
+                    }
+                    val alignedBlock = approxFileOffset - (approxFileOffset % TDLIB_BLOCK_SIZE)
+                    if (!extractedAlignedBlocks.contains(alignedBlock) &&
+                        (trackMap == null || !trackMap.containsKey(cp.timeMs))
+                    ) {
+                        blockMap.getOrPut(alignedBlock) { ArrayList() }.add(Pair(cp, pos))
+                    }
+                }
+            }
+        }
+        if (blockMap.isEmpty()) return 0
+
+        val totalSize = maxOf(totalLogicalSizeProvider(), info.segmentEndOffset)
+        val scaleNs = info.timestampScaleNs.coerceAtLeast(1L)
+        val deadlineMs = System.currentTimeMillis() + maxBudgetMs
+        var batchesRead = 0
+
+        for ((alignedOffset, entriesInBlock) in blockMap) {
+            if (batchesRead >= maxBatches || (batchesRead > 0 && System.currentTimeMillis() >= deadlineMs)) {
+                break
+            }
+            val maxEntryEndApprox = entriesInBlock.maxOf { (_, p) ->
+                if (p.relativeOffset >= 0L) p.clusterOffset + 4L + p.relativeOffset + 8192L
+                else p.clusterOffset + TDLIB_BLOCK_SIZE
+            }
+            val readLen = if (maxEntryEndApprox > alignedOffset + TDLIB_BLOCK_SIZE &&
+                alignedOffset + 2 * TDLIB_BLOCK_SIZE <= totalSize
+            ) {
+                (2 * TDLIB_BLOCK_SIZE).toInt()
+            } else {
+                minOf(TDLIB_BLOCK_SIZE, totalSize - alignedOffset).toInt()
+            }
+            if (readLen <= 16) continue
+
+            val buf = ByteArray(readLen)
+            val got = readFully(alignedOffset, buf, readLen)
+            if (got <= 16) break
+            extractedAlignedBlocks.add(alignedOffset)
+            if (got >= (2 * TDLIB_BLOCK_SIZE).toInt()) {
+                extractedAlignedBlocks.add(alignedOffset + TDLIB_BLOCK_SIZE)
+            }
+            batchesRead++
+
+            harvestClustersInBuffer(
+                buf = buf,
+                sliceOffset = 0,
+                sliceLength = got,
+                rangeGlobalStart = alignedOffset,
+                info = info,
+                subTracksByNum = subTracksByNum
+            )
+            for ((cuePoint, cuePos) in entriesInBlock) {
+                if (cuePos.relativeOffset >= 0L) {
+                    extractTargetedCueAtRelativePosition(
+                        buf = buf,
+                        bufLen = got,
+                        bufGlobalStart = alignedOffset,
+                        cuePoint = cuePoint,
+                        cuePos = cuePos,
+                        scaleNs = scaleNs,
+                        subTracksByNum = subTracksByNum
+                    )
+                }
+            }
+        }
+        return batchesRead
     }
 
     /**
@@ -960,58 +1183,98 @@ class MatroskaSubtitleSrtExtractor(
 
             val totalSize = maxOf(totalLogicalSizeProvider(), info.segmentEndOffset)
             var blocksRead = 0
-            val minGuaranteedBlocks = 24
+            // Keep minGuaranteedBlocks low (10 blocks ~= 1.0-1.5s) so deadlineMs is always respected;
+            // subsequent blocks are harvested in the background and pushed via Google Cast VTT track slots!
+            val minGuaranteedBlocks = 10
             val maxBlocksToRead = 140
             val scaleNs = info.timestampScaleNs.coerceAtLeast(1L)
+            val blockEntriesList = blockMap.entries.toList()
+            var idx = 0
 
-            for ((alignedOffset, entriesInBlock) in blockMap) {
+            while (idx < blockEntriesList.size) {
                 if (blocksRead >= maxBlocksToRead ||
                     (blocksRead >= minGuaranteedBlocks && System.currentTimeMillis() >= deadlineMs)
                 ) {
                     break
                 }
+                val firstBlockOffset = blockEntriesList[idx].key
+                val firstEntries = blockEntriesList[idx].value
+
                 // Check if all cues in this block were already harvested
                 val trackMap = cuesByTrack[targetTrackNumber]
-                if (trackMap != null && entriesInBlock.all { trackMap.containsKey(it.first.timeMs) }) {
+                if (extractedAlignedBlocks.contains(firstBlockOffset) ||
+                    (trackMap != null && firstEntries.all { trackMap.containsKey(it.first.timeMs) })
+                ) {
+                    extractedAlignedBlocks.add(firstBlockOffset)
+                    idx++
                     continue
                 }
 
-                // Read 128 KB (or 256 KB if a block straddles the 128 KB seam)
-                val maxEntryEndApprox = entriesInBlock.maxOf { (_, p) ->
+                // Coalesce up to 3 contiguous 128 KB blocks (384 KB) into a single TDLib read call
+                val coalescedEntries = ArrayList<Pair<MatroskaCuePoint, MatroskaCueTrackPos>>(firstEntries.size * 2)
+                coalescedEntries.addAll(firstEntries)
+                var lastBlockOffset = firstBlockOffset
+                var coalescedCount = 1
+                while (idx + coalescedCount < blockEntriesList.size && coalescedCount < 3) {
+                    val nextBlockOffset = blockEntriesList[idx + coalescedCount].key
+                    if (nextBlockOffset == lastBlockOffset + TDLIB_BLOCK_SIZE) {
+                        coalescedEntries.addAll(blockEntriesList[idx + coalescedCount].value)
+                        lastBlockOffset = nextBlockOffset
+                        coalescedCount++
+                    } else {
+                        break
+                    }
+                }
+
+                val maxEntryEndApprox = coalescedEntries.maxOf { (_, p) ->
                     if (p.relativeOffset >= 0L) p.clusterOffset + 4L + p.relativeOffset + 8192L
                     else p.clusterOffset + TDLIB_BLOCK_SIZE
                 }
-                val readLen = if (maxEntryEndApprox > alignedOffset + TDLIB_BLOCK_SIZE &&
-                    alignedOffset + 2 * TDLIB_BLOCK_SIZE <= totalSize
+                val baseSpan = (lastBlockOffset - firstBlockOffset) + TDLIB_BLOCK_SIZE
+                val readLen = if (maxEntryEndApprox > firstBlockOffset + baseSpan &&
+                    firstBlockOffset + baseSpan + TDLIB_BLOCK_SIZE <= totalSize
                 ) {
-                    (2 * TDLIB_BLOCK_SIZE).toInt()
+                    (baseSpan + TDLIB_BLOCK_SIZE).toInt()
                 } else {
-                    minOf(TDLIB_BLOCK_SIZE, totalSize - alignedOffset).toInt()
+                    minOf(baseSpan, totalSize - firstBlockOffset).toInt()
                 }
-                if (readLen <= 16) continue
+                if (readLen <= 16) {
+                    idx += coalescedCount
+                    continue
+                }
 
                 val buf = ByteArray(readLen)
-                val got = readFully(alignedOffset, buf, readLen)
-                if (got <= 16) continue
-                blocksRead++
+                val got = readFully(firstBlockOffset, buf, readLen)
+                if (got <= 16) {
+                    idx += coalescedCount
+                    continue
+                }
+                for (c in 0 until coalescedCount) {
+                    val bOff = firstBlockOffset + c * TDLIB_BLOCK_SIZE
+                    if (bOff + TDLIB_BLOCK_SIZE <= firstBlockOffset + got) {
+                        extractedAlignedBlocks.add(bOff)
+                    }
+                }
+                blocksRead += coalescedCount
+                idx += coalescedCount
 
                 // First harvest any full <Cluster> headers present in this chunk
                 harvestClustersInBuffer(
                     buf = buf,
                     sliceOffset = 0,
                     sliceLength = got,
-                    rangeGlobalStart = alignedOffset,
+                    rangeGlobalStart = firstBlockOffset,
                     info = info,
                     subTracksByNum = subTracksByNum
                 )
 
                 // Then resolve each targeted <CueTrackPositions> directly using CueClusterPosition + CueRelativePosition
-                for ((cuePoint, cuePos) in entriesInBlock) {
+                for ((cuePoint, cuePos) in coalescedEntries) {
                     if (cuePos.relativeOffset >= 0L) {
                         extractTargetedCueAtRelativePosition(
                             buf = buf,
                             bufLen = got,
-                            bufGlobalStart = alignedOffset,
+                            bufGlobalStart = firstBlockOffset,
                             cuePoint = cuePoint,
                             cuePos = cuePos,
                             scaleNs = scaleNs,
@@ -1073,7 +1336,7 @@ class MatroskaSubtitleSrtExtractor(
 
         Log.i(
             TAG,
-            "✅ Extracted ${getHarvestedCueCount(targetTrackNumber)} SRT cues for track #$targetTrackNumber " +
+            "âœ… Extracted ${getHarvestedCueCount(targetTrackNumber)} SRT cues for track #$targetTrackNumber " +
                 "via sequential <Cluster> scan (${scannedBytes / 1024} KB from offset=$startClusterOffset)"
         )
     }
@@ -1290,6 +1553,7 @@ class MatroskaSubtitleSrtExtractor(
                         )
                         if (parsed.isNotEmpty()) {
                             parsedCues = parsed
+                            seedCuesClusterBoundaries(parsed, info.timestampScaleNs)
                             Log.i(TAG, "📑 Parsed ${parsed.size} Matroska <CuePoint> entries from SeekHead offset=$resolvedCuesOffset ($got bytes)")
                             return parsed
                         }
@@ -1310,6 +1574,7 @@ class MatroskaSubtitleSrtExtractor(
                     timestampScaleNs = info.timestampScaleNs
                 )
                 parsedCues = parsed
+                seedCuesClusterBoundaries(parsed, info.timestampScaleNs)
                 Log.i(TAG, "📑 Parsed ${parsed.size} Matroska <CuePoint> entries from tail offset=$tailStart ($gotTail bytes)")
                 return parsed
             }
@@ -1480,10 +1745,14 @@ class MatroskaSubtitleSrtExtractor(
 
     private fun addBoundary(globalOffset: Long) {
         if (globalOffset <= 0L) return
-        if (knownClusterBoundaries.size > 4096) {
-            knownClusterBoundaries.pollFirst()
+        if (knownClusterBoundariesCount.get() > 4096) {
+            if (knownClusterBoundaries.pollFirst() != null) {
+                knownClusterBoundariesCount.decrementAndGet()
+            }
         }
-        knownClusterBoundaries.add(globalOffset)
+        if (knownClusterBoundaries.add(globalOffset)) {
+            knownClusterBoundariesCount.incrementAndGet()
+        }
     }
 
     private fun findValidClusterOffset(

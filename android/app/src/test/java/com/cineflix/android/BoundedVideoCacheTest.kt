@@ -89,6 +89,18 @@ class BoundedVideoCacheTest {
         assertEquals(2, backend.downloads)
     }
 
+    @Test fun invalidArgumentsReturnNullWithoutCrashing() {
+        val backend = FakeBackend()
+        val cache = BoundedVideoCache(backend, 32)
+        assertNull(cache.read(0, 0, 8))
+        assertNull(cache.read(-1, 0, 8))
+        assertNull(cache.read(1, -5, 8))
+        assertNull(cache.read(1, 0, 0))
+        assertNull(cache.read(1, 0, -8))
+        assertNull(cache.read(1, 0, 64))
+        assertEquals(0, backend.downloads)
+    }
+
     @Test fun concurrentReadersCannotRacePurgeAndDownload() {
         val backend = FakeBackend()
         val cache = BoundedVideoCache(backend, 32)
@@ -102,5 +114,40 @@ class BoundedVideoCacheTest {
             futures.forEach { assertTrue(it.get(5, TimeUnit.SECONDS)) }
             assertTrue(backend.peak <= 32)
         } finally { workers.shutdownNow() }
+    }
+
+    @Test fun releaseAllClearsActiveFileAndSurvivesPurgeRetry() {
+        val backend = FakeBackend()
+        val cache = BoundedVideoCache(backend, 32)
+        assertTrue(cache.releaseAll()) // no-op when empty
+        assertNotNull(cache.read(7, 0, 16))
+        backend.failPurge = true
+        assertFalse(cache.releaseAll())
+        assertEquals(setOf(7), backend.disk.keys)
+        backend.failPurge = false
+        assertTrue(cache.releaseAll())
+        assertTrue(backend.disk.isEmpty())
+    }
+
+    @Test fun windowEvictionDoesNotQueryCachedImmediatelyAfterConfirmedPurge() {
+        var cachedLookups = 0
+        val base = FakeBackend()
+        val countingBackend = object : BoundedVideoCache.Backend {
+            override fun purge(fileId: Int) = base.purge(fileId)
+            override fun cached(fileId: Int, offset: Long, count: Long): ByteArray? {
+                cachedLookups++
+                return base.cached(fileId, offset, count)
+            }
+            override fun download(fileId: Int, offset: Long, count: Long) = base.download(fileId, offset, count)
+        }
+        val cache = BoundedVideoCache(countingBackend, 16)
+        assertNotNull(cache.read(1, 0, 8))   // initial needsPurge=true -> purges & downloads directly (0 cached() calls)
+        assertEquals(0, cachedLookups)
+        assertNotNull(cache.read(1, 8, 8))   // in-window miss -> exactly 1 cached() check before download
+        assertEquals(1, cachedLookups)
+        assertNotNull(cache.read(1, 8, 8))   // in-window hit -> 1 cached() check returns immediately
+        assertEquals(2, cachedLookups)
+        assertNotNull(cache.read(1, 16, 8))  // window full -> 1 pre-purge cached() check, 0 post-purge cached() checks
+        assertEquals(3, cachedLookups)
     }
 }

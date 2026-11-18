@@ -59,6 +59,8 @@ class OtaUpdateManager(private val activity: ComponentActivity) {
                 doCheck()
             } catch (e: Exception) {
                 Log.e(TAG, "OTA check error", e)
+            } finally {
+                runCatching { client.connectionPool.evictAll() }
             }
         }
     }
@@ -121,6 +123,10 @@ class OtaUpdateManager(private val activity: ComponentActivity) {
             // ¿Hay actualización?
             // Si el código de versión remoto es <= al local, o si el versionName es exactamente el mismo, la app ya está al día
             if (remoteVersionCode <= localVersionCode || (remoteVersionName.isNotBlank() && remoteVersionName == localVersionName)) {
+                runCatching {
+                    val staleApk = File(activity.cacheDir, "cineflix_update.apk")
+                    if (staleApk.exists()) staleApk.delete()
+                }
                 Log.d(TAG, "App is up to date")
                 return
             }

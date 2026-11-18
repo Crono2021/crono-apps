@@ -48,6 +48,15 @@ object ErrorLogCollector {
     ): File {
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val logsDir = File(context.cacheDir, "crash_reports").apply { mkdirs() }
+        // Purge stale crash reports older than 10 minutes without deleting active TDLib uploads in flight
+        runCatching {
+            val cutoffMs = System.currentTimeMillis() - 10L * 60L * 1000L
+            logsDir.listFiles()?.forEach { old ->
+                if (old.isFile && old.lastModified() < cutoffMs) {
+                    runCatching { old.delete() }
+                }
+            }
+        }
         val logFile = File(logsDir, "cineflix_error_${timeStamp}.txt")
 
         val sb = StringBuilder()
@@ -145,7 +154,8 @@ object ErrorLogCollector {
     }
 
     /**
-     * Envía el reporte automáticamente al bot de Telegram (@videoclubpacobot).
+     * Envía el reporte automáticamente al bot de Telegram (@videoclubpacobot)
+     * y en paralelo al endpoint de diagnóstico HTTPS del servidor como respaldo garantizado.
      */
     fun sendReportToBot(
         context: Context,
@@ -155,16 +165,39 @@ object ErrorLogCollector {
         onComplete: ((Boolean, String?) -> Unit)? = null
     ) {
         val file = generateReportFile(context, reason, extraInfo, throwable)
+        val reportContent = runCatching { file.readText() }.getOrDefault("")
         val title = extraInfo["title"] ?: "Desconocido"
         val position = extraInfo["position"] ?: "N/A"
         val model = "${Build.MANUFACTURER} ${Build.MODEL}"
+        val pkgInfo = runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
+        val vName = pkgInfo?.versionName ?: "1.5.0"
+        val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            (pkgInfo?.longVersionCode ?: 69L).toInt()
+        } else {
+            @Suppress("DEPRECATION")
+            pkgInfo?.versionCode ?: 69
+        }
 
-        val caption = "🚨 Reporte de Error Cineflix\n" +
+        val caption = "🚨 Reporte de Error Cineflix ($vName b$vCode)\n" +
                 "📱 Dispositivo: $model\n" +
                 "🎬 Título: $title\n" +
                 "⏱ Minuto: $position\n" +
                 "⚠️ Error: $reason"
 
+        // 1. Guaranteed HTTPS backup upload directly to Cineflix backend
+        StorageAndRamHygiene.launchBackgroundHygiene {
+            uploadReportToBackendHttps(
+                reason = reason,
+                device = model,
+                appVersion = vName,
+                versionCode = vCode,
+                extraInfo = extraInfo,
+                reportText = reportContent
+            )
+        }
+
+        // 2. Send to user's @videoclubpacobot chat via TDLib (do NOT delete `file` immediately:
+        //    TdApi.SendMessage queues InputFileLocal asynchronously on TDLib's upload worker!)
         val engine = TelegramEngine.getInstance(context)
         engine.sendLogDocumentToBot(file, caption) { success, errorMsg ->
             if (success) {
@@ -172,7 +205,55 @@ object ErrorLogCollector {
             } else {
                 Log.e(TAG, "Fallo al enviar reporte al bot: $errorMsg")
             }
+            StorageAndRamHygiene.launchBackgroundHygiene {
+                kotlinx.coroutines.delay(180_000L)
+                runCatching { if (file.exists()) file.delete() }
+            }
             onComplete?.invoke(success, errorMsg)
+        }
+    }
+
+    private fun uploadReportToBackendHttps(
+        reason: String,
+        device: String,
+        appVersion: String,
+        versionCode: Int,
+        extraInfo: Map<String, Any?>,
+        reportText: String
+    ): Boolean {
+        var conn: java.net.HttpURLConnection? = null
+        return try {
+            conn = StorageAndRamHygiene.openCompatUrlConnection("https://cineflixapp.duckdns.org/api/client-error-log").apply {
+                requestMethod = "POST"
+                connectTimeout = 6000
+                readTimeout = 6000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            }
+            val extraObj = org.json.JSONObject()
+            for ((k, v) in extraInfo) {
+                extraObj.put(k, v?.toString() ?: "")
+            }
+            val trimmedReport = if (reportText.length > 58_000) {
+                reportText.take(18_000) + "\n...[TRUNCATED MIDDLE]...\n" + reportText.takeLast(38_000)
+            } else {
+                reportText
+            }
+            val payload = org.json.JSONObject().apply {
+                put("reason", reason)
+                put("device", device)
+                put("appVersion", appVersion)
+                put("versionCode", versionCode)
+                put("extraInfo", extraObj)
+                put("reportText", trimmedReport)
+            }.toString()
+            java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(payload) }
+            conn.responseCode in 200..299
+        } catch (e: Throwable) {
+            Log.w(TAG, "HTTPS diagnostic upload fallback note: ${e.message}")
+            false
+        } finally {
+            runCatching { conn?.disconnect() }
         }
     }
 }

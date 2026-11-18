@@ -1,10 +1,10 @@
 {
   "android": {
-    "version": 59,
+    "version": 70,
     "url": "https://cineflixapp.duckdns.org/cineflix.apk"
   },
   "android_tv": {
-    "version": 59,
+    "version": 70,
     "url": "https://cineflixapp.duckdns.org/cineflix.apk"
   }
 }

@@ -36,22 +36,38 @@ class CastPlaybackService : Service(), CastSessionCoordinator.StateObserver {
         @Volatile
         private var isServiceRunning = false
 
+        @Volatile
+        private var activeInstance: CastPlaybackService? = null
+
+        @Volatile
+        private var startRequested = false
+
         fun startOrUpdate(context: Context) {
             try {
                 val appCtx = context.applicationContext
+                startRequested = true
                 val intent = Intent(appCtx, CastPlaybackService::class.java).apply {
                     action = ACTION_START_OR_UPDATE
                 }
                 ContextCompat.startForegroundService(appCtx, intent)
             } catch (e: Throwable) {
+                startRequested = false
                 Log.w(TAG, "Unable to start CastPlaybackService: ${e.message}")
             }
         }
 
         fun stop(context: Context) {
             try {
-                val appCtx = context.applicationContext
-                appCtx.stopService(Intent(appCtx, CastPlaybackService::class.java))
+                // Never call appCtx.stopService() while a startForegroundService() is in-flight
+                // before onStartCommand() has promoted the service to foreground, as Android 8+
+                // throws a fatal ForegroundServiceDidNotStartInTimeException 5 seconds later.
+                val instance = activeInstance
+                if (instance != null) {
+                    instance.stopSafely()
+                } else if (!startRequested) {
+                    val appCtx = context.applicationContext
+                    appCtx.stopService(Intent(appCtx, CastPlaybackService::class.java))
+                }
             } catch (e: Throwable) {
                 Log.w(TAG, "Unable to stop CastPlaybackService: ${e.message}")
             }
@@ -62,6 +78,7 @@ class CastPlaybackService : Service(), CastSessionCoordinator.StateObserver {
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         isServiceRunning = true
         ensureNotificationChannel()
         promoteToForeground(CastSessionCoordinator.getSnapshot())
@@ -69,6 +86,7 @@ class CastPlaybackService : Service(), CastSessionCoordinator.StateObserver {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startRequested = false
         ensureNotificationChannel()
         when (intent?.action) {
             ACTION_TOGGLE_PLAY_PAUSE -> {
@@ -78,16 +96,14 @@ class CastPlaybackService : Service(), CastSessionCoordinator.StateObserver {
             ACTION_STOP_CAST -> {
                 promoteToForeground(CastSessionCoordinator.getSnapshot())
                 CastSessionCoordinator.stopCastingCompletely(this)
-                stopForegroundCompat()
-                stopSelf()
+                stopSafely()
                 return START_NOT_STICKY
             }
             else -> {
                 val snap = CastSessionCoordinator.getSnapshot()
                 promoteToForeground(snap)
                 if (!snap.isActive) {
-                    stopForegroundCompat()
-                    stopSelf()
+                    stopSafely()
                     return START_NOT_STICKY
                 }
             }
@@ -95,11 +111,20 @@ class CastPlaybackService : Service(), CastSessionCoordinator.StateObserver {
         return START_STICKY
     }
 
+    private fun stopSafely() {
+        try {
+            promoteToForeground(CastSessionCoordinator.getSnapshot())
+        } catch (_: Throwable) {}
+        stopForegroundCompat()
+        try {
+            stopSelf()
+        } catch (_: Throwable) {}
+    }
+
     override fun onCastStateChanged(snapshot: CastSessionCoordinator.CastUiSnapshot) {
         if (!isServiceRunning) return
         if (!snapshot.isActive) {
-            stopForegroundCompat()
-            stopSelf()
+            stopSafely()
             return
         }
         val posSec = snapshot.positionMs / 1000L
@@ -120,6 +145,9 @@ class CastPlaybackService : Service(), CastSessionCoordinator.StateObserver {
 
     override fun onDestroy() {
         isServiceRunning = false
+        if (activeInstance === this) {
+            activeInstance = null
+        }
         CastSessionCoordinator.removeStateObserver(this)
         super.onDestroy()
     }
@@ -223,10 +251,11 @@ class CastPlaybackService : Service(), CastSessionCoordinator.StateObserver {
 
         val statePrefix = when {
             snapshot.isConnecting -> "Preparando emisión"
+            snapshot.isLiveTv -> "🔴 En directo • ${snapshot.movieTitle}"
             snapshot.isPlaying -> snapshot.movieTitle
             else -> "En pausa • ${snapshot.movieTitle}"
         }
-        val notifBody = if (timeLabel.isNotEmpty()) {
+        val notifBody = if (!snapshot.isLiveTv && timeLabel.isNotEmpty()) {
             "$statePrefix • $timeLabel"
         } else {
             statePrefix
@@ -253,7 +282,10 @@ class CastPlaybackService : Service(), CastSessionCoordinator.StateObserver {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(playPauseIcon, playPauseText, togglePendingIntent)
+        if (!snapshot.isLiveTv) {
+            builder.addAction(playPauseIcon, playPauseText, togglePendingIntent)
+        }
+        builder
             .addAction(android.R.drawable.ic_menu_manage, "Mando", contentPendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Detener", stopPendingIntent)
 

@@ -21,7 +21,7 @@ import java.io.InputStream
  *               â†’ HTTP 206 + bytes returned to ExoPlayer
  *               â†’ TDLib cache freed (no permanent file)
  */
-data class FilePart(val fileId: Int, val size: Long)
+data class FilePart(val fileId: Int, val size: Long, val msgId: Long = 0L)
 
 class StreamProxyServer(
     private val engine: TelegramEngine,

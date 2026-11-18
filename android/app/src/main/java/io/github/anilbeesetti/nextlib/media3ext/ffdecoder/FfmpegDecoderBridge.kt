@@ -1,10 +1,175 @@
 package io.github.anilbeesetti.nextlib.media3ext.ffdecoder
 
+import android.os.Handler
 import android.view.Surface
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.TraceUtil
+import androidx.media3.common.util.Util
+import androidx.media3.decoder.CryptoConfig
+import androidx.media3.exoplayer.RendererCapabilities
+import androidx.media3.exoplayer.audio.AudioRendererEventListener
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DecoderAudioRenderer
 import kotlin.math.max
 import kotlin.math.min
+
+/**
+ * Sanitizes a Media3 [Format] before passing it to NextLib's [FfmpegAudioDecoder] so that:
+ * 1. `audio/vorbis` with `< 2` `initializationData` entries never triggers an uncaught
+ *    `IndexOutOfBoundsException` inside `FfmpegAudioDecoder.getVorbisExtraData()`.
+ * 2. Self-contained frame codecs (`audio/eac3`, `audio/eac3-joc`, `audio/ac3`, `audio/vnd.dts`,
+ *    `audio/vnd.dts.hd`, `audio/true-hd`, `audio/mpeg`) have any non-standard Matroska CodecPrivate
+ *    bytes stripped so `avcodec_open2` never fails on bogus extradata.
+ */
+internal fun sanitizeAudioFormatForFfmpeg(format: Format): Format {
+    val mime = format.sampleMimeType ?: return format
+    val initData = format.initializationData
+    return when (mime) {
+        MimeTypes.AUDIO_VORBIS -> {
+            if (initData.size < 2) {
+                // FfmpegAudioDecoder.getVorbisExtraData(initializationData) unconditionally indexes
+                // initializationData[0] and initializationData[1]; if fewer than 2 exist, clear to
+                // empty so getExtraData() safely returns null instead of throwing IndexOutOfBoundsException.
+                format.buildUpon().setInitializationData(emptyList()).build()
+            } else {
+                format
+            }
+        }
+        MimeTypes.AUDIO_E_AC3,
+        MimeTypes.AUDIO_E_AC3_JOC,
+        MimeTypes.AUDIO_AC3,
+        MimeTypes.AUDIO_DTS,
+        MimeTypes.AUDIO_DTS_HD,
+        MimeTypes.AUDIO_DTS_EXPRESS,
+        MimeTypes.AUDIO_TRUEHD,
+        MimeTypes.AUDIO_MPEG -> {
+            if (initData.isNotEmpty()) {
+                format.buildUpon().setInitializationData(emptyList()).build()
+            } else {
+                format
+            }
+        }
+        else -> format
+    }
+}
+
+/**
+ * Sanitizes a Media3 [Format] before passing it to NextLib's [FfmpegVideoDecoder] so that
+ * `video/avc` with a single `avcC` `initializationData` entry never triggers an uncaught
+ * `IndexOutOfBoundsException` inside `FfmpegVideoDecoder.getExtraData()` (which unconditionally
+ * accesses `initializationData.get(0)` AND `initializationData.get(1)` when `initializationData`
+ * is non-empty).
+ */
+internal fun sanitizeVideoFormatForFfmpeg(format: Format): Format {
+    val mime = format.sampleMimeType ?: return format
+    val initData = format.initializationData
+    if (mime == MimeTypes.VIDEO_H264 && initData.size == 1) {
+        val avcC = initData[0]
+        return format.buildUpon()
+            .setInitializationData(listOf(avcC, ByteArray(0)))
+            .build()
+    }
+    return format
+}
+
+/**
+ * Safe replacement for NextLib's [FfmpegAudioRenderer] that:
+ * 1. Forces 16-bit integer PCM output (`C.ENCODING_PCM_16BIT`, `outputFloat = false`) for ALL codecs
+ *    including 5.1/7.1 `E-AC3`, `AC3`, `DTS`, `TrueHD`, `Opus`, `FLAC`, and `AAC`, avoiding the
+ *    `FfmpegAudioRenderer.shouldOutputFloat` bug where `audio/eac3` 5.1 output 6-channel 32-bit float PCM
+ *    that fails on many Android `AudioTrack` / `DefaultAudioSink` configurations.
+ * 2. Sanitizes `Format.initializationData` via [sanitizeAudioFormatForFfmpeg] before creating
+ *    [FfmpegAudioDecoder] so malformed Matroska `CodecPrivate` data never crashes the player.
+ */
+fun createCineflixSafeFfmpegAudioRenderer(
+    eventHandler: Handler? = null,
+    eventListener: AudioRendererEventListener? = null,
+    audioSink: AudioSink
+): androidx.media3.exoplayer.Renderer {
+    return CineflixSafeFfmpegAudioRenderer(eventHandler, eventListener, audioSink)
+}
+
+private class CineflixSafeFfmpegAudioRenderer(
+    eventHandler: Handler? = null,
+    eventListener: AudioRendererEventListener? = null,
+    audioSink: AudioSink
+) : DecoderAudioRenderer<FfmpegAudioDecoder>(eventHandler, eventListener, audioSink) {
+
+    companion object {
+        private const val TAG = "CineflixFfmpegAudioRenderer"
+        private const val NUM_BUFFERS = 16
+        private const val DEFAULT_INPUT_BUFFER_SIZE = 16 * 1024
+    }
+
+    override fun getName(): String = TAG
+
+    override fun supportsFormatInternal(format: Format): Int {
+        val mimeType = format.sampleMimeType ?: return C.FORMAT_UNSUPPORTED_TYPE
+        if (!FfmpegLibrary.isAvailable() || !MimeTypes.isAudio(mimeType)) {
+            return C.FORMAT_UNSUPPORTED_TYPE
+        }
+        if (format.cryptoType != C.CRYPTO_TYPE_NONE) {
+            return C.FORMAT_UNSUPPORTED_DRM
+        }
+        if (!FfmpegLibrary.supportsFormat(mimeType)) {
+            return C.FORMAT_UNSUPPORTED_SUBTYPE
+        }
+        val channels = if (format.channelCount != Format.NO_VALUE && format.channelCount > 0) {
+            format.channelCount
+        } else {
+            2
+        }
+        val sampleRate = if (format.sampleRate != Format.NO_VALUE && format.sampleRate > 0) {
+            format.sampleRate
+        } else {
+            48_000
+        }
+        val pcm16Format = Util.getPcmFormat(C.ENCODING_PCM_16BIT, channels, sampleRate)
+        if (!sinkSupportsFormat(pcm16Format)) {
+            // Even if raw N-channel isn't directly supported, ChannelMixingAudioProcessor downmixes 1..8 -> 2
+            val stereoFormat = Util.getPcmFormat(C.ENCODING_PCM_16BIT, 2, sampleRate)
+            if (!sinkSupportsFormat(stereoFormat)) {
+                return C.FORMAT_UNSUPPORTED_SUBTYPE
+            }
+        }
+        return C.FORMAT_HANDLED or
+            RendererCapabilities.ADAPTIVE_SEAMLESS or
+            RendererCapabilities.TUNNELING_SUPPORTED
+    }
+
+    override fun supportsMixedMimeTypeAdaptation(): Int = RendererCapabilities.ADAPTIVE_NOT_SEAMLESS
+
+    override fun createDecoder(format: Format, cryptoConfig: CryptoConfig?): FfmpegAudioDecoder {
+        TraceUtil.beginSection("createFfmpegAudioDecoder")
+        try {
+            val initialInputBufferSize = if (format.maxInputSize != Format.NO_VALUE && format.maxInputSize > 0) {
+                max(format.maxInputSize, DEFAULT_INPUT_BUFFER_SIZE)
+            } else {
+                DEFAULT_INPUT_BUFFER_SIZE
+            }
+            val safeFormat = sanitizeAudioFormatForFfmpeg(format)
+            return FfmpegAudioDecoder(
+                safeFormat,
+                NUM_BUFFERS,
+                NUM_BUFFERS,
+                initialInputBufferSize,
+                /* outputFloat = */ false
+            )
+        } finally {
+            TraceUtil.endSection()
+        }
+    }
+
+    override fun getOutputFormat(decoder: FfmpegAudioDecoder): Format {
+        return Util.getPcmFormat(
+            decoder.encoding,
+            decoder.channelCount,
+            decoder.sampleRate
+        )
+    }
+}
 
 /**
  * Compile-time type-safe bridge into NextLib's bundled FFmpeg (`libavcodec` + `libswresample` + `libswscale`)
@@ -38,7 +203,7 @@ class CineflixFfmpegAudioDecoder(format: Format) {
     }
 
     private val decoder = FfmpegAudioDecoder(
-        format,
+        sanitizeAudioFormatForFfmpeg(format),
         NUM_BUFFERS,
         NUM_BUFFERS,
         initialInputSize,
@@ -183,7 +348,7 @@ class CineflixFfmpegVideoDecoder(format: Format) {
         NUM_OUTPUT_BUFFERS,
         initialInputSize,
         threads,
-        format
+        sanitizeVideoFormatForFfmpeg(format)
     ).apply {
         setOutputMode(C.VIDEO_OUTPUT_MODE_SURFACE_YUV)
     }

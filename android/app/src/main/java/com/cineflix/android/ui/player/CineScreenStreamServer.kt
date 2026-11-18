@@ -37,6 +37,7 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
     @Volatile private var activeParts: List<FilePart>? = null
     @Volatile private var isRunning: Boolean = false
 
+    private val ownerToken = "cine_${System.nanoTime()}"
     private val activeRequestId = java.util.concurrent.atomic.AtomicLong(0L)
     @Volatile private var currentStreamingSocket: Socket? = null
 
@@ -61,6 +62,7 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
         activeSize = if (effectiveSize > 0) effectiveSize else 2_000_000_000L
         activeMime = if (mimeType.isNotBlank()) mimeType else "video/mp4"
         isRunning = true
+        runCatching { engine.onStreamOwnerStarted(ownerToken) }
 
         val s = ServerSocket(0, 16)
         serverSocket = s
@@ -89,8 +91,13 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
         return streamUrl
     }
 
-    fun stop() {
+    fun isActivelyRunning(): Boolean = isRunning && listeningPort > 0
+
+    fun stop(keepCacheForImmediateHandoff: Boolean = false, replacingWithNewStream: Boolean = false) {
+        val fileToPurge = activeFileId
+        val partsToPurge = activeParts
         isRunning = false
+        runCatching { engine.onStreamOwnerStopped(ownerToken) }
         activeRequestId.incrementAndGet()
         currentStreamingSocket = null
         clients.forEach { try { it.close() } catch (_: Exception) {} }
@@ -104,7 +111,23 @@ class CineScreenStreamServer(private val engine: TelegramEngine) {
         activeFileId = -1
         activeSize = 0L
         activeParts = null
-        Log.i(TAG, "🛑 CineScreenStreamServer detenido")
+        if (!keepCacheForImmediateHandoff) {
+            val idsToPurge = buildSet {
+                if (fileToPurge > 0) add(fileToPurge)
+                partsToPurge?.forEach { if (it.fileId > 0) add(it.fileId) }
+            }
+            if (replacingWithNewStream ||
+                com.cineflix.android.ui.player.cast.CastSessionCoordinator.isCastingActive ||
+                PlayerActivity.isPlaybackOrLaunchActive()
+            ) {
+                engine.releaseSpecificVideoFiles(idsToPurge)
+            } else {
+                engine.purgeAllStreamingCaches(idsToPurge)
+            }
+            Log.i(TAG, "🛑 CineScreenStreamServer detenido y caché de streaming vaciada (ids=${idsToPurge.size}, replace=$replacingWithNewStream)")
+        } else {
+            Log.i(TAG, "🔄 CineScreenStreamServer detenido preservando caché para paso inmediato a pantalla completa")
+        }
     }
 
     private fun handleClient(socket: Socket) {

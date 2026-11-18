@@ -1069,6 +1069,7 @@ object MatroskaEbmlTrackPatcher {
             if (hasSubOverride && compactLevel >= 1) {
                 val vidPayload = rewriteTrackEntryPayload(
                     rawPayload = video.rawPayloadBytes,
+                    defaultTrackNumber = video.trackNumber,
                     overrideTrackNumber = null,
                     explicitFlagEnabled = null,
                     explicitFlagDefault = if (video.isDefault) null else false,
@@ -1095,6 +1096,7 @@ object MatroskaEbmlTrackPatcher {
             }
             val chosenPayload = rewriteTrackEntryPayload(
                 rawPayload = chosenAudio.rawPayloadBytes,
+                defaultTrackNumber = chosenAudio.trackNumber,
                 overrideTrackNumber = chosenOverrideNum,
                 explicitFlagEnabled = null, // omitted = true (1) per RFC 9559
                 explicitFlagDefault = if (compactLevel <= 1) true else null, // null = omitted = true per RFC 9559
@@ -1115,6 +1117,7 @@ object MatroskaEbmlTrackPatcher {
                 }
                 val otherPayload = rewriteTrackEntryPayload(
                     rawPayload = audio.rawPayloadBytes,
+                    defaultTrackNumber = audio.trackNumber,
                     overrideTrackNumber = otherOverrideNum,
                     explicitFlagEnabled = null,  // omitted = true (1) so hardware demuxers never reject Cluster blocks for this track
                     explicitFlagDefault = false, // MUST explicitly write 0x88 0x81 0x00!
@@ -1130,6 +1133,7 @@ object MatroskaEbmlTrackPatcher {
             for (audio in info.audioTracks) {
                 val audPayload = rewriteTrackEntryPayload(
                     rawPayload = audio.rawPayloadBytes,
+                    defaultTrackNumber = audio.trackNumber,
                     overrideTrackNumber = null,
                     explicitFlagEnabled = null,
                     explicitFlagDefault = if (audio.isDefault) null else false,
@@ -1159,6 +1163,7 @@ object MatroskaEbmlTrackPatcher {
                 for (sub in info.subtitleTracks) {
                     val disabledSubPayload = rewriteTrackEntryPayload(
                         rawPayload = sub.rawPayloadBytes,
+                        defaultTrackNumber = sub.trackNumber,
                         overrideTrackNumber = null,
                         explicitFlagEnabled = if (compactLevel <= 1) false else null,
                         explicitFlagDefault = false,
@@ -1180,6 +1185,7 @@ object MatroskaEbmlTrackPatcher {
                     }
                     val subPayload = rewriteTrackEntryPayload(
                         rawPayload = chosenSub.rawPayloadBytes,
+                        defaultTrackNumber = chosenSub.trackNumber,
                         overrideTrackNumber = chosenSubOverrideNum,
                         explicitFlagEnabled = null,
                         explicitFlagDefault = true,
@@ -1200,6 +1206,7 @@ object MatroskaEbmlTrackPatcher {
                         }
                         val otherSubPayload = rewriteTrackEntryPayload(
                             rawPayload = sub.rawPayloadBytes,
+                            defaultTrackNumber = sub.trackNumber,
                             overrideTrackNumber = otherSubOverrideNum,
                             explicitFlagEnabled = if (compactLevel <= 1) false else null,
                             explicitFlagDefault = false,
@@ -1233,6 +1240,7 @@ object MatroskaEbmlTrackPatcher {
      */
     private fun rewriteTrackEntryPayload(
         rawPayload: ByteArray,
+        defaultTrackNumber: Int = 0,
         overrideTrackNumber: Int? = null,
         explicitFlagEnabled: Boolean? = null,
         explicitFlagDefault: Boolean?,
@@ -1244,7 +1252,7 @@ object MatroskaEbmlTrackPatcher {
     ): ByteArray {
         val out = ByteArrayOutputStream(rawPayload.size + 8)
         var flagsEmitted = false
-        var effectiveTrackNum = overrideTrackNumber ?: 0
+        var effectiveTrackNum = overrideTrackNumber ?: defaultTrackNumber
         var pos = 0
         val limit = rawPayload.size
 
@@ -1571,30 +1579,39 @@ object MatroskaEbmlTrackPatcher {
         private val rawSubTrackB: Byte = (subTrackB and 0x7F).toByte()
 
         private val knownBoundaries = java.util.concurrent.ConcurrentSkipListSet<Long>()
+        private val knownBoundariesCount = java.util.concurrent.atomic.AtomicInteger(0)
         private val seamLock = Any()
         private var seamChunkEndOffset: Long = -1L
         private var seamElementGlobalStart: Long = -1L
         private var seamTailBytes: ByteArray = ByteArray(0)
 
         init {
-            if (tracksElementEnd > 0L) {
-                knownBoundaries.add(tracksElementEnd)
-            }
             if (firstClusterOffset > 0L) {
-                knownBoundaries.add(firstClusterOffset)
+                addBoundary(firstClusterOffset)
             }
         }
 
+        fun seedBoundaries(offsets: Collection<Long>) {
+            for (off in offsets) {
+                addBoundary(off)
+            }
+        }
+
+        fun exportKnownBoundaries(): Set<Long> {
+            return java.util.HashSet(knownBoundaries)
+        }
+
         private fun addBoundary(globalOffset: Long) {
-            if (globalOffset <= tracksElementEnd) return
-            if (knownBoundaries.size > 4096) {
-                // Keep earliest head boundaries and recent boundaries
-                val poll = knownBoundaries.pollFirst()
-                if (poll != null && poll == tracksElementEnd) {
-                    knownBoundaries.add(tracksElementEnd)
+            val minValidOffset = if (firstClusterOffset > 0L) firstClusterOffset else tracksElementEnd
+            if (globalOffset < minValidOffset) return
+            if (knownBoundariesCount.get() > 65_536) {
+                if (knownBoundaries.pollFirst() != null) {
+                    knownBoundariesCount.decrementAndGet()
                 }
             }
-            knownBoundaries.add(globalOffset)
+            if (knownBoundaries.add(globalOffset)) {
+                knownBoundariesCount.incrementAndGet()
+            }
         }
 
         /**
@@ -1694,14 +1711,45 @@ object MatroskaEbmlTrackPatcher {
                 }
             }
 
-            // 2. Locate first known element boundary inside this slice, or scan for a <Cluster> / <Cues> magic header
-            val effectiveStartGlobal = maxOf(rangeGlobalStart, tracksElementEnd)
+            // 2. Locate first known element boundary inside this slice, or lock onto a mid-cluster <SimpleBlock> chain / <Cluster> header
+            val minClusterGlobal = if (firstClusterOffset > 0L) maxOf(tracksElementEnd, firstClusterOffset) else tracksElementEnd
+            val effectiveStartGlobal = maxOf(rangeGlobalStart, minClusterGlobal)
+            val searchFrom = (effectiveStartGlobal - rangeGlobalStart).toInt().coerceAtLeast(0)
             val knownStart = knownBoundaries.ceiling(effectiveStartGlobal)
-            var localPos: Int = if (knownStart != null && knownStart < sliceGlobalEnd) {
+            val knownLocal = if (knownStart != null && knownStart < sliceGlobalEnd) {
                 (knownStart - rangeGlobalStart).toInt()
             } else {
-                val searchFrom = (effectiveStartGlobal - rangeGlobalStart).toInt().coerceAtLeast(0)
-                findValidClusterOffset(sourceBuffer, sliceOffset, sliceLength, searchFrom)
+                -1
+            }
+
+            var localPos: Int = if (knownLocal >= 0 &&
+                (knownLocal == searchFrom || !isClusterOrCuesMagicAt(sourceBuffer, sliceOffset + knownLocal, sliceOffset + sliceLength))
+            ) {
+                // Exact block boundary (either at slice start or at the end of a block that straddled from the previous chunk)
+                knownLocal
+            } else {
+                val clusterPos = findValidClusterOffset(sourceBuffer, sliceOffset, sliceLength, searchFrom)
+                val anchorLocal = when {
+                    knownLocal >= 0 && clusterPos >= 0 -> minOf(knownLocal, clusterPos)
+                    knownLocal >= 0 -> knownLocal
+                    else -> clusterPos
+                }
+                val midClusterPos = if (anchorLocal < 0 || anchorLocal > searchFrom + 6) {
+                    findValidMidClusterElementOffset(
+                        buf = sourceBuffer,
+                        sliceOffset = sliceOffset,
+                        sliceLength = sliceLength,
+                        startLocalPos = searchFrom,
+                        anchorLocalPos = anchorLocal
+                    )
+                } else {
+                    -1
+                }
+                when {
+                    midClusterPos >= 0 -> midClusterPos
+                    anchorLocal >= 0 -> anchorLocal
+                    else -> -1
+                }
             }
 
             if (localPos < 0 || localPos >= sliceLength) {
@@ -1733,6 +1781,14 @@ object MatroskaEbmlTrackPatcher {
                     continue
                 }
 
+                // Guard against desynchronized offsets: only step through recognized Cluster/BlockGroup/Cues/Segment element IDs!
+                if (!isKnownClusterOrCuesElementId(elId.value, elId.byteLength)) {
+                    val resynced = findValidClusterOffset(sourceBuffer, sliceOffset, sliceLength, localPos + 1)
+                    if (resynced < 0) break
+                    localPos = resynced
+                    continue
+                }
+
                 val headerLen = elId.byteLength + elSize.byteLength
                 val payloadLocalPos = localPos + headerLen
                 val payloadGlobalPos = rangeGlobalStart + payloadLocalPos
@@ -1744,23 +1800,16 @@ object MatroskaEbmlTrackPatcher {
                     (elId.value == ID_CUE_POINT && elId.byteLength == 1) ||
                     (elId.value == ID_CUE_TRACK_POSITIONS && elId.byteLength == 1)
                 ) {
-                    if (elId.value == ID_CLUSTER || elId.value == ID_CUES) {
-                        addBoundary(rangeGlobalStart + localPos)
-                        addBoundary(payloadGlobalPos)
-                    } else if (elSize.value > 0L) {
-                        val endOfMaster = payloadGlobalPos + elSize.value
-                        if (endOfMaster >= sliceGlobalEnd) {
-                            addBoundary(endOfMaster)
-                        }
-                    }
-                    if (payloadGlobalPos >= sliceGlobalEnd) {
-                        addBoundary(payloadGlobalPos)
+                    addBoundary(rangeGlobalStart + localPos)
+                    addBoundary(payloadGlobalPos)
+                    if (elSize.value > 0L && elId.value != ID_CLUSTER && elId.value != ID_CUES) {
+                        addBoundary(payloadGlobalPos + elSize.value)
                     }
                     localPos = payloadLocalPos
                     continue
                 }
 
-                if (elSize.value < 0L) {
+                if (elSize.value < 0L || elSize.value > 256L * 1024L * 1024L) {
                     val resynced = findValidClusterOffset(sourceBuffer, sliceOffset, sliceLength, localPos + 1)
                     if (resynced < 0) break
                     localPos = resynced
@@ -1771,8 +1820,8 @@ object MatroskaEbmlTrackPatcher {
                 if (elId.value == ID_CRC32 && elId.byteLength == 1 && elSize.value == 4L) {
                     writableBuffer()[localPos] = ID_VOID.toByte()
                     val nextGlobal = payloadGlobalPos + 4L
+                    addBoundary(nextGlobal)
                     if (nextGlobal >= sliceGlobalEnd) {
-                        addBoundary(nextGlobal)
                         break
                     }
                     localPos = (nextGlobal - rangeGlobalStart).toInt()
@@ -1800,8 +1849,8 @@ object MatroskaEbmlTrackPatcher {
                         writableBuffer()[payloadLocalPos] = rawSubTrackA
                     }
                     val nextGlobal = payloadGlobalPos + 1L
+                    addBoundary(nextGlobal)
                     if (nextGlobal >= sliceGlobalEnd) {
-                        addBoundary(nextGlobal)
                         break
                     }
                     localPos = (nextGlobal - rangeGlobalStart).toInt()
@@ -1833,15 +1882,15 @@ object MatroskaEbmlTrackPatcher {
                         writableBuffer()[payloadLocalPos] = vintSubTrackA
                     }
                     val nextGlobal = payloadGlobalPos + elSize.value
+                    addBoundary(nextGlobal)
                     if (nextGlobal >= sliceGlobalEnd) {
-                        addBoundary(nextGlobal)
                         break
                     }
                     localPos = (nextGlobal - rangeGlobalStart).toInt()
                     continue
                 }
 
-                // Any other element (Timecode 0xE7, PrevSize 0xAB, Position 0xA7, CueTime 0xB3, Void 0xEC, etc.)
+                // Any other valid element (Timecode 0xE7, PrevSize 0xAB, Position 0xA7, CueTime 0xB3, Void 0xEC, etc.)
                 val nextGlobal = payloadGlobalPos + elSize.value
                 if (nextGlobal <= rangeGlobalStart + localPos) {
                     val resynced = findValidClusterOffset(sourceBuffer, sliceOffset, sliceLength, localPos + 1)
@@ -1849,14 +1898,141 @@ object MatroskaEbmlTrackPatcher {
                     localPos = resynced
                     continue
                 }
+                addBoundary(nextGlobal)
                 if (nextGlobal >= sliceGlobalEnd) {
-                    addBoundary(nextGlobal)
                     break
                 }
                 localPos = (nextGlobal - rangeGlobalStart).toInt()
             }
 
             return mutated
+        }
+
+        /**
+         * When a Chromecast / Smart TV HTTP `Range:` request begins in the middle of a `<Cluster>`
+         * (at an offset that has not been visited yet), locates the first complete `<SimpleBlock>` /
+         * `<BlockGroup>` / `<Timecode>` element inside `[startLocalPos, anchorLocalPos)` by verifying a
+         * contiguous chain of valid `<Cluster>` child elements that either lands on the exact byte
+         * [anchorLocalPos] (with `>= 3` blocks) or steps cleanly through `>= 5` consecutive valid blocks.
+         * Uses O(N) memoization (`failedPos`) so each byte position is tested at most once.
+         */
+        private fun findValidMidClusterElementOffset(
+            buf: ByteArray,
+            sliceOffset: Int,
+            sliceLength: Int,
+            startLocalPos: Int,
+            anchorLocalPos: Int
+        ): Int {
+            val endLimit = sliceOffset + sliceLength
+            val scanLimitLocal = if (anchorLocalPos in 1..sliceLength) anchorLocalPos else sliceLength
+            if (scanLimitLocal - startLocalPos < 16) return -1
+
+            val failedPos = BooleanArray(sliceLength)
+            val visitedChain = IntArray(16)
+            var cand = startLocalPos.coerceAtLeast(0)
+
+            while (cand + 6 < scanLimitLocal) {
+                if (failedPos[cand]) {
+                    cand++
+                    continue
+                }
+                val b0 = buf[sliceOffset + cand].toInt() and 0xFF
+                // Only start a mid-cluster chain at a top-level Cluster child element ID
+                if (b0 != 0xA3 && b0 != 0xA0 && b0 != 0xE7 && b0 != 0xAB && b0 != 0xA7) {
+                    cand++
+                    continue
+                }
+
+                var cur = cand
+                var validBlocks = 0
+                var steps = 0
+                var visitedCount = 0
+                var chainValid = false
+
+                while (cur < scanLimitLocal && steps < 64) {
+                    if (failedPos[cur]) break
+                    if (visitedCount < visitedChain.size) {
+                        visitedChain[visitedCount++] = cur
+                    }
+                    val absPos = sliceOffset + cur
+                    val elId = readElementId(buf, absPos, endLimit) ?: break
+                    val sizePos = absPos + elId.byteLength
+                    val elSize = if (sizePos < endLimit) readDataSize(buf, sizePos, endLimit) else null
+                    if (elSize == null || elSize.value < 0L) break
+
+                    val headerLen = elId.byteLength + elSize.byteLength
+                    val payloadLocal = cur + headerLen
+                    val nextLocalLong = payloadLocal.toLong() + elSize.value
+
+                    when {
+                        elId.value == ID_SIMPLE_BLOCK && elId.byteLength == 1 -> {
+                            if (elSize.value !in 4L..4_194_304L) break
+                            if (payloadLocal + 4 <= sliceLength) {
+                                val trackByte = buf[sliceOffset + payloadLocal].toInt() and 0xFF
+                                // 1-byte VINT TrackNumber 1..31 (0x81..0x9F)
+                                if (trackByte !in 0x81..0x9F) break
+                                val flags = buf[sliceOffset + payloadLocal + 3].toInt() and 0xFF
+                                // Matroska SimpleBlock reserved bits 4..6 (0x70) must be 0
+                                if ((flags and 0x70) != 0) break
+                            }
+                            validBlocks++
+                        }
+                        elId.value == ID_BLOCK_GROUP && elId.byteLength == 1 -> {
+                            if (elSize.value !in 6L..4_194_304L) break
+                            if (payloadLocal + 2 <= sliceLength) {
+                                val innerId = readElementId(buf, sliceOffset + payloadLocal, endLimit) ?: break
+                                if (!isKnownClusterOrCuesElementId(innerId.value, innerId.byteLength)) break
+                            }
+                            validBlocks++
+                        }
+                        (elId.value == ID_TIMECODE || elId.value == ID_CLUSTER_POSITION || elId.value == ID_CLUSTER_PREV_SIZE) &&
+                            elId.byteLength == 1 -> {
+                            if (elSize.value !in 1L..8L) break
+                        }
+                        elId.value == ID_CRC32 && elId.byteLength == 1 -> {
+                            if (elSize.value != 4L) break
+                        }
+                        elId.value == ID_VOID && elId.byteLength == 1 -> {
+                            if (elSize.value > 1_048_576L) break
+                        }
+                        else -> break
+                    }
+
+                    steps++
+                    val minBlocksToAnchor = if (anchorLocalPos > 0 && anchorLocalPos - cand <= 65_536) 1 else 2
+                    if (anchorLocalPos > 0 && nextLocalLong == anchorLocalPos.toLong() && validBlocks >= minBlocksToAnchor) {
+                        chainValid = true
+                        break
+                    }
+                    if (validBlocks >= 4 && (nextLocalLong >= sliceLength.toLong() || validBlocks >= 5)) {
+                        chainValid = true
+                        break
+                    }
+                    if (nextLocalLong > scanLimitLocal.toLong() || nextLocalLong <= cur.toLong()) {
+                        break
+                    }
+                    cur = nextLocalLong.toInt()
+                }
+
+                if (chainValid) {
+                    return cand
+                }
+                for (k in 0 until visitedCount) {
+                    failedPos[visitedChain[k]] = true
+                }
+                cand++
+            }
+            return -1
+        }
+
+        private fun isClusterOrCuesMagicAt(buf: ByteArray, pos: Int, endLimit: Int): Boolean {
+            if (pos < 0 || pos + 4 > endLimit) return false
+            val b0 = buf[pos]
+            val b1 = buf[pos + 1]
+            val b2 = buf[pos + 2]
+            val b3 = buf[pos + 3]
+            return (b0 == 0x1F.toByte() && b1 == 0x43.toByte() && b2 == 0xB6.toByte() && b3 == 0x75.toByte()) ||
+                (b0 == 0x1C.toByte() && b1 == 0x53.toByte() && b2 == 0xBB.toByte() && b3 == 0x6B.toByte())
         }
 
         private fun findValidClusterOffset(
@@ -1919,7 +2095,52 @@ object MatroskaEbmlTrackPatcher {
                 id == ID_CRC32 ||
                 id == ID_VOID ||
                 id == ID_CLUSTER_POSITION ||
-                id == ID_CLUSTER_PREV_SIZE
+                id == ID_CLUSTER_PREV_SIZE ||
+                id == 0x5854L ||
+                id == 0xAFL
+        }
+
+        private fun isKnownClusterOrCuesElementId(id: Long, byteLen: Int): Boolean {
+            return when (byteLen) {
+                1 -> id == ID_TIMECODE ||
+                    id == ID_SIMPLE_BLOCK ||
+                    id == ID_BLOCK_GROUP ||
+                    id == ID_BLOCK ||
+                    id == ID_CLUSTER_POSITION ||
+                    id == ID_CLUSTER_PREV_SIZE ||
+                    id == ID_CRC32 ||
+                    id == ID_VOID ||
+                    id == ID_CUE_POINT ||
+                    id == ID_CUE_TRACK_POSITIONS ||
+                    id == ID_CUE_TRACK ||
+                    id == 0x9BL || // BlockDuration
+                    id == 0xFAL || // ReferencePriority
+                    id == 0xFBL || // ReferenceBlock
+                    id == 0xFDL || // ReferenceVirtual
+                    id == 0xA4L || // CodecState
+                    id == 0x8EL || // Slices
+                    id == 0xAFL || // EncryptedBlock
+                    id == 0xB3L || // CueTime
+                    id == 0xF1L || // CueClusterPosition
+                    id == 0xF0L || // CueRelativePosition
+                    id == 0xB2L || // CueDuration
+                    id == 0xEAL || // CueCodecState
+                    id == 0xDBL    // CueReference
+                2 -> id == 0x75A1L || // BlockAdditions
+                    id == 0x75A2L || // DiscardPadding
+                    id == 0x5854L || // SilentTracks
+                    id == 0x5378L || // CueBlockNumber
+                    id == ID_SEEK
+                4 -> id == ID_CLUSTER ||
+                    id == ID_CUES ||
+                    id == ID_SEEK_HEAD ||
+                    id == ID_INFO ||
+                    id == ID_TRACKS ||
+                    id == 0x1043A770L || // Chapters
+                    id == 0x1941A469L || // Attachments
+                    id == 0x1254C367L    // Tags
+                else -> false
+            }
         }
     }
 }

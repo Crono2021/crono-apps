@@ -36,7 +36,10 @@ import kotlin.math.min
  *     in-place Matroska EBML `<Tracks>` patching so Audio & Subtitle selection from the phone controls
  *     what the Smart TV plays with 0 byte-size change.
  */
-class LocalStreamServer(private val engine: TelegramEngine) {
+class LocalStreamServer(
+    private val engine: TelegramEngine,
+    private val localPrefetchBufferBytes: Long = DEFAULT_LOCAL_PREFETCH_BUFFER_BYTES
+) {
 
     data class ContainerSpec(
         val extension: String,
@@ -60,11 +63,17 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         private const val TAG = "LocalStreamServer"
         private const val PROBE_CHUNK_SIZE = 256L * 1024L        // 256 KB for instant header / probe reads
         private const val FIRST_CHUNK_SIZE = 512L * 1024L        // 512 KB for instant initial video frame
-        private const val STREAM_CHUNK_SIZE = 2097152L           // 2 MB for smooth continuous playback
+        private const val SECOND_CHUNK_SIZE = 1024L * 1024L      // 1 MB fast second chunk after initial frame
+        private const val STREAM_CHUNK_SIZE = 2097152L           // 2 MB warm-up & local loopback steady chunk
+        private const val STEADY_PREFETCH_CHUNK_SIZE = 4L * 1024L * 1024L // 4 MB steady-state TDLib read-ahead for Wi-Fi Cast/DLNA
+        private const val DEFAULT_LOCAL_PREFETCH_BUFFER_BYTES = 4L * 1024L * 1024L // 4 MB local double-buffer (ExoPlayer already buffers on loopback)
+        private const val MAX_PREFETCH_BUFFER_BYTES = 16L * 1024L * 1024L // 16 MB RAM read-ahead queue (~14s of 1080p video for Chromecast/DLNA)
+        private const val SOCKET_WRITE_SLICE_BYTES = 256 * 1024  // 256 KB sub-slices for smooth non-bursty TCP streaming
         private const val ALIGNMENT = 131072L                   // 128 KB (TDLib MTProto block alignment)
         private const val STORAGE_SAMPLE_BYTES = 8L * 1024L * 1024L
         private const val PARALLEL_PROBE_MAX_BYTES = 4L * 1024L * 1024L // <= 4 MB tail/index probes run in parallel
         private const val MAX_MATROSKA_HEADER_INSPECT_BYTES = 1024L * 1024L // 1 MB max EBML Tracks scan
+        const val GOOGLE_CAST_SUBTITLE_SLOT_COUNT = 24
         const val VIRTUAL_LIVE_TS_SIZE_BYTES = LiveTranscodeManager.MAX_SAFE_32BIT_TS_SIZE_BYTES // 11,422,784 * 188 bytes (< INT32_MAX)
 
         internal fun extractMp4MvhdDurationMs(header: ByteArray?): Long {
@@ -193,6 +202,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
     @Volatile private var activeFileId: Int = -1
     @Volatile private var activeSize: Long = 0L
+    @Volatile private var isSizeEstimated: Boolean = false
     @Volatile private var activeMime: String = "video/mp4"
     @Volatile private var detectedContainer: ContainerSpec? = null
     @Volatile private var activeParts: List<FilePart>? = null
@@ -220,6 +230,15 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         val bytes: ByteArray
     )
 
+    private class PrefetchedSlice(
+        val globalStart: Long,
+        val buffer: ByteArray,
+        val offset: Int,
+        val length: Int,
+        val partFileId: Int,
+        val fromRamFastPath: Boolean
+    )
+
     // Matroska EBML exact-size track selection state & RAM header/Cues caches for instant TV track switching
     private val trackPatchLock = Any()
     @Volatile private var matroskaHeaderAttempted: Boolean = false
@@ -236,6 +255,14 @@ class LocalStreamServer(private val engine: TelegramEngine) {
     @Volatile private var activeCastSubtitleSrtUrl: String? = null
     @Volatile private var activeCastSubtitleTrackNum: Int = -1
     @Volatile private var activeCastSubtitleStartMs: Long = 0L
+    @Volatile private var currentGoogleCastVttSlot: Long = 1L
+    @Volatile private var lastServedGoogleCastVttTrackNum: Int = -1
+    @Volatile private var lastServedGoogleCastVttCueCount: Int = 0
+    @Volatile private var lastServedGoogleCastVttStartMs: Long = 0L
+    @Volatile private var lastServedGoogleCastVttCoveredUntilMs: Long = 0L
+    @Volatile private var lastGoogleCastSlotSwitchAtMs: Long = 0L
+    @Volatile private var pendingGoogleCastSlotAdvance: Boolean = false
+    private val asyncSubtitlePrewarmBusy = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile private var cachedHeadPrefix: ByteArray? = null
     @Volatile private var cachedTailSlice: TailCacheSlice? = null
     private val castTrackEpoch = AtomicLong(0L)
@@ -261,9 +288,11 @@ class LocalStreamServer(private val engine: TelegramEngine) {
     )
 
     private val activeRequestId = AtomicLong(0L)
+    private val activeBoundedProbeCount = java.util.concurrent.atomic.AtomicInteger(0)
     private val lastRemoteMediaWriteAtMs = AtomicLong(0L)
     private val totalRemoteMediaBytesSent = AtomicLong(0L)
     @Volatile private var currentStreamingSocket: Socket? = null
+    private val ownerToken = "lss_${System.nanoTime()}"
     private var storedSevenZip = false
     private var archiveError: ((String) -> Unit)? = null
     @Volatile private var archiveReady = false
@@ -291,6 +320,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         serverSocket = null
 
         activeFileId = fileId
+        isSizeEstimated = totalSize <= 0L
         activeSize = if (totalSize > 0) totalSize else 2_000_000_000L
         activeMime = if (mimeType.isNotBlank()) mimeType else "video/mp4"
         detectedContainer = null
@@ -320,6 +350,14 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             activeCastSubtitleSrtUrl = null
             activeCastSubtitleTrackNum = -1
             activeCastSubtitleStartMs = 0L
+            currentGoogleCastVttSlot = 1L
+            lastServedGoogleCastVttTrackNum = -1
+            lastServedGoogleCastVttCueCount = 0
+            lastServedGoogleCastVttStartMs = 0L
+            lastServedGoogleCastVttCoveredUntilMs = 0L
+            lastGoogleCastSlotSwitchAtMs = 0L
+            pendingGoogleCastSlotAdvance = false
+            asyncSubtitlePrewarmBusy.set(false)
             cachedHeadPrefix = null
             cachedTailSlice = null
             castTrackEpoch.set(0L)
@@ -327,6 +365,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         matroskaSubtitleExtractor.reset()
 
         isRunning = true
+        runCatching { engine.onStreamOwnerStarted(ownerToken) }
 
         // Bind to all local interfaces (0.0.0.0) so 127.0.0.1, Google Cast, and DLNA Smart TVs all work
         val s = ServerSocket(0, 24)
@@ -335,6 +374,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
         val streamUrl = "http://127.0.0.1:$listeningPort/stream"
         activeRequestId.set(0L)
+        activeBoundedProbeCount.set(0)
         com.cineflix.android.util.ErrorLogCollector.log(TAG, "start: fileId=$fileId size=$activeSize port=$listeningPort parts=${multipartParts?.size ?: 1}")
         Log.i(TAG, "🚀 LocalStreamServer iniciado en $streamUrl (size=$activeSize, mime=$activeMime, parts=${multipartParts?.size ?: 1})")
 
@@ -389,9 +429,15 @@ class LocalStreamServer(private val engine: TelegramEngine) {
     }
 
     private fun hasActiveTrackOverride(): Boolean {
+        val info = matroskaHeaderInfo
+        val hasSubOverride = when (selectedCastSubtitleMode) {
+            MatroskaEbmlTrackPatcher.SubtitlePatchMode.UNCHANGED -> false
+            MatroskaEbmlTrackPatcher.SubtitlePatchMode.DISABLE_ALL -> info == null || info.subtitleTracks.isNotEmpty()
+            MatroskaEbmlTrackPatcher.SubtitlePatchMode.SELECT_SINGLE -> true
+        }
         return selectedCastAudioTrackNum != null ||
             selectedCastAudioOrdinal != null ||
-            selectedCastSubtitleMode != MatroskaEbmlTrackPatcher.SubtitlePatchMode.UNCHANGED
+            hasSubOverride
     }
 
     private fun rebuildRegionPatchLocked() {
@@ -426,6 +472,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             swapAudioTrackNumbers = (swapPair != null),
             swapSubtitleTrackNumbers = (subSwapPair != null)
         )
+        val prevKnownBoundaries = activeCastClusterBlockSwapper?.exportKnownBoundaries()
         activeCastClusterBlockSwapper = if (activeCastRegionPatch != null && (swapPair != null || subSwapPair != null)) {
             MatroskaEbmlTrackPatcher.ClusterBlockSwapper(
                 tracksElementEnd = info.tracksElementEnd,
@@ -434,7 +481,15 @@ class LocalStreamServer(private val engine: TelegramEngine) {
                 trackB = swapPair?.second ?: -1,
                 subTrackA = subSwapPair?.first ?: -1,
                 subTrackB = subSwapPair?.second ?: -1
-            )
+            ).apply {
+                if (!prevKnownBoundaries.isNullOrEmpty()) {
+                    seedBoundaries(prevKnownBoundaries)
+                }
+                val cuesClusters = matroskaSubtitleExtractor.getDiscoveredClusterOffsets()
+                if (cuesClusters.isNotEmpty()) {
+                    seedBoundaries(cuesClusters)
+                }
+            }
         } else {
             null
         }
@@ -452,6 +507,37 @@ class LocalStreamServer(private val engine: TelegramEngine) {
      */
     fun getOrParseMatroskaHeaderInfo(): MatroskaEbmlTrackPatcher.MatroskaHeaderInfo? {
         return ensureMatroskaHeaderParsed()
+    }
+
+    /**
+     * Pre-warms the 512 KB `cachedHeadPrefix` in RAM before ExoPlayer opens its first socket
+     * (preventing concurrent `BoundedVideoCache` contention) and returns the discovered container
+     * duration in milliseconds (`> 0L` for MKV and faststart MP4; `0L` if `moov` is at EOF).
+     */
+    fun inspectInitialDurationMs(): Long {
+        if (!isRunning || activeSize <= 0L) return 0L
+        try {
+            val spec = ensureContainerSpecDetected()
+            if (spec.extension == "mkv") {
+                val info = ensureMatroskaHeaderParsed()
+                if (info != null && info.durationMs > 0L) {
+                    updateKnownDurationMs(info.durationMs)
+                }
+            } else if (spec.extension == "mp4") {
+                val head = readLogicalVideoPrefix(minOf(FIRST_CHUNK_SIZE, activeSize).toInt())
+                if (head != null) {
+                    val mp4Dur = extractMp4MvhdDurationMs(head)
+                    if (mp4Dur > 0L) {
+                        updateKnownDurationMs(mp4Dur)
+                    }
+                }
+            } else {
+                readLogicalVideoPrefix(minOf(FIRST_CHUNK_SIZE, activeSize).toInt())
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "inspectInitialDurationMs note: ${e.message}")
+        }
+        return knownDurationMs.coerceAtLeast(0L)
     }
 
     fun stopLiveTranscode() {
@@ -694,13 +780,21 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         val subtitleSrtUrl: String? = if (hasActiveTextSub && activeMkvSub != null) {
             // Stop any previous Direct Stream socket before pre-warming SRT cues so there is zero lock contention on BoundedVideoCache
             cancelActiveDirectStreamSockets()
-            val srtBytes = matroskaSubtitleExtractor.prewarmAndBuildSrtBytes(
-                info = mkvInfo!!,
-                targetTrackNumber = activeMkvSub.trackNumber,
-                startPositionMs = safeStartMs,
-                baseOffsetMs = 0L,
-                maxBudgetMs = 3500L
-            )
+            val srtBytes = run {
+                activeBoundedProbeCount.incrementAndGet()
+                try {
+                    matroskaSubtitleExtractor.prewarmAndBuildSrtBytes(
+                        info = mkvInfo!!,
+                        targetTrackNumber = activeMkvSub.trackNumber,
+                        startPositionMs = safeStartMs,
+                        baseOffsetMs = 0L,
+                        maxBudgetMs = 3000L
+                    )
+                } finally {
+                    activeBoundedProbeCount.decrementAndGet()
+                }
+            }
+            activeCastClusterBlockSwapper?.seedBoundaries(matroskaSubtitleExtractor.getDiscoveredClusterOffsets())
             // Share the exact same base filename as primaryDirectUrl (`cineflix_eX_tY.mkv` <-> `cineflix_eX_tY.srt`)
             val subUrl = "http://$lanIp:$listeningPort/stream/$directBaseName.srt"
             activeCastSubtitleSrtUrl = subUrl
@@ -714,6 +808,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             )
             subUrl
         } else {
+            cancelActiveDirectStreamSockets()
             activeCastSubtitleSrtUrl = null
             activeCastSubtitleTrackNum = -1
             activeCastSubtitleStartMs = 0L
@@ -757,9 +852,23 @@ class LocalStreamServer(private val engine: TelegramEngine) {
      * `canPlayType` while FFmpegDemuxer natively demuxes both MP4 and MKV).
      */
     fun resolveLanGoogleCastUrl(lanIp: String): String {
+        cancelActiveDirectStreamSockets()
         val epoch = castTrackEpoch.get()
         val query = if (epoch > 0L) "?te=$epoch" else ""
         return "http://$lanIp:$listeningPort/stream/cast.mp4$query"
+    }
+
+    /**
+     * Returns the 24 dynamic WebVTT (`text/vtt`) track slots registered on `MediaInfo` for Google Cast.
+     * Having pre-registered slots (`1L..24L`) allows `RemoteMediaClient.setActiveMediaTracks` to
+     * toggle subtitles on/off, switch subtitle tracks, or push newly harvested subtitle cues across
+     * an entire movie in 0ms without ever calling `load()` or interrupting video/audio playback!
+     */
+    fun buildGoogleCastSubtitleTrackSlots(lanIp: String): List<Pair<Long, String>> {
+        val epoch = castTrackEpoch.get()
+        return (1L..GOOGLE_CAST_SUBTITLE_SLOT_COUNT.toLong()).map { slot ->
+            Pair(slot, "http://$lanIp:$listeningPort/stream/cineflix_e${epoch}_s${slot}.vtt")
+        }
     }
 
     /**
@@ -767,7 +876,10 @@ class LocalStreamServer(private val engine: TelegramEngine) {
      * when an embedded Matroska text subtitle track is active, or `null` if subtitles are disabled.
      */
     fun resolveLanGoogleCastSubtitleVttUrl(lanIp: String, startPositionMs: Long = 0L): String? {
-        val mkvInfo = ensureMatroskaHeaderParsed() ?: return null
+        val mkvInfo = ensureMatroskaHeaderParsed() ?: run {
+            activeCastSubtitleTrackNum = -1
+            return null
+        }
         val subMode: MatroskaEbmlTrackPatcher.SubtitlePatchMode
         val subNum: Int?
         val subOrd: Int?
@@ -785,21 +897,228 @@ class LocalStreamServer(private val engine: TelegramEngine) {
                     ?: mkvInfo.subtitleTracks.firstOrNull { !it.isImageSubtitle }
             }
             MatroskaEbmlTrackPatcher.SubtitlePatchMode.UNCHANGED -> null
-        } ?: return null
-        if (activeMkvSub.isImageSubtitle) return null
+        } ?: run {
+            activeCastSubtitleTrackNum = -1
+            return null
+        }
+        if (activeMkvSub.isImageSubtitle) {
+            activeCastSubtitleTrackNum = -1
+            return null
+        }
 
         val safeStartMs = startPositionMs.coerceAtLeast(0L)
         val epoch = castTrackEpoch.get()
-        matroskaSubtitleExtractor.prewarmAndBuildSrtBytes(
-            info = mkvInfo,
-            targetTrackNumber = activeMkvSub.trackNumber,
-            startPositionMs = safeStartMs,
-            baseOffsetMs = 0L,
-            maxBudgetMs = 3000L
-        )
+        // Pause background 4 MB video prefetching while pre-warming subtitle cues so there is zero lock contention!
+        activeBoundedProbeCount.incrementAndGet()
+        try {
+            matroskaSubtitleExtractor.prewarmAndBuildSrtBytes(
+                info = mkvInfo,
+                targetTrackNumber = activeMkvSub.trackNumber,
+                startPositionMs = safeStartMs,
+                baseOffsetMs = 0L,
+                maxBudgetMs = 2200L
+            )
+        } finally {
+            activeBoundedProbeCount.decrementAndGet()
+        }
+        activeCastClusterBlockSwapper?.seedBoundaries(matroskaSubtitleExtractor.getDiscoveredClusterOffsets())
         activeCastSubtitleTrackNum = activeMkvSub.trackNumber
         activeCastSubtitleStartMs = safeStartMs
-        return "http://$lanIp:$listeningPort/stream/cineflix_e${epoch}_t${activeMkvSub.trackNumber}.vtt"
+        currentGoogleCastVttSlot = 1L
+        lastServedGoogleCastVttTrackNum = -1
+        lastServedGoogleCastVttCoveredUntilMs = 0L
+        pendingGoogleCastSlotAdvance = false
+        lastGoogleCastSlotSwitchAtMs = System.currentTimeMillis()
+        return "http://$lanIp:$listeningPort/stream/cineflix_e${epoch}_s1.vtt"
+    }
+
+    /**
+     * Updates the active Google Cast subtitle track in-place without closing the video socket or
+     * reloading `MediaInfo`. Pre-warms cues around [currentPositionMs] on a background worker and
+     * invokes [onSlotReady] with the new active slot ID (`1L..24L`), or `null` when disabling subtitles.
+     */
+    fun updateCastSubtitleSelectionInPlace(
+        subtitleMode: MatroskaEbmlTrackPatcher.SubtitlePatchMode,
+        subtitleTrackNumber: Int?,
+        subtitleOrdinal: Int?,
+        currentPositionMs: Long,
+        onSlotReady: (Long?) -> Unit
+    ) {
+        synchronized(trackPatchLock) {
+            selectedCastSubtitleMode = subtitleMode
+            selectedCastSubtitleTrackNum = subtitleTrackNumber
+            selectedCastSubtitleOrdinal = subtitleOrdinal
+            rebuildRegionPatchLocked()
+        }
+        val safePos = currentPositionMs.coerceAtLeast(0L)
+        activeCastSubtitleStartMs = safePos
+
+        if (subtitleMode != MatroskaEbmlTrackPatcher.SubtitlePatchMode.SELECT_SINGLE) {
+            activeCastSubtitleTrackNum = -1
+            pendingGoogleCastSlotAdvance = false
+            onSlotReady(null)
+            return
+        }
+
+        executor.execute {
+            val mkvInfo = ensureMatroskaHeaderParsed()
+            val activeMkvSub = mkvInfo?.let { info ->
+                info.subtitleTracks.firstOrNull { subtitleTrackNumber != null && it.trackNumber == subtitleTrackNumber }
+                    ?: subtitleOrdinal?.let { info.subtitleTracks.getOrNull(it) }
+                    ?: info.subtitleTracks.firstOrNull { !it.isImageSubtitle && it.isDefault }
+                    ?: info.subtitleTracks.firstOrNull { !it.isImageSubtitle }
+            }
+            if (mkvInfo == null || activeMkvSub == null || activeMkvSub.isImageSubtitle) {
+                activeCastSubtitleTrackNum = -1
+                onSlotReady(null)
+                return@execute
+            }
+
+            activeBoundedProbeCount.incrementAndGet()
+            try {
+                matroskaSubtitleExtractor.prewarmAndBuildSrtBytes(
+                    info = mkvInfo,
+                    targetTrackNumber = activeMkvSub.trackNumber,
+                    startPositionMs = safePos,
+                    baseOffsetMs = 0L,
+                    maxBudgetMs = 1800L
+                )
+            } finally {
+                activeBoundedProbeCount.decrementAndGet()
+            }
+            activeCastClusterBlockSwapper?.seedBoundaries(matroskaSubtitleExtractor.getDiscoveredClusterOffsets())
+            activeCastSubtitleTrackNum = activeMkvSub.trackNumber
+            activeCastSubtitleStartMs = safePos
+            val nextSlot = (currentGoogleCastVttSlot % GOOGLE_CAST_SUBTITLE_SLOT_COUNT.toLong()) + 1L
+            currentGoogleCastVttSlot = nextSlot
+            lastGoogleCastSlotSwitchAtMs = System.currentTimeMillis()
+            pendingGoogleCastSlotAdvance = false
+            onSlotReady(nextSlot)
+        }
+    }
+
+    /**
+     * Called when the user seeks on Google Cast (`performEffectiveSeek`). If subtitles are enabled and
+     * [targetPositionMs] lies outside the coverage of the `.vtt` currently loaded on Chromecast,
+     * pre-warms cues at [targetPositionMs] in the background and invokes [onSlotReady] with the next
+     * `.vtt` slot ID so Chromecast displays subtitles at the seek target without reloading the video!
+     */
+    fun notifyGoogleCastSeekForSubtitles(
+        targetPositionMs: Long,
+        onSlotReady: (Long) -> Unit
+    ) {
+        val safeTarget = targetPositionMs.coerceAtLeast(0L)
+        activeCastSubtitleStartMs = safeTarget
+        val trackNum = activeCastSubtitleTrackNum
+        if (selectedCastSubtitleMode != MatroskaEbmlTrackPatcher.SubtitlePatchMode.SELECT_SINGLE || trackNum <= 0) {
+            return
+        }
+        val alreadyCovered = lastServedGoogleCastVttTrackNum == trackNum &&
+            safeTarget >= (lastServedGoogleCastVttStartMs - 10_000L) &&
+            (lastServedGoogleCastVttCoveredUntilMs == Long.MAX_VALUE ||
+                safeTarget + 30_000L < lastServedGoogleCastVttCoveredUntilMs)
+        if (alreadyCovered) {
+            return
+        }
+
+        executor.execute {
+            val mkvInfo = matroskaHeaderInfo ?: ensureMatroskaHeaderParsed() ?: return@execute
+            // Wait briefly (250ms) so Chromecast's video seek Range request gets its first 512 KB chunk first
+            try {
+                Thread.sleep(250L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return@execute
+            }
+            if (!isRunning || activeCastSubtitleTrackNum != trackNum) return@execute
+            activeBoundedProbeCount.incrementAndGet()
+            try {
+                matroskaSubtitleExtractor.prewarmAndBuildSrtBytes(
+                    info = mkvInfo,
+                    targetTrackNumber = trackNum,
+                    startPositionMs = safeTarget,
+                    baseOffsetMs = 0L,
+                    maxBudgetMs = 1600L
+                )
+            } finally {
+                activeBoundedProbeCount.decrementAndGet()
+            }
+            activeCastClusterBlockSwapper?.seedBoundaries(matroskaSubtitleExtractor.getDiscoveredClusterOffsets())
+            val nextSlot = (currentGoogleCastVttSlot % GOOGLE_CAST_SUBTITLE_SLOT_COUNT.toLong()) + 1L
+            currentGoogleCastVttSlot = nextSlot
+            lastGoogleCastSlotSwitchAtMs = System.currentTimeMillis()
+            pendingGoogleCastSlotAdvance = false
+            onSlotReady(nextSlot)
+        }
+    }
+
+    /**
+     * Polled once per second by `CastSessionCoordinator` during Google Cast playback.
+     * Returns the next WebVTT track slot ID (`1L..24L`) when playback is within 45 seconds of the
+     * end of the previously served `.vtt` coverage window so Chromecast seamlessly fetches the newly
+     * harvested subtitle cues without ever running out of subtitles or reloading the video!
+     */
+    fun pollNextGoogleCastSubtitleSlotIfNeeded(currentPositionMs: Long): Long {
+        val safePos = currentPositionMs.coerceAtLeast(0L)
+        activeCastSubtitleStartMs = safePos
+        val trackNum = activeCastSubtitleTrackNum
+        if (selectedCastSubtitleMode != MatroskaEbmlTrackPatcher.SubtitlePatchMode.SELECT_SINGLE || trackNum <= 0) {
+            return -1L
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastGoogleCastSlotSwitchAtMs < 6_000L) {
+            return -1L
+        }
+        val coveredUntil = lastServedGoogleCastVttCoveredUntilMs
+        val needRefresh = pendingGoogleCastSlotAdvance ||
+            lastServedGoogleCastVttTrackNum != trackNum ||
+            safePos < (lastServedGoogleCastVttStartMs - 15_000L) ||
+            (coveredUntil < Long.MAX_VALUE && safePos + 45_000L >= coveredUntil)
+
+        if (!needRefresh) {
+            return -1L
+        }
+
+        val info = matroskaHeaderInfo
+        val availableUntil = matroskaSubtitleExtractor.getFirstUnextractedCueTimeMsAfter(
+            info = info,
+            targetTrackNumber = trackNum,
+            positionMs = safePos
+        )
+        if (availableUntil > safePos + 20_000L &&
+            (availableUntil > coveredUntil || pendingGoogleCastSlotAdvance || safePos < lastServedGoogleCastVttStartMs - 15_000L)
+        ) {
+            pendingGoogleCastSlotAdvance = false
+            val nextSlot = (currentGoogleCastVttSlot % GOOGLE_CAST_SUBTITLE_SLOT_COUNT.toLong()) + 1L
+            currentGoogleCastVttSlot = nextSlot
+            lastGoogleCastSlotSwitchAtMs = now
+            return nextSlot
+        }
+
+        if (info != null && asyncSubtitlePrewarmBusy.compareAndSet(false, true)) {
+            executor.execute {
+                try {
+                    activeBoundedProbeCount.incrementAndGet()
+                    try {
+                        matroskaSubtitleExtractor.prewarmAndBuildSrtBytes(
+                            info = info,
+                            targetTrackNumber = trackNum,
+                            startPositionMs = safePos,
+                            baseOffsetMs = 0L,
+                            maxBudgetMs = 1400L
+                        )
+                    } finally {
+                        activeBoundedProbeCount.decrementAndGet()
+                    }
+                    activeCastClusterBlockSwapper?.seedBoundaries(matroskaSubtitleExtractor.getDiscoveredClusterOffsets())
+                    pendingGoogleCastSlotAdvance = true
+                } catch (_: Exception) {
+                } finally {
+                    asyncSubtitlePrewarmBusy.set(false)
+                }
+            }
+        }
+        return -1L
     }
 
     fun getEffectiveSizeBytes(): Long = activeSize
@@ -844,9 +1163,8 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         } catch (e: Exception) {
             Log.w(TAG, "Container sniff fallback to activeMime=$activeMime: ${e.message}")
         }
-        val fallback = sniffContainerFromHeader(null, activeMime)
-        detectedContainer = fallback
-        return fallback
+        // Do not permanently cache fallback when TDLib has not delivered the first 256 bytes yet!
+        return sniffContainerFromHeader(null, activeMime)
     }
 
     private fun ensureMatroskaHeaderParsed(): MatroskaEbmlTrackPatcher.MatroskaHeaderInfo? {
@@ -855,8 +1173,10 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
         val spec = ensureContainerSpecDetected()
         if (spec.extension != "mkv") {
-            synchronized(trackPatchLock) {
-                matroskaHeaderAttempted = true
+            if (detectedContainer != null) {
+                synchronized(trackPatchLock) {
+                    matroskaHeaderAttempted = true
+                }
             }
             return null
         }
@@ -877,8 +1197,13 @@ class LocalStreamServer(private val engine: TelegramEngine) {
                     if (parsed.durationMs > 0L) {
                         updateKnownDurationMs(parsed.durationMs)
                     }
-                    if (parsed.segmentEndOffset > activeSize && activeParts.isNullOrEmpty() && !storedSevenZip) {
+                    if ((isSizeEstimated || parsed.segmentEndOffset > activeSize) &&
+                        parsed.segmentEndOffset > 0L &&
+                        activeParts.isNullOrEmpty() &&
+                        !storedSevenZip
+                    ) {
                         activeSize = parsed.segmentEndOffset
+                        isSizeEstimated = false
                         Log.i(TAG, "📏 Updated exact Matroska file size from EBML <Segment>: activeSize=$activeSize bytes")
                     }
                     matroskaSubtitleExtractor.harvestFromRawSlice(
@@ -907,9 +1232,6 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             Log.w(TAG, "Matroska header parse skipped: ${e.message}")
         }
 
-        synchronized(trackPatchLock) {
-            matroskaHeaderAttempted = true
-        }
         return null
     }
 
@@ -939,7 +1261,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             val fetchSize = min(blocks * ALIGNMENT, partSize - alignedOffset)
             if (fetchSize <= skip) break
 
-            val data = engine.readBoundedVideoRange(partFileId, alignedOffset, fetchSize) ?: return null
+            val data = engine.readBoundedVideoRange(partFileId, alignedOffset, fetchSize) { !isRunning } ?: return null
             val available = data.size - skip
             if (available <= 0) return null
             val copyCount = minOf(canTake, available)
@@ -1018,7 +1340,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             var attempts = 0
             while (attempts < 20 && isRunning && !isCancelled()) {
                 attempts++
-                chunk = engine.readBoundedVideoRange(partFileId, alignedOffset, fetchSize)
+                chunk = engine.readBoundedVideoRange(partFileId, alignedOffset, fetchSize) { !isRunning || isCancelled() }
                 if (chunk != null && chunk.size > skip) break
                 if (!isRunning || isCancelled()) break
                 try {
@@ -1082,6 +1404,7 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
     fun stop() {
         isRunning = false
+        runCatching { engine.onStreamOwnerStopped(ownerToken) }
         liveTranscodeManager.stopActiveSession()
         activeRequestId.incrementAndGet()
         lastRemoteMediaWriteAtMs.set(0L)
@@ -1099,6 +1422,9 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         activeSize = 0L
         detectedContainer = null
         activeParts = null
+        onDurationDiscovered = null
+        onRemoteTvLiveSeek = null
+        archiveError = null
         synchronized(trackPatchLock) {
             matroskaHeaderInfo = null
             activeCastRegionPatch = null
@@ -1112,9 +1438,11 @@ class LocalStreamServer(private val engine: TelegramEngine) {
         }
         matroskaSubtitleExtractor.reset()
 
-        // Full storage purge when player stops
+        // Optimize storage when no replacement stream server is already running
         try {
-            engine.optimizeStorage(30L * 1024L * 1024L, immunityDelaySec = 0)
+            if (!engine.hasActiveStreamOwners()) {
+                engine.optimizeStorage(0L, immunityDelaySec = 0)
+            }
         } catch (_: Exception) {}
         com.cineflix.android.util.ErrorLogCollector.log(TAG, "stop: LocalStreamServer stopped")
         Log.i(TAG, "🛑 LocalStreamServer detenido y almacenamiento optimizado")
@@ -1552,24 +1880,45 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             else -> "text/srt"
         }
 
-        val subBytes = when {
-            isWebVtt -> matroskaSubtitleExtractor.getOrBuildVttBytes(
+        val subBytes = run {
+            activeBoundedProbeCount.incrementAndGet()
+            try {
+                when {
+                    isWebVtt -> matroskaSubtitleExtractor.getOrBuildVttBytes(
+                        info = info,
+                        targetTrackNumber = targetTrackNum,
+                        startPositionMs = startMs,
+                        baseOffsetMs = baseOffsetMs
+                    )
+                    isSami -> matroskaSubtitleExtractor.getOrBuildSmiBytes(
+                        info = info,
+                        targetTrackNumber = targetTrackNum,
+                        startPositionMs = startMs,
+                        baseOffsetMs = baseOffsetMs
+                    )
+                    else -> matroskaSubtitleExtractor.getOrBuildSrtBytes(
+                        info = info,
+                        targetTrackNumber = targetTrackNum,
+                        startPositionMs = startMs,
+                        baseOffsetMs = baseOffsetMs
+                    )
+                }
+            } finally {
+                activeBoundedProbeCount.decrementAndGet()
+            }
+        }
+        if (isWebVtt && method == "GET" && targetTrackNum > 0) {
+            lastServedGoogleCastVttTrackNum = targetTrackNum
+            lastServedGoogleCastVttCueCount = matroskaSubtitleExtractor.getHarvestedCueCount(targetTrackNum)
+            lastServedGoogleCastVttStartMs = if (lastServedGoogleCastVttStartMs > 0L) {
+                minOf(startMs, lastServedGoogleCastVttStartMs)
+            } else {
+                startMs
+            }
+            lastServedGoogleCastVttCoveredUntilMs = matroskaSubtitleExtractor.getFirstUnextractedCueTimeMsAfter(
                 info = info,
                 targetTrackNumber = targetTrackNum,
-                startPositionMs = startMs,
-                baseOffsetMs = baseOffsetMs
-            )
-            isSami -> matroskaSubtitleExtractor.getOrBuildSmiBytes(
-                info = info,
-                targetTrackNumber = targetTrackNum,
-                startPositionMs = startMs,
-                baseOffsetMs = baseOffsetMs
-            )
-            else -> matroskaSubtitleExtractor.getOrBuildSrtBytes(
-                info = info,
-                targetTrackNumber = targetTrackNum,
-                startPositionMs = startMs,
-                baseOffsetMs = baseOffsetMs
+                positionMs = startMs
             )
         }
         val totalLen = subBytes.size.toLong()
@@ -1811,104 +2160,61 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
         var currentPos = globalStart
         var isFirstChunk = true
+        val streamStopped = java.util.concurrent.atomic.AtomicBoolean(false)
 
         fun shouldContinue(): Boolean {
-            if (!isRunning) return false
+            if (!isRunning || streamStopped.get()) return false
             return isParallelBoundedProbe || (myRequestId == activeRequestId.get())
         }
 
-        while (currentPos <= requestedEnd && shouldContinue()) {
-            val (partFileId, localOffset) = resolvePart(currentPos + videoOffset)
-            val partSize = activeParts?.find { it.fileId == partFileId }?.size ?: activeSize
-            val availableInPart = maxOf(0L, partSize - localOffset)
-            val remainingInRequest = requestedEnd - currentPos + 1
-            val maxCanReadFromPart = minOf(remainingInRequest, availableInPart)
-            if (maxCanReadFromPart <= 0) break
-
-            if (!shouldContinue()) {
-                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId superseded before fetch at pos=$currentPos")
-                break
-            }
-
-            // Instant first chunk: 256KB for bounded probes, 512KB for initial frame/seek, then 2MB for continuous streaming
-            val targetChunkSize = when {
-                isParallelBoundedProbe -> PROBE_CHUNK_SIZE
-                isFirstChunk -> FIRST_CHUNK_SIZE
-                else -> STREAM_CHUNK_SIZE
-            }
+        fun fetchLogicalSlice(pos: Long, targetChunkSize: Long): PrefetchedSlice? {
+            if (pos > requestedEnd || !shouldContinue()) return null
+            val remainingInRequest = requestedEnd - pos + 1
+            if (remainingInRequest <= 0L) return null
 
             // 0ms RAM Fast-Path #1: Pinned 512 KB header prefix (serves TV <Tracks> reloads without moving TDLib window!)
             val headMem = cachedHeadPrefix
-            if (headMem != null && currentPos < headMem.size) {
-                val availInHead = headMem.size.toLong() - currentPos
+            if (headMem != null && pos < headMem.size) {
+                val availInHead = headMem.size.toLong() - pos
                 val take = minOf(remainingInRequest, minOf(availInHead, targetChunkSize)).toInt()
                 if (take > 0) {
-                    val sliceOff = currentPos.toInt()
-                    val patched = applyCastMatroskaPatches(
-                        sourceBuffer = headMem,
-                        sliceOffset = sliceOff,
-                        sliceLength = take,
-                        rangeGlobalStart = currentPos,
-                        regionPatch = requestRegionPatch,
-                        clusterSwapper = requestClusterSwapper
+                    return PrefetchedSlice(
+                        globalStart = pos,
+                        buffer = headMem,
+                        offset = pos.toInt(),
+                        length = take,
+                        partFileId = activeFileId,
+                        fromRamFastPath = true
                     )
-                    try {
-                        if (patched != null) {
-                            out.write(patched, 0, patched.size)
-                        } else {
-                            out.write(headMem, sliceOff, take)
-                        }
-                        out.flush()
-                        if (isRemoteCastRoute && !isParallelBoundedProbe) {
-                            recordRemoteMediaBytesSent(take)
-                        }
-                    } catch (e: Exception) {
-                        Log.d(TAG, "Client socket closed during RAM head write: ${e.message}")
-                        break
-                    }
-                    currentPos += take
-                    isFirstChunk = false
-                    continue
                 }
             }
 
             // 0ms RAM Fast-Path #2: Pinned EOF <Cues> / moov tail slice (serves TV seek-table probes instantly!)
             val tailMem = cachedTailSlice
             if (tailMem != null &&
-                currentPos >= tailMem.startOffset &&
-                currentPos < tailMem.startOffset + tailMem.bytes.size
+                pos >= tailMem.startOffset &&
+                pos < tailMem.startOffset + tailMem.bytes.size
             ) {
-                val localOff = (currentPos - tailMem.startOffset).toInt()
+                val localOff = (pos - tailMem.startOffset).toInt()
                 val availInTail = (tailMem.bytes.size - localOff).toLong()
                 val take = minOf(remainingInRequest, minOf(availInTail, targetChunkSize)).toInt()
                 if (take > 0) {
-                    val patched = applyCastMatroskaPatches(
-                        sourceBuffer = tailMem.bytes,
-                        sliceOffset = localOff,
-                        sliceLength = take,
-                        rangeGlobalStart = currentPos,
-                        regionPatch = requestRegionPatch,
-                        clusterSwapper = requestClusterSwapper
+                    return PrefetchedSlice(
+                        globalStart = pos,
+                        buffer = tailMem.bytes,
+                        offset = localOff,
+                        length = take,
+                        partFileId = activeFileId,
+                        fromRamFastPath = true
                     )
-                    try {
-                        if (patched != null) {
-                            out.write(patched, 0, patched.size)
-                        } else {
-                            out.write(tailMem.bytes, localOff, take)
-                        }
-                        out.flush()
-                        if (isRemoteCastRoute && !isParallelBoundedProbe) {
-                            recordRemoteMediaBytesSent(take)
-                        }
-                    } catch (e: Exception) {
-                        Log.d(TAG, "Client socket closed during RAM tail write: ${e.message}")
-                        break
-                    }
-                    currentPos += take
-                    isFirstChunk = false
-                    continue
                 }
             }
+
+            val (partFileId, localOffset) = resolvePart(pos + videoOffset)
+            val partSize = activeParts?.find { it.fileId == partFileId }?.size ?: activeSize
+            val availableInPart = maxOf(0L, partSize - localOffset)
+            val maxCanReadFromPart = minOf(remainingInRequest, availableInPart)
+            if (maxCanReadFromPart <= 0L || !shouldContinue()) return null
 
             val bytesToReadThisRound = minOf(targetChunkSize, maxCanReadFromPart)
 
@@ -1918,40 +2224,40 @@ class LocalStreamServer(private val engine: TelegramEngine) {
             val neededBytes = offsetInsideBlock + bytesToReadThisRound
             val blocks = (neededBytes + ALIGNMENT - 1) / ALIGNMENT
             val fetchSize = min(blocks * ALIGNMENT, partSize - alignedOffset)
+            if (fetchSize <= offsetInsideBlock) return null
 
-            // All reads go through the same bounded window, including cache hits.
             var chunk: ByteArray? = null
-            if (shouldContinue()) {
-                var attempts = 0
-                while (attempts < 4 && shouldContinue()) {
-                    attempts++
-                    chunk = engine.readBoundedVideoRange(partFileId, alignedOffset, fetchSize)
-                    if (chunk != null && chunk.size > offsetInsideBlock) {
-                        break
-                    }
-                    if (!shouldContinue()) break
-                    try {
-                        Thread.sleep(80L * attempts)
-                    } catch (_: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        break
-                    }
+            var attempts = 0
+            while (attempts < 4 && shouldContinue()) {
+                attempts++
+                chunk = engine.readBoundedVideoRange(
+                    fileId = partFileId,
+                    offset = alignedOffset,
+                    count = fetchSize,
+                    isCancelled = { !shouldContinue() }
+                )
+                if (chunk != null && chunk.size > offsetInsideBlock) {
+                    break
+                }
+                if (!shouldContinue()) break
+                try {
+                    Thread.sleep(80L * attempts)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
                 }
             }
 
-            if (!shouldContinue()) {
-                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId superseded after fetch at pos=$currentPos")
-                break
-            }
+            if (!shouldContinue()) return null
 
             if (chunk == null || chunk.size <= offsetInsideBlock) {
                 Log.e(TAG, "❌ Error al descargar chunk TDLib: offset=$alignedOffset fetchSize=$fetchSize")
                 com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId fetch error: offset=$alignedOffset fetchSize=$fetchSize")
-                break
+                return null
             }
 
             // Opportunistically cache true container type from offset 0 read at zero cost
-            if (detectedContainer == null && globalStart == 0L && currentPos == 0L && chunk.size >= offsetInsideBlock + 16) {
+            if (detectedContainer == null && pos == 0L && chunk.size >= offsetInsideBlock + 16) {
                 val headLen = minOf(256, chunk.size - offsetInsideBlock)
                 val head = chunk.copyOfRange(offsetInsideBlock, offsetInsideBlock + headLen)
                 val sniffed = sniffContainerFromHeader(head, activeMime)
@@ -1961,96 +2267,344 @@ class LocalStreamServer(private val engine: TelegramEngine) {
 
             val sliceEnd = minOf(chunk.size.toLong(), offsetInsideBlock + bytesToReadThisRound).toInt()
             val sliceSize = sliceEnd - offsetInsideBlock
-            if (sliceSize <= 0) break
+            if (sliceSize <= 0) return null
 
-            // Pin first 512 KB header prefix & last <=1 MB EOF <Cues> slice in RAM for 0ms Smart TV track-switch reloads
-            if (currentPos == 0L) {
+            // Pin first 512 KB header prefix & last <=4 MB EOF <Cues> slice in RAM for 0ms Smart TV track-switch reloads
+            if (pos == 0L) {
                 val cap = minOf(sliceSize, FIRST_CHUNK_SIZE.toInt())
                 val prevHead = cachedHeadPrefix
                 if (prevHead == null || cap > prevHead.size) {
                     cachedHeadPrefix = chunk.copyOfRange(offsetInsideBlock, offsetInsideBlock + cap)
                 }
-            } else if (currentPos >= maxOf(0L, activeSize - PARALLEL_PROBE_MAX_BYTES) &&
-                currentPos + sliceSize == activeSize &&
+            } else if (pos >= maxOf(0L, activeSize - PARALLEL_PROBE_MAX_BYTES) &&
                 sliceSize <= PARALLEL_PROBE_MAX_BYTES.toInt()
             ) {
                 val prevTail = cachedTailSlice
-                if (prevTail == null || currentPos < prevTail.startOffset) {
+                if (prevTail == null ||
+                    (pos + sliceSize == activeSize && pos < prevTail.startOffset) ||
+                    sliceSize > prevTail.bytes.size
+                ) {
                     cachedTailSlice = TailCacheSlice(
-                        startOffset = currentPos,
+                        startOffset = pos,
                         bytes = chunk.copyOfRange(offsetInsideBlock, offsetInsideBlock + sliceSize)
                     )
                 }
             }
 
-            // Passively harvest any Matroska subtitle cues (and <Cues> index near EOF) in this slice at 0 extra I/O cost
-            matroskaHeaderInfo?.let { mkvInfo ->
-                if (currentPos >= maxOf(0L, activeSize - PARALLEL_PROBE_MAX_BYTES) ||
-                    (mkvInfo.cuesOffset > 0L &&
-                        currentPos + sliceSize > mkvInfo.cuesOffset &&
-                        currentPos <= mkvInfo.cuesOffset + 512_000L)
-                ) {
-                    matroskaSubtitleExtractor.onPotentialCuesSliceRead(
-                        sourceBuffer = chunk,
-                        sliceOffset = offsetInsideBlock,
-                        sliceLength = sliceSize,
-                        rangeGlobalStart = currentPos,
+            return PrefetchedSlice(
+                globalStart = pos,
+                buffer = chunk,
+                offset = offsetInsideBlock,
+                length = sliceSize,
+                partFileId = partFileId,
+                fromRamFastPath = false
+            )
+        }
+
+        fun writeSliceToSocket(slice: PrefetchedSlice): Boolean {
+            if (!slice.fromRamFastPath) {
+                // Passively harvest any Matroska subtitle cues (and <Cues> index near EOF) in this slice at 0 extra I/O cost
+                matroskaHeaderInfo?.let { mkvInfo ->
+                    if (slice.globalStart >= maxOf(0L, activeSize - PARALLEL_PROBE_MAX_BYTES) ||
+                        (mkvInfo.cuesOffset > 0L &&
+                            slice.globalStart + slice.length > mkvInfo.cuesOffset &&
+                            slice.globalStart <= mkvInfo.cuesOffset + 512_000L)
+                    ) {
+                        matroskaSubtitleExtractor.onPotentialCuesSliceRead(
+                            sourceBuffer = slice.buffer,
+                            sliceOffset = slice.offset,
+                            sliceLength = slice.length,
+                            rangeGlobalStart = slice.globalStart,
+                            info = mkvInfo
+                        )
+                    }
+                    matroskaSubtitleExtractor.harvestFromRawSlice(
+                        sourceBuffer = slice.buffer,
+                        sliceOffset = slice.offset,
+                        sliceLength = slice.length,
+                        rangeGlobalStart = slice.globalStart,
                         info = mkvInfo
                     )
                 }
-                matroskaSubtitleExtractor.harvestFromRawSlice(
-                    sourceBuffer = chunk,
-                    sliceOffset = offsetInsideBlock,
-                    sliceLength = sliceSize,
-                    rangeGlobalStart = currentPos,
-                    info = mkvInfo
-                )
             }
 
             val patchedCopy = applyCastMatroskaPatches(
-                sourceBuffer = chunk,
-                sliceOffset = offsetInsideBlock,
-                sliceLength = sliceSize,
-                rangeGlobalStart = currentPos,
+                sourceBuffer = slice.buffer,
+                sliceOffset = slice.offset,
+                sliceLength = slice.length,
+                rangeGlobalStart = slice.globalStart,
                 regionPatch = requestRegionPatch,
                 clusterSwapper = requestClusterSwapper
             )
 
+            val writeBuf = patchedCopy ?: slice.buffer
+            val writeStart = if (patchedCopy != null) 0 else slice.offset
+            val writeLen = patchedCopy?.size ?: slice.length
+
             try {
-                if (patchedCopy != null) {
-                    out.write(patchedCopy, 0, patchedCopy.size)
-                } else {
-                    out.write(chunk, offsetInsideBlock, sliceSize)
+                var written = 0
+                while (written < writeLen) {
+                    if (!shouldContinue()) {
+                        com.cineflix.android.util.ErrorLogCollector.log(
+                            TAG,
+                            "Req #$myRequestId superseded during write at pos=${slice.globalStart + written}"
+                        )
+                        return false
+                    }
+                    val step = minOf(SOCKET_WRITE_SLICE_BYTES, writeLen - written)
+                    out.write(writeBuf, writeStart + written, step)
+                    written += step
+                    if (isRemoteCastRoute && !isParallelBoundedProbe) {
+                        recordRemoteMediaBytesSent(step)
+                    }
                 }
                 out.flush()
-                if (isRemoteCastRoute && !isParallelBoundedProbe) {
-                    recordRemoteMediaBytesSent(sliceSize)
-                }
             } catch (e: Exception) {
-                // Client disconnection or seek is normal during video streaming
                 Log.d(TAG, "Client socket closed during stream: ${e.message}")
-                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId client disconnected at pos=$currentPos: ${e.message}")
-                break
+                com.cineflix.android.util.ErrorLogCollector.log(
+                    TAG,
+                    "Req #$myRequestId client disconnected at pos=${slice.globalStart}: ${e.message}"
+                )
+                return false
             }
 
             if (isFirstChunk) {
                 val elapsed = System.currentTimeMillis() - reqStartTime
-                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId first chunk delivered ($sliceSize bytes) in ${elapsed}ms")
+                com.cineflix.android.util.ErrorLogCollector.log(
+                    TAG,
+                    "Req #$myRequestId first chunk delivered (${slice.length} bytes) in ${elapsed}ms"
+                )
             }
 
-            currentPos += sliceSize
+            currentPos = slice.globalStart + slice.length
             isFirstChunk = false
 
-            // Diagnostics only: actual enforcement lives in the engine's shared window.
-            bytesStreamedSinceGc += sliceSize
-            if (bytesStreamedSinceGc >= STORAGE_SAMPLE_BYTES) {
-                bytesStreamedSinceGc = 0L
-                engine.logStreamStorage("delivered fileId=$partFileId offset=$currentPos")
+            if (!slice.fromRamFastPath) {
+                bytesStreamedSinceGc += slice.length
+                if (bytesStreamedSinceGc >= STORAGE_SAMPLE_BYTES) {
+                    bytesStreamedSinceGc = 0L
+                    engine.logStreamStorage("delivered fileId=${slice.partFileId} offset=$currentPos")
+                }
             }
+            return true
         }
 
-        if (!isParallelBoundedProbe && currentStreamingSocket == socket) {
-            currentStreamingSocket = null
+        val prefetchLock = Object()
+        val prefetchQueue = java.util.ArrayDeque<PrefetchedSlice>()
+        var queuedBytes = 0L
+        var producerDone = false
+
+        if (isParallelBoundedProbe) {
+            activeBoundedProbeCount.incrementAndGet()
+        }
+
+        try {
+            if (isParallelBoundedProbe) {
+                while (currentPos <= requestedEnd && shouldContinue()) {
+                    val slice = fetchLogicalSlice(currentPos, PROBE_CHUNK_SIZE)
+                    if (slice == null) {
+                        if (!shouldContinue()) {
+                            com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId superseded after fetch at pos=$currentPos")
+                        }
+                        break
+                    }
+                    if (!writeSliceToSocket(slice)) break
+                }
+            } else {
+                // Step 1: Deliver initial frame / RAM-pinned header synchronously for 0ms startup latency.
+                // When a remote Cast/Smart TV seeks past the header (currentPos >= 512 KB), deliver a full 2 MB
+                // initial cushion in a single TDLib call so the TV buffer does not run dry while the 4 MB prefetcher starts.
+                while (currentPos <= requestedEnd && shouldContinue()) {
+                    val headMem = cachedHeadPrefix
+                    val canServeHeadFromRam = headMem != null && currentPos < headMem.size
+                    if (!isFirstChunk && !canServeHeadFromRam) break
+                    val initialTargetSize = if (isRemoteCastRoute && !canServeHeadFromRam && currentPos >= FIRST_CHUNK_SIZE) {
+                        STREAM_CHUNK_SIZE
+                    } else {
+                        FIRST_CHUNK_SIZE
+                    }
+                    val slice = fetchLogicalSlice(currentPos, initialTargetSize)
+                    if (slice == null) {
+                        if (!shouldContinue()) {
+                            com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId superseded after fetch at pos=$currentPos")
+                        }
+                        break
+                    }
+                    if (!writeSliceToSocket(slice)) break
+                }
+
+                // Step 2: Header-Settle Guard
+                // When a player opens a connection at offset 0..512KB to inspect EBML <Tracks>, it almost always
+                // sends a parallel <Cues> EOF probe or a resume-seek request within 100-175ms. Waiting briefly
+                // here avoids locking BoundedVideoCache for 1.1s on a dead 0- header connection.
+                if (globalStart < FIRST_CHUNK_SIZE && currentPos <= FIRST_CHUNK_SIZE && currentPos <= requestedEnd && shouldContinue()) {
+                    var settleWaitMs = 0L
+                    while (settleWaitMs < 180L && shouldContinue()) {
+                        try {
+                            Thread.sleep(15L)
+                            settleWaitMs += 15L
+                        } catch (_: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            break
+                        }
+                    }
+                    var probeWaitMs = 0L
+                    while (activeBoundedProbeCount.get() > 0 && probeWaitMs < 1200L && shouldContinue()) {
+                        try {
+                            Thread.sleep(15L)
+                            probeWaitMs += 15L
+                        } catch (_: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            break
+                        }
+                    }
+                }
+
+                // Step 3: Asynchronous Read-Ahead Producer + Consumer Pipeline
+                // Uses 16 MB / 4 MB chunks for Wi-Fi Cast/DLNA resilience, and a lean 2-4 MB double-buffer
+                // on local 127.0.0.1 loopback (where ExoPlayer already maintains its own DefaultLoadControl buffer).
+                val effectiveMaxPrefetchBytes = if (isRemoteCastRoute) {
+                    MAX_PREFETCH_BUFFER_BYTES
+                } else {
+                    localPrefetchBufferBytes.coerceIn(STREAM_CHUNK_SIZE, MAX_PREFETCH_BUFFER_BYTES)
+                }
+                if (currentPos <= requestedEnd && shouldContinue()) {
+                    val initialPrefetchStart = currentPos
+                    executor.execute {
+                        var prefetchPos = initialPrefetchStart
+                        var prefetchStep = 0
+                        try {
+                            while (prefetchPos <= requestedEnd && shouldContinue()) {
+                                var queueFull = false
+                                synchronized(prefetchLock) {
+                                    queueFull = queuedBytes >= effectiveMaxPrefetchBytes
+                                }
+                                if (queueFull && shouldContinue()) {
+                                    // While the video read-ahead buffer is completely full, use idle TDLib time
+                                    // to progressively harvest remaining <Cues> subtitle blocks into RAM!
+                                    val subTrack = activeCastSubtitleTrackNum
+                                    val mkvInfo = matroskaHeaderInfo
+                                    if (isRemoteCastRoute &&
+                                        subTrack > 0 &&
+                                        mkvInfo != null &&
+                                        activeBoundedProbeCount.get() == 0
+                                    ) {
+                                        val harvested = matroskaSubtitleExtractor.harvestNextCueBatchIfNeeded(
+                                            info = mkvInfo,
+                                            targetTrackNumber = subTrack,
+                                            fromPositionMs = activeCastSubtitleStartMs,
+                                            maxBatches = 1,
+                                            maxBudgetMs = 220L
+                                        )
+                                        if (harvested > 0) {
+                                            activeCastClusterBlockSwapper?.seedBoundaries(
+                                                matroskaSubtitleExtractor.getDiscoveredClusterOffsets()
+                                            )
+                                            continue
+                                        }
+                                    }
+                                    synchronized(prefetchLock) {
+                                        if (queuedBytes >= effectiveMaxPrefetchBytes && shouldContinue()) {
+                                            try {
+                                                prefetchLock.wait(200L)
+                                            } catch (_: InterruptedException) {
+                                                Thread.currentThread().interrupt()
+                                                return@execute
+                                            }
+                                        }
+                                    }
+                                    continue
+                                }
+                                if (!shouldContinue()) break
+
+                                var probeWaitMs = 0L
+                                while (activeBoundedProbeCount.get() > 0 && probeWaitMs < 1000L && shouldContinue()) {
+                                    try {
+                                        Thread.sleep(15L)
+                                        probeWaitMs += 15L
+                                    } catch (_: InterruptedException) {
+                                        Thread.currentThread().interrupt()
+                                        break
+                                    }
+                                }
+                                if (!shouldContinue()) break
+
+                                val chunkTarget = if (isRemoteCastRoute) {
+                                    STEADY_PREFETCH_CHUNK_SIZE
+                                } else {
+                                    STREAM_CHUNK_SIZE
+                                }
+                                val slice = fetchLogicalSlice(prefetchPos, chunkTarget) ?: break
+                                prefetchPos += slice.length
+                                prefetchStep++
+
+                                var keepPrefetching = true
+                                synchronized(prefetchLock) {
+                                    if (shouldContinue()) {
+                                        prefetchQueue.addLast(slice)
+                                        queuedBytes += slice.length
+                                        prefetchLock.notifyAll()
+                                    } else {
+                                        keepPrefetching = false
+                                    }
+                                }
+                                if (!keepPrefetching) break
+                            }
+                        } finally {
+                            synchronized(prefetchLock) {
+                                producerDone = true
+                                prefetchLock.notifyAll()
+                            }
+                        }
+                    }
+
+                    while (currentPos <= requestedEnd && shouldContinue()) {
+                        val nextSlice: PrefetchedSlice?
+                        synchronized(prefetchLock) {
+                            while (prefetchQueue.isEmpty() && !producerDone && shouldContinue()) {
+                                try {
+                                    prefetchLock.wait(200L)
+                                } catch (_: InterruptedException) {
+                                    Thread.currentThread().interrupt()
+                                    break
+                                }
+                            }
+                            nextSlice = if (prefetchQueue.isNotEmpty()) {
+                                val s = prefetchQueue.removeFirst()
+                                queuedBytes -= s.length
+                                prefetchLock.notifyAll()
+                                s
+                            } else {
+                                null
+                            }
+                        }
+                        if (nextSlice == null) {
+                            if (!shouldContinue()) {
+                                com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId superseded after fetch at pos=$currentPos")
+                            }
+                            break
+                        }
+                        if (!writeSliceToSocket(nextSlice)) {
+                            break
+                        }
+                    }
+                } else if (!shouldContinue()) {
+                    com.cineflix.android.util.ErrorLogCollector.log(TAG, "Req #$myRequestId superseded before fetch at pos=$currentPos")
+                }
+            }
+        } finally {
+            streamStopped.set(true)
+            if (isParallelBoundedProbe) {
+                activeBoundedProbeCount.decrementAndGet()
+            }
+            synchronized(prefetchLock) {
+                prefetchQueue.clear()
+                queuedBytes = 0L
+                prefetchLock.notifyAll()
+            }
+            if (!isParallelBoundedProbe && currentStreamingSocket == socket) {
+                currentStreamingSocket = null
+            }
         }
     }
 
