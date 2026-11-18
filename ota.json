@@ -1,9 +1,9 @@
 {
-  "versionCode": 59,
-  "versionName": "1.4.6",
+  "versionCode": 70,
+  "versionName": "1.5.0",
   "apkUrl": "https://cineflixapp.duckdns.org/cineflix.apk",
-  "sha256": "a4c37db0582bb5cd0828db5c82d9ced5e8b29de7f81a68131adeb210087cf4fa",
-  "changelog": "- Nuevo sistema de envío a TV (Chromecast, Android TV y Smart TVs DLNA como Samsung Tizen, LG webOS, etc.)\n- Transcodificación inteligente en el móvil: reproduce películas MKV, HEVC o Dolby en televisores antiguos sin sobrecalentar el teléfono\n- Control desde el móvil al emitir: cambio de pista de audio, selector de subtítulos y barra de progreso sincronizada con el mando de la TV\n- Los subtítulos ahora comienzan desactivados por defecto tanto en el móvil como al enviar a la TV",
+  "sha256": "8738847cd6d1d35dac6f7ec986569cdd9140b0e1b02804b2e9882ff588129afc",
+  "changelog": "• 📺 Nueva TV en Directo 24/7: 77 canales sincronizados, zapping CH+/CH-, Mini-TV, botón Ficha y El Peliculón del Sábado\n• 🎞 Continuidad en directo: transición inteligente en créditos con avance y precarga sin esperas\n• ✨ Nuevo X-Ray en pausa: consulta reparto, dirección y su filmografía disponible al instante\n• 👤 Perfiles independientes con PIN y Modo Infantil, Pendientes, Sagas y Pasaporte Cinéfilo\n• 🧹 Autolimpieza inteligente: la caché de vídeo ya no ocupa espacio tras reproducir",
   "mandatory": false,
   "minVersionCode": 1
 }
